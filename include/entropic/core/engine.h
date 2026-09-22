@@ -1306,6 +1306,32 @@ private:
     void loop(LoopContext& ctx);
 
     /**
+     * @brief Force the synthetic completion the iteration cap owes.
+     *
+     * gh#169 (v2.13.0). The cap ANNOTATES the run's last substantive
+     * assistant content rather than replacing it: a delegation result
+     * is taken from the last assistant message
+     * (DelegationManager::extract_summary), so the pre-2.13.0
+     * placeholder — "[iteration cap reached after N iterations —
+     * returning current state]" — handed the parent that string where
+     * the child's work belonged, on every capped delegation.
+     *
+     * Unchanged and relied on downstream: ``terminal_reason`` is still
+     * set to "budget_exhausted", so DelegationResult::success stays
+     * false, the parent-tier relay still tags the result
+     * ``[partial — budget_exhausted]`` and ON_DELEGATE_COMPLETE still
+     * reports ``success: false`` / ``result_kind: delegation_failed``.
+     *
+     * Also writes ``ctx.metadata["cap_carried_content"]`` ("true" /
+     * "false") so a consumer can tell a child that produced work and
+     * ran out from one that produced nothing without matching prose.
+     *
+     * @param ctx Loop context (messages, metadata, state mutated).
+     * @version 2.13.0
+     */
+    void force_iteration_cap_completion(LoopContext& ctx);
+
+    /**
      * @brief Execute a single loop iteration.
      * @param ctx Loop context.
      * @version 1.8.4

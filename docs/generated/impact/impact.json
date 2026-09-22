@@ -1,108 +1,342 @@
 [
   {
-    "req_id": "REQ-LOOP-009",
-    "req_name": "Per-session-key run concurrency, on by default, with one lock on the generation path",
+    "req_id": "REQ-API-009",
+    "req_name": "Run entry-point family, result contract, and cross-thread interruptibility",
     "functions": [
       {
-        "name": "execute_tool",
-        "file": "src/mcp/tool_executor.cpp",
+        "name": "try_begin_turn",
+        "file": "include/entropic/core/engine.h",
+        "version": "2.13.0"
+      }
+    ]
+  },
+  {
+    "req_id": "REQ-COMPACT-002",
+    "req_name": "Fill-gated tool-result pruning and persistent context anchors",
+    "functions": [
+      {
+        "name": "run_loop",
+        "file": "src/core/engine.cpp",
         "version": "2.13.0 [reviewed]"
-      }
-    ]
-  },
-  {
-    "req_id": "REQ-MCP-002",
-    "req_name": "Tool results always cross boundaries as a ServerResponse JSON envelope",
-    "functions": [
+      },
       {
-        "name": "execute_tool",
-        "file": "src/mcp/tool_executor.cpp",
+        "name": "run",
+        "file": "src/core/engine.cpp",
         "version": "2.13.0 [reviewed]"
-      }
-    ]
-  },
-  {
-    "req_id": "REQ-MCP-012",
-    "req_name": "Tool calls pass an ordered precondition pipeline with typed rejection kinds",
-    "functions": [
+      },
       {
-        "name": "process_single_call",
-        "file": "src/mcp/tool_executor.cpp",
+        "name": "reinject_context_anchors",
+        "file": "src/core/engine.cpp",
         "version": "2.13.0"
       }
     ]
   },
   {
-    "req_id": "REQ-MCP-017",
-    "req_name": "PRE/POST_TOOL_CALL hooks fire on every exit path, PRE may rewrite the args and POST the result",
+    "req_id": "REQ-DELEG-001",
+    "req_name": "Delegation admission guards reject before a child loop runs",
     "functions": [
       {
-        "name": "process_single_call",
-        "file": "src/mcp/tool_executor.cpp",
+        "name": "push_delegation_rejected",
+        "file": "src/core/engine.cpp",
+        "version": "2.0.2"
+      },
+      {
+        "name": "push_delegation_cycle_rejected",
+        "file": "src/core/engine.cpp",
+        "version": "2.0.6-rc16"
+      },
+      {
+        "name": "push_delegation_repeat_blocked",
+        "file": "src/core/engine.cpp",
+        "version": "2.3.0"
+      },
+      {
+        "name": "push_delegation_isolation_unsafe",
+        "file": "src/core/engine.cpp",
         "version": "2.13.0"
       },
       {
-        "name": "apply_pre_tool_modification",
-        "file": "src/mcp/tool_executor.cpp",
+        "name": "reject_delegation_if_guarded",
+        "file": "src/core/engine.cpp",
         "version": "2.13.0"
-      },
-      {
-        "name": "fire_pre_tool_hook",
-        "file": "src/mcp/tool_executor.cpp",
-        "version": "2.13.0"
-      },
-      {
-        "name": "build_post_tool_json",
-        "file": "src/mcp/tool_executor.cpp",
-        "version": "2.0.6-rc19"
-      },
-      {
-        "name": "build_pre_tool_json",
-        "file": "src/mcp/tool_executor.cpp",
-        "version": "2.0.6-rc19"
       }
     ]
   },
   {
-    "req_id": "REQ-MCP-019",
-    "req_name": "Tool results are size-capped with a marker and classified into typed kinds",
+    "req_id": "REQ-DELEG-002",
+    "req_name": "Delegation lifecycle from preconditions to result fold-back",
     "functions": [
       {
-        "name": "classify_tool_result",
-        "file": "src/mcp/tool_executor.cpp",
-        "version": "2.3.7"
-      }
-    ]
-  },
-  {
-    "req_id": "REQ-MCP-020",
-    "req_name": "A bounded, thread-safe ring buffer retains recent tool calls for introspection",
-    "functions": [
+        "name": "push_delegation_result",
+        "file": "src/core/engine.cpp",
+        "version": "2.0.2"
+      },
       {
-        "name": "execute_tool",
-        "file": "src/mcp/tool_executor.cpp",
+        "name": "push_resume_failure",
+        "file": "src/core/engine.cpp",
+        "version": "2.1.6"
+      },
+      {
+        "name": "fetch_resume_payload",
+        "file": "src/core/engine.cpp",
+        "version": "2.1.6"
+      },
+      {
+        "name": "resolve_resume_delegation",
+        "file": "src/core/engine.cpp",
+        "version": "2.13.0"
+      },
+      {
+        "name": "run_pending_delegation",
+        "file": "src/core/engine.cpp",
         "version": "2.13.0 [reviewed]"
+      },
+      {
+        "name": "ensure_sandbox_manager",
+        "file": "src/core/engine.cpp",
+        "version": "2.13.0"
+      },
+      {
+        "name": "resolve_session_root",
+        "file": "src/core/engine.cpp",
+        "version": "2.13.0"
       }
     ]
   },
   {
-    "req_id": "REQ-MCP-027",
-    "req_name": "Named workspaces bind a session to its own tool root and servers",
+    "req_id": "REQ-DELEG-003",
+    "req_name": "Relay-single-delegate promotion with coverage-gap suppression",
     "functions": [
       {
-        "name": "set_server_resolver",
-        "file": "src/mcp/tool_executor.cpp",
+        "name": "dir_complete",
+        "file": "src/core/engine.cpp",
+        "version": "2.1.4"
+      },
+      {
+        "name": "finalize_delegation_result",
+        "file": "src/core/engine.cpp",
+        "version": "2.9.17"
+      },
+      {
+        "name": "log_relay_status",
+        "file": "src/core/engine.cpp",
+        "version": "2.1.1-rc1"
+      }
+    ]
+  },
+  {
+    "req_id": "REQ-DELEG-005",
+    "req_name": "Opt-in delegation sandbox isolation, wired end to end",
+    "functions": [
+      {
+        "name": "push_delegation_isolation_unsafe",
+        "file": "src/core/engine.cpp",
         "version": "2.13.0"
       },
       {
-        "name": "servers_for",
-        "file": "src/mcp/tool_executor.cpp",
+        "name": "resolve_session_root",
+        "file": "src/core/engine.cpp",
         "version": "2.13.0"
       },
       {
-        "name": "execute_tool",
-        "file": "src/mcp/tool_executor.cpp",
+        "name": "isolation_unsafe_tools",
+        "file": "src/core/engine.cpp",
+        "version": "2.13.0"
+      }
+    ]
+  },
+  {
+    "req_id": "REQ-DELEG-006",
+    "req_name": "Explicit delegation context, required-context tiers, resume by target",
+    "functions": [
+      {
+        "name": "resolve_latest_for_target",
+        "file": "src/core/engine.cpp",
+        "version": "2.13.0"
+      },
+      {
+        "name": "resolve_resume_delegation",
+        "file": "src/core/engine.cpp",
+        "version": "2.13.0"
+      }
+    ]
+  },
+  {
+    "req_id": "REQ-HOOK-002",
+    "req_name": "Engine fires hooks at every lifecycle boundary, including a vetoable completion",
+    "functions": [
+      {
+        "name": "loop",
+        "file": "src/core/engine.cpp",
         "version": "2.13.0 [reviewed]"
+      },
+      {
+        "name": "set_state",
+        "file": "src/core/engine.cpp",
+        "version": "2.1.10"
+      },
+      {
+        "name": "dir_complete",
+        "file": "src/core/engine.cpp",
+        "version": "2.1.4"
+      }
+    ]
+  },
+  {
+    "req_id": "REQ-IDEN-001",
+    "req_name": "Tier resolution contract and per-tier loop overrides",
+    "functions": [
+      {
+        "name": "seed_system_prompt_for_tier",
+        "file": "src/core/engine.cpp",
+        "version": "2.13.0"
+      }
+    ]
+  },
+  {
+    "req_id": "REQ-IDEN-003",
+    "req_name": "Handoff rules and auto-chain continuation",
+    "functions": [
+      {
+        "name": "should_auto_chain",
+        "file": "src/core/engine.cpp",
+        "version": "1.8.6"
+      },
+      {
+        "name": "try_auto_chain",
+        "file": "src/core/engine.cpp",
+        "version": "1.8.6"
+      }
+    ]
+  },
+  {
+    "req_id": "REQ-LOOP-001",
+    "req_name": "Agent state machine with observable, dual-channel transitions",
+    "functions": [
+      {
+        "name": "run_loop",
+        "file": "src/core/engine.cpp",
+        "version": "2.13.0 [reviewed]"
+      },
+      {
+        "name": "run",
+        "file": "src/core/engine.cpp",
+        "version": "2.13.0 [reviewed]"
+      },
+      {
+        "name": "is_terminal_state",
+        "file": "src/core/engine.cpp",
+        "version": "2.3.28"
+      },
+      {
+        "name": "set_state",
+        "file": "src/core/engine.cpp",
+        "version": "2.1.10"
+      },
+      {
+        "name": "run_turn",
+        "file": "src/core/engine.cpp",
+        "version": "2.13.0"
+      },
+      {
+        "name": "run_streaming",
+        "file": "src/core/engine.cpp",
+        "version": "2.1.8"
+      }
+    ]
+  },
+  {
+    "req_id": "REQ-LOOP-002",
+    "req_name": "Bounded loop termination with synthetic completion that carries the run's last real output",
+    "functions": [
+      {
+        "name": "run",
+        "file": "src/core/engine.cpp",
+        "version": "2.13.0 [reviewed]"
+      },
+      {
+        "name": "force_iteration_cap_completion",
+        "file": "src/core/engine.cpp",
+        "version": "2.13.0"
+      },
+      {
+        "name": "loop",
+        "file": "src/core/engine.cpp",
+        "version": "2.13.0 [reviewed]"
+      },
+      {
+        "name": "should_stop",
+        "file": "src/core/engine.cpp",
+        "version": "2.3.28"
+      }
+    ]
+  },
+  {
+    "req_id": "REQ-LOOP-003",
+    "req_name": "Fixed per-iteration pipeline with pre-generate cancellation",
+    "functions": [
+      {
+        "name": "dispatch_pending_or_halt",
+        "file": "src/core/engine.cpp",
+        "version": "2.13.0"
+      }
+    ]
+  },
+  {
+    "req_id": "REQ-LOOP-005",
+    "req_name": "Opt-in thinking-budget gating with nudge then hard cut",
+    "functions": [
+      {
+        "name": "budget_units_consumed",
+        "file": "src/core/engine.cpp",
+        "version": "2.5.0"
+      },
+      {
+        "name": "hard_cut_budget",
+        "file": "src/core/engine.cpp",
+        "version": "2.5.0"
+      }
+    ]
+  },
+  {
+    "req_id": "REQ-LOOP-006",
+    "req_name": "Interrupt and pause semantics across nested loops",
+    "functions": [
+      {
+        "name": "run_loop",
+        "file": "src/core/engine.cpp",
+        "version": "2.13.0 [reviewed]"
+      },
+      {
+        "name": "dispatch_pending_or_halt",
+        "file": "src/core/engine.cpp",
+        "version": "2.13.0"
+      },
+      {
+        "name": "interrupt",
+        "file": "src/core/engine.cpp",
+        "version": "2.13.0"
+      },
+      {
+        "name": "set_external_reset",
+        "file": "src/core/engine.cpp",
+        "version": "2.12.1"
+      },
+      {
+        "name": "reset_interrupt",
+        "file": "src/core/engine.cpp",
+        "version": "2.13.0"
+      }
+    ]
+  },
+  {
+    "req_id": "REQ-LOOP-008",
+    "req_name": "Family-aware streaming reasoning filter with UTF-8 alignment",
+    "functions": [
+      {
+        "name": "run_streaming",
+        "file": "src/core/engine.cpp",
+        "version": "2.1.8"
       }
     ]
   }

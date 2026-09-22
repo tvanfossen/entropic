@@ -3158,3 +3158,219 @@ SCENARIO("gh#162: resume by target picks that tier's latest delegation",
         }
     }
 }
+
+// ── gh#169 (v2.13.0): a capped child hands back its last real summary ──
+//
+// AgentEngine::loop pushed a synthetic assistant message whose CONTENT was
+// "[iteration cap reached after N iterations — returning current state]".
+// DelegationManager::extract_summary takes the last assistant message, so
+// the placeholder REPLACED the child's work in DelegationResult::summary
+// and in everything downstream of it — the parent-tier relay and the
+// ON_DELEGATE_COMPLETE payload alike.
+//
+// Consumer evidence: 3 of 5 turns the lead told a parent a record lookup
+// had FAILED while get_student_record had returned status=ok with a full
+// 501-char record and set_interest had written the row; separately a lead
+// apologised that a lesson plan "didn't come through" with the finished
+// lesson sitting in the store.
+
+namespace gh169 {
+
+/// @brief Captures ON_DELEGATE_COMPLETE payloads verbatim.
+struct DelegHookCap {
+    std::vector<std::pair<int, std::string>> post;  ///< (point, json)
+};
+
+/// @brief Hook interface that records post-hook payloads.
+inline HookInterface make_capturing_hooks(DelegHookCap* c) {
+    HookInterface hi{};
+    hi.registry = c;
+    hi.fire_pre = [](void*, entropic_hook_point_t, const char*,
+                     char**) -> int { return 0; };
+    hi.fire_post = [](void* r, entropic_hook_point_t p,
+                      const char* json, char**) {
+        static_cast<DelegHookCap*>(r)->post.emplace_back(
+            static_cast<int>(p), json != nullptr ? json : "");
+    };
+    hi.fire_info = [](void*, entropic_hook_point_t, const char*) {};
+    return hi;
+}
+
+/// @brief The last assistant message in a context ("" when there is none).
+inline std::string last_assistant(const LoopContext& ctx) {
+    std::string found;
+    for (auto rit = ctx.messages.rbegin();
+         rit != ctx.messages.rend(); ++rit) {
+        if (rit->role == "assistant") { found = rit->content; break; }
+    }
+    return found;
+}
+
+}  // namespace gh169
+
+SCENARIO("gh#169: a capped loop carries its last real content, annotated",
+         "[engine][gh169][regression][2.13.0]") {
+    GIVEN("a loop that produces real work and never signals completion") {
+        MockInference mock;
+        mock.response = "curriculum drafted: unit 3 covers long division";
+        mock.finish_reason = "stop";
+        mock.is_complete = false;
+        auto iface = make_mock_interface(mock);
+        LoopConfig lc;
+        lc.max_iterations = 3;
+        CompactionConfig cc;
+        AgentEngine engine(iface, lc, cc);
+
+        WHEN("the loop runs to the iteration cap") {
+            LoopContext ctx;
+            ctx.messages = make_messages();
+            engine.run_loop(ctx);
+
+            THEN("the final assistant message carries the real work") {
+                // RED before the fix: the cap message REPLACED the child's
+                // output, so the parent read "[iteration cap reached ...]"
+                // where the answer belonged.
+                CHECK(gh169::last_assistant(ctx).find("long division")
+                      != std::string::npos);
+            }
+            AND_THEN("the cap annotates it rather than replacing it") {
+                CHECK(gh169::last_assistant(ctx).find(
+                          "iteration cap reached after 3 iterations")
+                      != std::string::npos);
+            }
+            AND_THEN("terminal_reason survives") {
+                auto it = ctx.metadata.find("terminal_reason");
+                REQUIRE(it != ctx.metadata.end());
+                CHECK(it->second == "budget_exhausted");
+                CHECK(ctx.state == AgentState::COMPLETE);
+            }
+            AND_THEN("the carry is recorded as a typed signal") {
+                auto it = ctx.metadata.find("cap_carried_content");
+                REQUIRE(it != ctx.metadata.end());
+                CHECK(it->second == "true");
+            }
+        }
+    }
+}
+
+SCENARIO("gh#169: a capped loop that produced nothing stays distinguishable",
+         "[engine][gh169][regression][2.13.0]") {
+    GIVEN("a loop whose every turn is empty") {
+        MockInference mock;
+        mock.response = "";
+        mock.finish_reason = "stop";
+        mock.is_complete = false;
+        auto iface = make_mock_interface(mock);
+        LoopConfig lc;
+        lc.max_iterations = 3;
+        CompactionConfig cc;
+        AgentEngine engine(iface, lc, cc);
+
+        WHEN("the loop runs to the iteration cap") {
+            LoopContext ctx;
+            ctx.messages = make_messages();
+            engine.run_loop(ctx);
+
+            THEN("the cap message says so in words") {
+                auto last = gh169::last_assistant(ctx);
+                CHECK(last.find("no substantive output")
+                      != std::string::npos);
+                CHECK(last.find("iteration cap reached after 3 iterations")
+                      != std::string::npos);
+            }
+            AND_THEN("and in the typed signal a parent can branch on") {
+                auto it = ctx.metadata.find("cap_carried_content");
+                REQUIRE(it != ctx.metadata.end());
+                CHECK(it->second == "false");
+            }
+            AND_THEN("terminal_reason survives") {
+                auto it = ctx.metadata.find("terminal_reason");
+                REQUIRE(it != ctx.metadata.end());
+                CHECK(it->second == "budget_exhausted");
+            }
+        }
+    }
+}
+
+SCENARIO("gh#169: the parent relay receives the capped child's real work",
+         "[engine][gh169][delegation][regression][2.13.0]") {
+    GIVEN("a lead that relays a single delegate, and a child that is capped") {
+        MockInference mock;
+        mock.is_complete = false;
+        mock.response = "lesson plan: fractions, 40 minutes, worksheet B";
+        // Parent's FIRST parse returns a tool call so the injector fires;
+        // every later parse falls back to "[]", so the child loop runs to
+        // its cap without ever emitting entropic.complete.
+        mock.tool_calls_queue.push_back(
+            R"([{"name":"test.mock","arguments":{}}])");
+        mock.tool_calls_json = "[]";
+        auto iface = make_mock_interface(mock);
+        LoopConfig lc;
+        lc.max_iterations = 3;
+        CompactionConfig cc;
+        AgentEngine engine(iface, lc, cc);
+        engine.set_relay_single_delegate("lead");
+
+        gh169::DelegHookCap cap;
+        engine.set_hooks(gh169::make_capturing_hooks(&cap));
+
+        TierResolutionInterface tri{};
+        tri.resolve_tier = [](const std::string&, void*) -> ChildContextInfo {
+            ChildContextInfo info;
+            info.valid = true;
+            info.system_prompt = "child agent";
+            return info;
+        };
+        engine.set_tier_resolution(tri);
+
+        DelegInjector injector;
+        ToolExecutionInterface tex{};
+        tex.process_tool_calls = inject_delegation_once;
+        tex.user_data = &injector;
+        engine.set_tool_executor(tex);
+
+        WHEN("the parent loop delegates and the child hits its cap") {
+            LoopContext ctx;
+            ctx.messages = make_messages();
+            ctx.locked_tier = "lead";
+            engine.run_loop(ctx);
+
+            auto it = ctx.metadata.find("explicit_completion_summary");
+            REQUIRE(it != ctx.metadata.end());
+
+            THEN("the relayed summary carries the child's own output") {
+                // RED before the fix: the relay read
+                // "[partial — budget_exhausted] [iteration cap reached
+                //  after N iterations — returning current state]"
+                // and the lead reported the work as missing.
+                CHECK(it->second.find("lesson plan: fractions")
+                      != std::string::npos);
+            }
+            AND_THEN("it is still tagged partial") {
+                CHECK(it->second.substr(0, 8) == "[partial");
+                CHECK(ctx.metadata.at("relay_status")
+                      == "budget_exhausted_relayed");
+            }
+            AND_THEN("ON_DELEGATE_COMPLETE keeps its field names and "
+                     "semantics") {
+                // A consumer parses success / target_tier / result_kind
+                // out of this payload; a capped child is still a failed
+                // delegation, and carrying its work does not change that.
+                std::string deleg_json;
+                for (const auto& [point, json] : cap.post) {
+                    if (point == ENTROPIC_HOOK_ON_DELEGATE_COMPLETE) {
+                        deleg_json = json;
+                    }
+                }
+                REQUIRE_FALSE(deleg_json.empty());
+                auto j = nlohmann::json::parse(deleg_json);
+                CHECK(j.at("success").get<bool>() == false);
+                CHECK(j.at("target_tier").get<std::string>() == "eng");
+                CHECK(j.at("result_kind").get<std::string>()
+                      == "delegation_failed");
+                CHECK(j.at("summary").get<std::string>().find(
+                          "lesson plan: fractions") != std::string::npos);
+            }
+        }
+    }
+}

@@ -541,11 +541,91 @@ AgentEngine::per_tier_metrics() const {
 }
 
 /**
+ * @brief The last assistant message with something in it (gh#169).
+ *
+ * "Substantive" is byte-level: any content that is not entirely
+ * whitespace. The loop has not yet pushed its cap message when this
+ * runs, so there is no engine-authored marker to filter out.
+ *
+ * @param ctx Loop context.
+ * @return The content, or "" when the run produced none.
+ * @dg_internal
+ * @version 2.13.0
+ */
+static std::string last_substantive_assistant(const LoopContext& ctx) {
+    std::string found;
+    for (auto rit = ctx.messages.rbegin();
+         rit != ctx.messages.rend() && found.empty(); ++rit) {
+        if (rit->role == "assistant"
+            && rit->content.find_first_not_of(" \t\r\n")
+               != std::string::npos) {
+            found = rit->content;
+        }
+    }
+    return found;
+}
+
+/**
+ * @brief Build the capped run's final assistant content (gh#169).
+ *
+ * The cap ANNOTATES the agent's last substantive output instead of
+ * replacing it: DelegationManager::extract_summary reads the last
+ * assistant message, so replacing it handed the parent a placeholder
+ * where the child's work belonged. The two branches are worded
+ * differently on purpose — a child that produced nothing must stay
+ * distinguishable from one that produced work and then ran out.
+ *
+ * @param carried Last substantive assistant content ("" when none).
+ * @param iterations Iterations consumed.
+ * @return The content for the synthetic completion message.
+ * @dg_internal
+ * @version 2.13.0
+ */
+static std::string annotate_iteration_cap(const std::string& carried,
+                                          int iterations) {
+    const std::string note = "[iteration cap reached after "
+        + std::to_string(iterations) + " iterations";
+    std::string out = note
+        + " — no substantive output was produced before the cap]";
+    if (!carried.empty()) {
+        out = carried + "\n\n" + note
+            + " — the text above is the agent's last substantive output; "
+              "it did not signal completion]";
+    }
+    return out;
+}
+
+/**
+ * @brief Force the synthetic completion the iteration cap owes (gh#169).
+ *
+ * Appends the annotated last substantive output as the final assistant
+ * message, records terminal_reason = "budget_exhausted" (unchanged, and
+ * still what DelegationResult::success and the parent-tier relay read),
+ * plus the typed cap_carried_content signal, and forces COMPLETE.
+ *
+ * @param ctx Loop context (messages, metadata and state mutated).
+ * @req REQ-LOOP-002
+ * @version 2.13.0
+ */
+void AgentEngine::force_iteration_cap_completion(LoopContext& ctx) {
+    std::string carried = last_substantive_assistant(ctx);
+    Message forced;
+    forced.role = "assistant";
+    forced.content = annotate_iteration_cap(carried,
+                                            ctx.metrics.iterations);
+    ctx.messages.push_back(std::move(forced));
+    ctx.metadata["terminal_reason"] = "budget_exhausted";
+    ctx.metadata["cap_carried_content"] =
+        carried.empty() ? "false" : "true";
+    set_state(ctx, AgentState::COMPLETE);
+}
+
+/**
  * @brief Main loop.
  * @param ctx Loop context.
  * @req REQ-LOOP-002
  * @req REQ-HOOK-002
- * @version 2.13.0
+ * @version 2.13.0 [reviewed]
  */
 void AgentEngine::loop(LoopContext& ctx) {
     fire_loop_start_hook(hooks_, ctx);  // ON_LOOP_START (v1.9.1)
@@ -572,17 +652,14 @@ void AgentEngine::loop(LoopContext& ctx) {
         // E7 (2.0.6-rc18): mark ctx.metadata with the terminal reason
         // so delegate result and parent-tier relay can surface that
         // the child did not complete naturally.
+        // gh#169 (v2.13.0): the cap ANNOTATES the agent's last
+        // substantive output instead of replacing it with a placeholder
+        // — the parent reads the last assistant message, and the child's
+        // real summary exists at cap time.
         logger->warn("Loop ended due to max iterations ({}/{}) — "
                      "forcing synthetic entropic.complete",
                      ctx.metrics.iterations, resolve_max_iterations(ctx));
-        Message forced;
-        forced.role = "assistant";
-        forced.content = "[iteration cap reached after "
-            + std::to_string(ctx.metrics.iterations)
-            + " iterations — returning current state]";
-        ctx.messages.push_back(std::move(forced));
-        ctx.metadata["terminal_reason"] = "budget_exhausted";
-        set_state(ctx, AgentState::COMPLETE);
+        force_iteration_cap_completion(ctx);
     }
 
     fire_loop_end_hook(hooks_, ctx);  // ON_LOOP_END (v1.9.1)

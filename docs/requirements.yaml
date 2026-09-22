@@ -4715,7 +4715,8 @@
     '
   version: 2.10.4
 - id: REQ-LOOP-002
-  name: Bounded loop termination with synthetic completion on cap
+  name: Bounded loop termination with synthetic completion that carries the run's
+    last real output
   module: Agent Loop
   description: 'The agentic loop must always terminate. It stops when the context
 
@@ -4727,19 +4728,45 @@
 
     on the iteration cap without a terminal state, the engine appends a
 
-    synthetic assistant message ("[iteration cap reached after N
-
-    iterations ...]"), records metadata["terminal_reason"] =
+    synthetic assistant message, records metadata["terminal_reason"] =
 
     "budget_exhausted", and forces COMPLETE.
 
-    WHY the synthetic completion: consumers and parent delegation
+    The synthetic message CARRIES the run''s last substantive assistant
 
-    frames read the last assistant message and the terminal_reason;
+    content and ANNOTATES it with "[iteration cap reached after N
 
-    without it a capped child returns no result and the lead cannot
+    iterations — the text above is the agent''s last substantive output;
 
-    distinguish "did not finish" from "answered nothing".
+    it did not signal completion]". A run that produced no substantive
+
+    output instead yields "[iteration cap reached after N iterations — no
+
+    substantive output was produced before the cap]", and
+
+    metadata["cap_carried_content"] carries the same distinction as a
+
+    typed "true"/"false" so a consumer need not match prose.
+
+    WHY the carry: consumers and parent delegation frames read the LAST
+
+    assistant message — DelegationManager::extract_summary takes it as
+
+    DelegationResult::summary — so before v2.13.0 the placeholder
+
+    REPLACED the child''s work on every capped delegation, and a lead
+
+    relayed "returning current state" where the finished answer belonged
+
+    (gh#169). terminal_reason is unchanged and still the sole signal that
+
+    the child did not complete naturally: DelegationResult::success stays
+
+    false, the parent-tier relay still tags "[partial — budget_exhausted]"
+
+    and ON_DELEGATE_COMPLETE still reports success=false with
+
+    result_kind="delegation_failed".
 
     '
   acceptance_criteria: 'Given max_iterations = N and a model that never completes, When
@@ -4749,6 +4776,28 @@
     metadata["terminal_reason"] == "budget_exhausted", and a synthetic
 
     assistant message is the last message.
+
+    Given a run whose turns produced real content, When the cap is hit,
+
+    Then the last assistant message contains that content AND the cap
+
+    annotation, and metadata["cap_carried_content"] == "true".
+
+    Given a run whose every turn was empty, When the cap is hit, Then the
+
+    last assistant message says no substantive output was produced and
+
+    metadata["cap_carried_content"] == "false".
+
+    Given a relay-tier lead whose single delegate is capped, When the
+
+    child loop ends, Then the relayed summary is tagged "[partial" AND
+
+    contains the child''s own output, and the ON_DELEGATE_COMPLETE
+
+    payload still reports success=false, the target tier, and
+
+    result_kind="delegation_failed".
 
     Given a per-identity max_iterations override lower than the global
 
@@ -4765,12 +4814,20 @@
 
     forced complete sets terminal_reason metadata"; SCENARIO "gh#84
 
-    combined: should_stop halts the loop when the duplicate ..." —
+    combined: should_stop halts the loop when the duplicate ..."; SCENARIO
+
+    "gh#169: a capped loop carries its last real content, annotated";
+
+    SCENARIO "gh#169: a capped loop that produced nothing stays
+
+    distinguishable"; SCENARIO "gh#169: the parent relay receives the
+
+    capped child''s real work" —
 
     /home/tvanfossen/Projects/entropic/tests/unit/core/engine_test.cpp
 
     '
-  version: 2.10.4
+  version: 2.13.0
 - id: REQ-LOOP-003
   name: Fixed per-iteration pipeline with pre-generate cancellation
   module: Agent Loop

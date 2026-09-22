@@ -9,6 +9,7 @@
 #include <entropic/mcp/tool_result_classify.h>
 #include <entropic/mcp/utf8_sanitize.h>
 #include <entropic/types/logging.h>
+#include <entropic/types/run_scope.h>
 
 #include <nlohmann/json.hpp>
 
@@ -459,6 +460,12 @@ static std::string parse_tool_result_text(const std::string& result_json) {
  * before anything downstream reads it, then unwrapped from the
  * ServerResponse envelope and recorded in the history ring buffer.
  *
+ * gh#158 (v2.13.0): the session this call ROUTES on is also published to
+ * this thread for the dispatch, so a server that keeps per-session state
+ * (read-before-write tracker, todo list) keys it by exactly the value
+ * that chose its server set — and a delegated child, whose context
+ * inherits its parent's key, lands in its parent's session.
+ *
  * @param ctx Loop context (tool-call metric incremented).
  * @param call Tool call.
  * @return A pair of the user-role result Message — content is the
@@ -468,7 +475,8 @@ static std::string parse_tool_result_text(const std::string& result_json) {
  * @req REQ-MCP-002
  * @req REQ-MCP-020
  * @req REQ-MCP-027
- * @version 2.13.0
+ * @req REQ-LOOP-009
+ * @version 2.13.0 [reviewed]
  */
 std::pair<Message, std::string> ToolExecutor::execute_tool(
     LoopContext& ctx, const ToolCall& call) {
@@ -494,8 +502,12 @@ std::pair<Message, std::string> ToolExecutor::execute_tool(
     // schema/permission questions that are workspace-invariant for the
     // built-in servers and fail SAFE (unknown → WRITE required, no schema
     // → no validation skip that grants anything).
-    auto result_json = mcp::sanitize_utf8(
-        servers_for(ctx.session_key).execute(call.name, args_json));
+    std::string result_json;
+    {
+        RunSessionScope session_scope(ctx.session_key);
+        result_json = mcp::sanitize_utf8(
+            servers_for(ctx.session_key).execute(call.name, args_json));
+    }
     auto end = std::chrono::steady_clock::now();
     auto ms = std::chrono::duration_cast<
         std::chrono::milliseconds>(end - start).count();

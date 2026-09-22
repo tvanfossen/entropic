@@ -285,6 +285,28 @@ ENTROPIC_EXPORT void swap_session_tool_dir(
     bool entering, void* ud);
 
 /**
+ * @brief Release a session's per-session tool state on every server set
+ *        (gh#158).
+ *
+ * The filesystem server's read-before-write tracker and the entropic
+ * server's todo list are kept per SESSION. Called when that session's
+ * conversation ends — `entropic_session_drop`, `_context_clear`,
+ * `_context_set`, and `entropic_context_clear` for the active session —
+ * so a long-running host does not accumulate one entry per session it
+ * ever served. Visits the default set AND every workspace's: which set a
+ * session touched depends on when it was bound, and releasing an absent
+ * key is free.
+ *
+ * @param h Engine handle.
+ * @param key Session key ("" = the default session).
+ * @return Number of servers that held state for `key`.
+ * @req REQ-LOOP-009
+ * @version 2.13.0
+ */
+std::size_t release_session_tool_state(entropic_handle_t h,
+                                       const std::string& key);
+
+/**
  * @brief gh#59 (v2.3.1): RAII guard combining api_mutex + log scope.
  *
  * Drop-in replacement for the v2.0.0–v2.3.0 pattern

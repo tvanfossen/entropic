@@ -485,6 +485,34 @@ bool ServerManager::set_outside_root_approver(OutsideRootApprover fn,
 }
 
 /**
+ * @brief Release every in-process server's state for one session (gh#158).
+ *
+ * Cross-casts each in-process server to SessionStateOwner rather than
+ * adding a virtual to MCPServerBase, whose vtable is plugin ABI. Plugins
+ * and external servers hold no engine-side per-session state, so they are
+ * not visited. `servers_` is written only during configuration, so the
+ * iteration needs no lock beyond each owner's own.
+ *
+ * @param key Session key ("" = the default session).
+ * @return Number of servers that held state for `key`.
+ * @req REQ-LOOP-009
+ * @req REQ-MCP-021
+ * @version 2.13.0
+ */
+std::size_t ServerManager::release_session(const std::string& key) {
+    std::size_t released = 0;
+    for (const auto& [name, server] : servers_) {
+        auto* owner = dynamic_cast<SessionStateOwner*>(server.get());
+        if (owner != nullptr && owner->release_session(key)) {
+            ++released;
+        }
+    }
+    logger->info("Released session '{}' tool state on {} server(s)",
+                 key, released);
+    return released;
+}
+
+/**
  * @brief List all registered server names.
  * @return Every routable prefix across all three kinds — in-process
  *         servers, then dlopen plugins, then external clients

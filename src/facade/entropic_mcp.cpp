@@ -188,6 +188,37 @@ void entropic::swap_session_tool_dir(
 }
 
 /**
+ * @brief Release a session's per-session tool state — see engine_handle.h.
+ *
+ * Lock order: the caller holds `api_mutex`; `workspace_mutex` is taken
+ * here, and under it only each server's leaf per-session lock. No run
+ * thread takes `workspace_mutex` while holding a per-session lock, so the
+ * order cannot invert. The ToolRootLock is deliberately NOT taken (see
+ * ServerManager::release_session).
+ *
+ * @param h Engine handle.
+ * @param key Session key ("" = the default session).
+ * @return Number of servers that held state for `key`.
+ * @req REQ-LOOP-009
+ * @version 2.13.0
+ */
+std::size_t entropic::release_session_tool_state(entropic_handle_t h,
+                                                 const std::string& key) {
+    std::size_t released = 0;
+    if (h == nullptr) { return released; }
+    if (h->server_manager) {
+        released += h->server_manager->release_session(key);
+    }
+    std::lock_guard<std::mutex> lock(h->workspace_mutex);
+    for (const auto& [name, ws] : h->workspaces) {
+        if (ws && ws->servers) {
+            released += ws->servers->release_session(key);
+        }
+    }
+    return released;
+}
+
+/**
  * @brief Register the outside-root path approver — see entropic.h.
  *
  * Only the slot changes: the default set's filesystem server already

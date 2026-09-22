@@ -167,6 +167,24 @@ public:
     bool set_outside_root_approver(OutsideRootApprover fn, void* user_data);
 
     /**
+     * @brief Release every in-process server's state for one session
+     *        (gh#158).
+     *
+     * Called by the facade when a session's conversation ends (drop,
+     * clear, restore). Each in-process server that derives
+     * SessionStateOwner — the filesystem server's read tracker, the
+     * entropic server's todo list — forgets `key`. Takes NO ToolRootLock:
+     * the state is per-session and behind its own leaf lock, and waiting
+     * on the root lock would stall an API call for the length of another
+     * session's sandboxed delegation.
+     *
+     * @param key Session key ("" = the default session).
+     * @return Number of servers that held state for `key`.
+     * @version 2.13.0
+     */
+    std::size_t release_session(const std::string& key);
+
+    /**
      * @brief List registered server names (in-process + external).
      * @return Server names.
      * @version 2.0.6

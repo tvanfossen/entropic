@@ -5226,13 +5226,19 @@
 
     client''s JSON-RPC id counter (atomic, REQ-MCP-026), the filesystem
 
-    server''s read-before-write tracker (its own mutex: one FilesystemServer
+    server''s read-before-write tracker and the entropic server''s todo list
 
-    serves every unbound session, so read_file and write_file reach its map
+    (one FilesystemServer / EntropicServer serves every unbound session, so
 
-    from several run threads at once), the entropic server''s todo list (its
+    both were first locked and are now PER SESSION: keyed by the session the
 
-    own mutex, for the same reason), the working directory every
+    ToolExecutor routed the call on — published to its thread for the
+
+    dispatch — and released through `ServerManager::release_session` when
+
+    the session is dropped, cleared or restored, so neither grows by one
+
+    entry per session a host ever served), the working directory every
 
     in-process and plugin server resolves against (the ServerManager''s
 
@@ -5379,7 +5385,17 @@
 
     a concurrent session reads"; "gh#158: two sessions writing todos through
 
-    ONE entropic server share its list safely" —
+    ONE entropic server share its list safely"; "gh#158: read-before-write is
+
+    judged per session — another session''s read unlocks nothing"; "gh#158: a
+
+    delegated child''s read satisfies its parent''s write — the child runs under
+
+    the parent''s session"; "gh#158: each session''s todo list is its own";
+
+    "gh#158: ending a session''s conversation releases its read tracker and
+
+    todo list — and only its own" —
 
     /home/tvanfossen/Projects/entropic/tests/unit/api/builtin_server_sharing_test.cpp;
 
@@ -6601,19 +6617,29 @@
 
     Writes and edits to an existing
 
-    file are refused with a `read_before_write` error unless a prior read is
+    file are refused with a `read_before_write` error unless THE CALLING
 
-    recorded in the FileAccessTracker. NOT IMPLEMENTED as of v2.10.4: the
+    SESSION has a prior read recorded in the FileAccessTracker (gh#158,
 
-    external-modification gate. FileAccessTracker::was_read_unchanged compares
+    v2.13.0): reads are kept per session key — the key the ToolExecutor
 
-    the tracked hash, but check_read_before_write calls only was_read() — the
+    routed the call on, which a delegated child inherits from its parent —
 
-    hash is never compared on the write path, and was_read_unchanged has no
+    so another session''s read of the same file unlocks nothing, and a
 
-    production caller (its only call site is a unit test that asserts on the
+    session''s reads are released when its conversation ends
 
-    tracker directly, so it passes without a write ever being refused). Reads
+    (entropic_session_drop, entropic_session_context_clear,
+
+    entropic_session_context_set, entropic_context_clear). NOT IMPLEMENTED:
+
+    the external-modification gate — the tracked hash is never compared on
+
+    the write path, so a file changed on disk after the read is still
+
+    writable (was_read_unchanged, which compared it, had no production
+
+    caller and was removed in v2.11.0). Reads
 
     are gated by a size
 
@@ -6646,9 +6672,21 @@
 
     tool resolves it, Then the call is refused; Given an existing unread file,
 
-    When write_file runs, Then a read_before_write error is returned; Given a
+    When write_file runs, Then a read_before_write error is returned; Given
 
-    file changed on disk after being read, Then the write is refused; Given a
+    session A read a file and session B did not, When B writes or edits it,
+
+    Then B is refused read_before_write and the file is untouched; Given a
+
+    delegated child read it, Then its parent may write it; Given a session''s
+
+    conversation is dropped, cleared or restored, Then its reads are released
+
+    and a write must read again, while other sessions keep theirs; Given a
+
+    file changed on disk after being read, Then the write is still allowed
+
+    (no external-modification gate); Given a
 
     file exceeding the size gate, Then size_exceeded is returned; Given
 
@@ -6689,7 +6727,13 @@
     '
   verified_by: '"test_path_security_rejects_traversal", "test_write_file_requires_read",
 
-    "test_write_file_detects_external_change", "test_read_file_size_gate",
+    "test_write_file_allows_write_after_read_even_if_changed",
+
+    "gh#158: the read tracker is per session, and a lookup never grows it",
+
+    "gh#158: write_file consults the CALLING session''s reads",
+
+    "test_read_file_size_gate",
 
     "test_read_file_not_found", "test_read_file_refuses_ignored_path",
 
@@ -6710,6 +6754,20 @@
     ..." cases — tests/unit/mcp/servers/filesystem_test.cpp; every
 
     "outside-root:" scenario — tests/unit/api/path_approval_test.cpp;
+
+    SCENARIOs "gh#158: read-before-write is judged per session — another
+
+    session''s read unlocks nothing", "gh#158: a delegated child''s read
+
+    satisfies its parent''s write — the child runs under the parent''s
+
+    session", "gh#158: ending a session''s conversation releases its read
+
+    tracker and todo list — and only its own", "gh#158: clearing the default
+
+    conversation releases the default session''s read tracker" —
+
+    tests/unit/api/builtin_server_sharing_test.cpp;
 
     "mcp.filesystem.allow_outside_root is tri-state and defaults to optional",
 
@@ -6922,7 +6980,15 @@
 
     stage naming a tier not in tier_names, quoting the offending stage and the
 
-    valid options (gh#129); complete with `coverage_gap=true` requires a
+    valid options (gh#129); the todo list is kept PER SESSION (gh#158,
+
+    v2.13.0) — keyed by the session the call routed on, shared with that
+
+    session''s delegated children, never with another session, and released
+
+    when the session''s conversation is dropped, cleared or restored;
+
+    complete with `coverage_gap=true` requires a
 
     non-empty gap_description; followup rejects non-object args, malformed JSON,
 
@@ -6956,8 +7022,16 @@
 
     directive types appear in the envelope and introspection calls carry none.
 
+    Given session A added a todo, When session B adds one, Then B''s list holds
+
+    only B''s items and A''s only A''s; Given A''s conversation ends, Then A''s
+
+    next list starts empty and B''s is untouched.
+
     '
-  verified_by: '"test_pipeline_requires_two_stages", "gh#129: pipeline rejects stage names
+  verified_by: '"gh#158: the todo list belongs to the calling session",
+
+    "test_pipeline_requires_two_stages", "gh#129: pipeline rejects stage names
 
     not in tier_names", "gh#129: pipeline emits directives for all-valid stages",
 
@@ -6985,10 +7059,14 @@
 
     "context_inspect without provider returns error", "context_inspect returns
 
-    no directives" — tests/unit/mcp/servers/context_inspect_test.cpp
+    no directives" — tests/unit/mcp/servers/context_inspect_test.cpp;
+
+    SCENARIO "gh#158: each session''s todo list is its own" —
+
+    tests/unit/api/builtin_server_sharing_test.cpp
 
     '
-  version: 2.10.4
+  version: 2.13.0
 - id: REQ-MCP-025
   name: External servers are discovered safely, directive-stripped, and health-monitored
   module: MCP Servers and Tool Dispatch

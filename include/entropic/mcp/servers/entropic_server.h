@@ -13,6 +13,7 @@
 
 #include <entropic/interfaces/i_mcp_server.h>
 #include <entropic/mcp/server_base.h>
+#include <entropic/mcp/session_scoped.h>
 
 #include <functional>
 #include <memory>
@@ -41,9 +42,13 @@ class ResumeDelegationTool;  ///< gh#32 (v2.1.6) resume
  * Single-tier configs skip delegate/pipeline registration.
  * Diagnose, inspect, and context_inspect provide read-only introspection.
  *
- * @version 2.0.6-rc16
+ * gh#158 (v2.13.0): a SessionStateOwner — the todo list is kept per
+ * session, and the facade releases a session's list with its
+ * conversation.
+ *
+ * @version 2.13.0
  */
-class EntropicServer : public MCPServerBase {
+class EntropicServer : public MCPServerBase, public SessionStateOwner {
 public:
     /**
      * @brief Construct with tier names and data dir.
@@ -74,6 +79,21 @@ public:
      * @version 2.0.6-rc16
      */
     void set_state_provider(const entropic_state_provider_t& provider);
+
+    /**
+     * @brief Release `key`'s todo list (gh#158).
+     * @param key Session key.
+     * @return true when the session had a list.
+     * @version 2.13.0
+     */
+    bool release_session(const std::string& key) override;
+
+    /**
+     * @brief Sessions holding a todo list on this server (gh#158).
+     * @return Session count.
+     * @version 2.13.0
+     */
+    std::size_t session_count() const override;
 
 private:
     std::unique_ptr<TodoTool> todo_;

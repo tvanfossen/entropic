@@ -14,6 +14,7 @@
 #include <entropic/mcp/tool_base.h>
 #include <entropic/mcp/server_base.h>
 #include <entropic/types/logging.h>
+#include <entropic/types/run_scope.h>
 
 #include <nlohmann/json.hpp>
 
@@ -34,46 +35,76 @@ namespace entropic {
 // ── FileAccessTracker ────────────────────────────────────
 
 /**
- * @brief Record that a file was read with its content hash.
+ * @brief Record that a session read a file, with its content hash.
  *
  * The tracker is what makes read-before-write enforceable: write_file
  * and edit_file refuse an existing file with no recorded read.
  *
- * gh#158 (v2.13.0): under `mutex_`, because concurrent sessions on the
- * default server set record from several run threads at once.
+ * gh#158 (v2.13.0): recorded under the READING session's key, so the
+ * read unlocks that session's writes and nobody else's; the map is
+ * locked because concurrent sessions record from several run threads.
  *
+ * @param session Session key the read belongs to.
  * @param path Canonical file path.
  * @param hash Content hash at time of read.
  * @req REQ-MCP-021
  * @req REQ-LOOP-009
- * @version 2.13.0
+ * @version 2.13.0 [reviewed]
  */
-void FileAccessTracker::record_read(const std::string& path,
+void FileAccessTracker::record_read(const std::string& session,
+                                    const std::string& path,
                                     size_t hash) {
-    {
-        std::lock_guard<std::mutex> lock(mutex_);
-        reads_[path] = hash;
-    }
-    logger->info("Tracked read: {}", path);
+    reads_.with(session, [&](auto& reads) { reads[path] = hash; });
+    logger->info("Tracked read: session='{}' {}", session, path);
 }
 
 
 /**
- * @brief Check if a file was ever read on this server.
+ * @brief Check whether a session has read a file.
  *
- * gh#158 (v2.13.0): under `mutex_` — the lookup races a concurrent
- * session's insert otherwise.
+ * gh#158 (v2.13.0): consults ONLY `session`'s reads. A lookup never
+ * creates an entry, so asking on behalf of a session that read nothing
+ * does not grow the map.
  *
+ * @param session Session key asking.
  * @param path Canonical file path.
- * @return true when a read was recorded for this path, regardless of
- *         whether the content has since changed.
+ * @return true when this session recorded a read of this path,
+ *         regardless of whether the content has since changed.
+ * @req REQ-MCP-021
+ * @req REQ-LOOP-009
+ * @version 2.13.0 [reviewed]
+ */
+bool FileAccessTracker::was_read(const std::string& session,
+                                 const std::string& path) const {
+    return reads_.peek(session, [&](const auto* reads) {
+        return reads != nullptr && reads->count(path) > 0;
+    });
+}
+
+/**
+ * @brief Forget every read a session recorded (gh#158).
+ *
+ * Called when the session's conversation ends — the model no longer
+ * holds the content it read, so a later write must read again.
+ *
+ * @param session Session key.
+ * @return true when the session had recorded reads.
  * @req REQ-MCP-021
  * @req REQ-LOOP-009
  * @version 2.13.0
  */
-bool FileAccessTracker::was_read(const std::string& path) const {
-    std::lock_guard<std::mutex> lock(mutex_);
-    return reads_.count(path) > 0;
+bool FileAccessTracker::release_session(const std::string& session) {
+    return reads_.release(session);
+}
+
+/**
+ * @brief Sessions currently holding recorded reads (gh#158).
+ * @return Session count.
+ * @req REQ-LOOP-009
+ * @version 2.13.0
+ */
+std::size_t FileAccessTracker::session_count() const {
+    return reads_.session_count();
 }
 
 // ── File-local helpers ───────────────────────────────────
@@ -653,7 +684,9 @@ std::vector<std::string> expand_braces(const std::string& pattern) {
  * @brief Enforce read-before-write policy on existing files.
  *
  * A file that does not yet exist is creatable without a prior read;
- * an existing one must have been read this session.
+ * an existing one must have been read by THE CALLING SESSION (gh#158) —
+ * the session the dispatch routed on, published to this thread by the
+ * ToolExecutor. Another session's read of the same file does not count.
  *
  * @param tracker File access tracker.
  * @param path Canonical path string.
@@ -661,13 +694,15 @@ std::vector<std::string> expand_braces(const std::string& pattern) {
  *         structured `read_before_write` error naming the file, logged
  *         at warning level.
  * @req REQ-MCP-021
- * @version 1.8.5
+ * @version 2.13.0
  */
 std::string check_read_before_write(
     const FileAccessTracker& tracker,
     const std::string& path) {
-    if (fs::exists(path) && !tracker.was_read(path)) {
-        logger->warn("Read-before-write violation: {}", path);
+    const auto session = current_run_session();
+    if (fs::exists(path) && !tracker.was_read(session, path)) {
+        logger->warn("Read-before-write violation: session='{}' {}",
+                     session, path);
         return make_error("read_before_write",
             "File must be read before writing: " + path);
     }
@@ -1230,14 +1265,15 @@ std::string check_read_gates(FilesystemServer& server,
  * detection.
  *
  * v2.13.0: the path is resolved as a READ, so an outside-root read under
- * `optional` asks the approver with access=read.
+ * `optional` asks the approver with access=read. gh#158: the read is
+ * recorded for the calling session only.
  *
  * @param args_json JSON with a "path" key.
  * @return A ServerResponse with no directives whose result is either
  *         the numbered-lines JSON or the first failing gate's
  *         structured error.
  * @req REQ-MCP-021
- * @version 2.13.0
+ * @version 2.13.0 [reviewed]
  */
 ServerResponse ReadFileTool::execute(const std::string& args_json) {
     auto args = json::parse(args_json);
@@ -1250,7 +1286,7 @@ ServerResponse ReadFileTool::execute(const std::string& args_json) {
     if (!err.empty()) { return {err, {}}; }
 
     auto content = read_file_contents(resolved);
-    server_.tracker().record_read(path_str,
+    server_.tracker().record_read(current_run_session(), path_str,
                                   hash_content(content));
     auto size = static_cast<int>(fs::file_size(resolved));
     logger->info("Read file: {} ({} bytes)", path_str, size);
@@ -1895,12 +1931,35 @@ const fs::path& FilesystemServer::root_dir() const {
 /**
  * @brief Get the file access tracker.
  * @return Mutable reference to the read-before-write tracker shared by
- *         read_file (which records) and write_file (which enforces).
+ *         read_file (which records) and write_file (which enforces),
+ *         both under the calling session's key (gh#158).
  * @req REQ-MCP-021
  * @version 1.8.5
  */
 FileAccessTracker& FilesystemServer::tracker() {
     return tracker_;
+}
+
+/**
+ * @brief Release a session's recorded reads (gh#158).
+ * @param key Session key.
+ * @return true when the session had recorded reads.
+ * @req REQ-MCP-021
+ * @req REQ-LOOP-009
+ * @version 2.13.0
+ */
+bool FilesystemServer::release_session(const std::string& key) {
+    return tracker_.release_session(key);
+}
+
+/**
+ * @brief Sessions whose reads this server tracks (gh#158).
+ * @return Session count.
+ * @req REQ-LOOP-009
+ * @version 2.13.0
+ */
+std::size_t FilesystemServer::session_count() const {
+    return tracker_.session_count();
 }
 
 /**

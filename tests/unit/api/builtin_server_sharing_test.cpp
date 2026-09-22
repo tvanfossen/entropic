@@ -11,6 +11,12 @@
  * OWN mutable state — the read-before-write tracker, and the working
  * directory a delegation sandbox re-points (gh#160).
  *
+ * A fourth set of scenarios (gh#158, fourth pass) proves the tracker and
+ * the todo list are per SESSION rather than per server: another session's
+ * read unlocks nothing, a delegated child's read unlocks its parent's
+ * write (it runs under the parent's key), and ending a conversation —
+ * drop, clear, restore — releases exactly that session's entries.
+ *
  * Every dispatch goes through the handle's real `ToolExecutor`, which is
  * the path a run takes; the sandbox swap is the facade's PRODUCTION
  * callback (`swap_session_tool_dir`) driven through a real `ScopedSandbox`,
@@ -23,6 +29,7 @@
  */
 
 #include <catch2/catch_test_macros.hpp>
+#include <entropic/core/delegation.h>
 #include <entropic/core/sandbox.h>
 #include <entropic/entropic.h>
 #include "engine_handle.h"  // white-box: tool_executor, swap_session_tool_dir
@@ -31,8 +38,10 @@
 
 #include <atomic>
 #include <chrono>
+#include <cstdint>
 #include <filesystem>
 #include <fstream>
+#include <sstream>
 #include <string>
 #include <thread>
 #include <unistd.h>
@@ -176,6 +185,97 @@ std::vector<entropic::ToolCall> read_both(const std::string& id,
     return {make_call(id + "-fs", "filesystem.read_file", {{"path", rel}}),
             make_call(id + "-sh", "bash.execute",
                       {{"command", "cat " + rel}})};
+}
+
+/**
+ * @brief Whole contents of a file on disk.
+ * @param p Path.
+ * @return Its bytes, or "" when unreadable.
+ * @internal
+ * @version 2.13.0
+ */
+std::string slurp(const fs::path& p) {
+    std::ifstream in(p);
+    std::stringstream ss;
+    ss << in.rdbuf();
+    return ss.str();
+}
+
+/**
+ * @brief One call's result text, as session `key`.
+ * @param h Configured handle.
+ * @param key Session key.
+ * @param call The call.
+ * @return Its result text ("<no result>" when none came back).
+ * @internal
+ * @version 2.13.0
+ */
+std::string one(entropic_handle_t h, const std::string& key,
+                const entropic::ToolCall& call) {
+    auto res = dispatch(h, key, {call});
+    return res.empty() ? "<no result>" : res.front();
+}
+
+/**
+ * @brief read_file of `rel`.
+ * @param id Call id (distinct per call).
+ * @param rel Root-relative path.
+ * @return The call.
+ * @internal
+ * @version 2.13.0
+ */
+entropic::ToolCall read_call(const std::string& id, const std::string& rel) {
+    return make_call(id, "filesystem.read_file", {{"path", rel}});
+}
+
+/**
+ * @brief write_file of `rel` with `body`.
+ * @param id Call id.
+ * @param rel Root-relative path.
+ * @param body New content.
+ * @return The call.
+ * @internal
+ * @version 2.13.0
+ */
+entropic::ToolCall write_call(const std::string& id, const std::string& rel,
+                              const std::string& body) {
+    return make_call(id, "filesystem.write_file",
+                     {{"path", rel}, {"content", body}});
+}
+
+/**
+ * @brief entropic.todo add of `item`.
+ * @param id Call id.
+ * @param item Todo text.
+ * @return The call.
+ * @internal
+ * @version 2.13.0
+ */
+entropic::ToolCall todo_add(const std::string& id, const std::string& item) {
+    return make_call(id, "entropic.todo",
+                     {{"action", "add"}, {"content", item}});
+}
+
+/**
+ * @brief Whether a result is the read-before-write refusal.
+ * @param r Result text.
+ * @return true for a `read_before_write` error.
+ * @internal
+ * @version 2.13.0
+ */
+bool refused_unread(const std::string& r) {
+    return r.find("read_before_write") != std::string::npos;
+}
+
+/**
+ * @brief Whether a result is a successful write.
+ * @param r Result text.
+ * @return true when write_file reported success.
+ * @internal
+ * @version 2.13.0
+ */
+bool written(const std::string& r) {
+    return r.find("File written successfully") != std::string::npos;
 }
 
 }  // namespace
@@ -422,6 +522,309 @@ SCENARIO("gh#158: two sessions writing todos through ONE entropic server "
                               + std::to_string(i);
                     CHECK(last[size_t(t)].find(item) != std::string::npos);
                 }
+            }
+        }
+    }
+}
+
+// ── Per-SESSION state on a shared server (gh#158, fourth pass) ──────────
+//
+// The scenarios above prove the default set's tracker and todo list are
+// SAFE to share. These prove they are not SHARED: a read recorded by one
+// session is that session's alone, and so is its todo list. The key is the
+// one the dispatch routed on (`LoopContext::session_key`), which a
+// delegated child inherits from its parent.
+
+SCENARIO("gh#158: read-before-write is judged per session — another "
+         "session's read unlocks nothing",
+         "[api][gh158][v2.13.0]") {
+    TempDir root("rbw_session");
+    root.put("shared.txt", "original\n");
+    Handle h(root.path);
+    REQUIRE(h.ok);
+    REQUIRE(h.h->tool_executor != nullptr);
+
+    GIVEN("session A has read shared.txt and session B has not") {
+        auto a_read = one(h.h, "s-a", read_call("a-r", "shared.txt"));
+        REQUIRE(a_read.find("original") != std::string::npos);
+
+        WHEN("session B overwrites shared.txt") {
+            auto b = one(h.h, "s-b",
+                         write_call("b-w", "shared.txt", "from-b\n"));
+            THEN("the write is refused as unread and the file is untouched") {
+                INFO("B's write: " << b);
+                CHECK(refused_unread(b));
+                CHECK(slurp(root.path / "shared.txt") == "original\n");
+            }
+        }
+        WHEN("session B edits shared.txt") {
+            auto b = one(h.h, "s-b", make_call(
+                "b-e", "filesystem.edit_file",
+                {{"path", "shared.txt"}, {"old_string", "original"},
+                 {"new_string", "edited-by-b"}}));
+            THEN("the edit is refused as unread and the file is untouched") {
+                INFO("B's edit: " << b);
+                CHECK(refused_unread(b));
+                CHECK(slurp(root.path / "shared.txt") == "original\n");
+            }
+        }
+        WHEN("session A overwrites the file it read") {
+            auto a = one(h.h, "s-a",
+                         write_call("a-w", "shared.txt", "from-a\n"));
+            THEN("its own read lets it through") {
+                INFO("A's write: " << a);
+                CHECK(written(a));
+                CHECK(slurp(root.path / "shared.txt") == "from-a\n");
+            }
+        }
+    }
+}
+
+namespace {
+
+/**
+ * @brief What the delegated child loop saw (driven by DelegationManager).
+ * @internal
+ * @version 2.13.0
+ */
+struct ChildDrive {
+    entropic_handle_t h = nullptr;  ///< Handle whose executor it dispatches on
+    std::string key = "<unset>";    ///< Session key the child ran under
+    std::string read;               ///< Its read_file result
+};
+
+/**
+ * @brief Child loop: read plan.md through the real executor, then finish.
+ * @param ctx The context DelegationManager built for the child.
+ * @param ud ChildDrive.
+ * @internal
+ * @version 2.13.0
+ */
+void child_reads_plan(entropic::LoopContext& ctx, void* ud) {
+    auto* d = static_cast<ChildDrive*>(ud);
+    d->key = ctx.session_key;
+    auto msgs = d->h->tool_executor->process_tool_calls(
+        ctx, {read_call("child-r", "plan.md")});
+    d->read = msgs.empty() ? "<no result>" : msgs.front().content;
+    entropic::Message done;
+    done.role = "assistant";
+    done.content = "read it";
+    ctx.messages.push_back(std::move(done));
+    ctx.state = entropic::AgentState::COMPLETE;
+}
+
+/**
+ * @brief Tier resolution that accepts any tier (no prompt, no completion).
+ * @param tier Tier name (unused).
+ * @param ud Unused.
+ * @return A valid, empty context info.
+ * @internal
+ * @version 2.13.0
+ */
+entropic::ChildContextInfo any_tier(const std::string& /*tier*/,
+                                    void* /*ud*/) {
+    entropic::ChildContextInfo info;
+    info.valid = true;
+    return info;
+}
+
+/**
+ * @brief Tier existence check that accepts any tier.
+ * @param tier Tier name (unused).
+ * @param ud Unused.
+ * @return true.
+ * @internal
+ * @version 2.13.0
+ */
+bool any_tier_exists(const std::string& /*tier*/, void* /*ud*/) {
+    return true;
+}
+
+}  // namespace
+
+SCENARIO("gh#158: a delegated child's read satisfies its parent's write — "
+         "the child runs under the parent's session",
+         "[api][gh158][v2.13.0]") {
+    TempDir root("rbw_child");
+    root.put("plan.md", "draft\n");
+    Handle h(root.path);
+    REQUIRE(h.ok);
+
+    GIVEN("a parent session that delegated the read to a child") {
+        ChildDrive drive;
+        drive.h = h.h;
+        entropic::TierResolutionInterface tiers;
+        tiers.resolve_tier = any_tier;
+        tiers.tier_exists = any_tier_exists;
+        entropic::DelegationManager mgr(child_reads_plan, &drive, tiers);
+        entropic::LoopContext parent;
+        parent.session_key = "s-parent";
+        auto res = mgr.execute_delegation(parent, "eng", "read plan.md");
+        REQUIRE(res.success);
+        REQUIRE(drive.read.find("draft") != std::string::npos);
+
+        THEN("the child ran under the parent's key") {
+            CHECK(drive.key == "s-parent");
+        }
+        THEN("the parent may overwrite the file its child read") {
+            auto w = one(h.h, "s-parent",
+                         write_call("p-w", "plan.md", "final\n"));
+            INFO("parent's write: " << w);
+            CHECK(written(w));
+        }
+        THEN("an unrelated session still may not") {
+            auto w = one(h.h, "s-other",
+                         write_call("o-w", "plan.md", "clobber\n"));
+            INFO("other session's write: " << w);
+            CHECK(refused_unread(w));
+            CHECK(slurp(root.path / "plan.md") == "draft\n");
+        }
+    }
+}
+
+SCENARIO("gh#158: each session's todo list is its own",
+         "[api][gh158][v2.13.0]") {
+    TempDir root("todo_session");
+    Handle h(root.path);
+    REQUIRE(h.ok);
+
+    GIVEN("session A has a todo on the shared entropic server") {
+        auto a1 = one(h.h, "s-a", todo_add("a1", "alpha-task"));
+        REQUIRE(a1.find("alpha-task") != std::string::npos);
+
+        WHEN("session B adds its own") {
+            auto b1 = one(h.h, "s-b", todo_add("b1", "beta-task"));
+            THEN("B's list holds B's item and none of A's") {
+                INFO("B's list: " << b1);
+                CHECK(b1.find("beta-task") != std::string::npos);
+                CHECK(b1.find("alpha-task") == std::string::npos);
+                // Index 0 is B's own first item, not A's.
+                CHECK(b1.find("0. [pending] beta-task") != std::string::npos);
+            }
+            THEN("A's next list holds none of B's") {
+                auto a2 = one(h.h, "s-a", todo_add("a2", "alpha-two"));
+                INFO("A's list: " << a2);
+                CHECK(a2.find("alpha-task") != std::string::npos);
+                CHECK(a2.find("beta-task") == std::string::npos);
+            }
+        }
+    }
+}
+
+namespace {
+
+/**
+ * @brief How a session's conversation is ended in the release scenario.
+ * @internal
+ * @version 2.13.0
+ */
+enum class EndBy { drop, clear, restore };
+
+/**
+ * @brief End session `key`'s conversation through the named C API.
+ * @param h Handle.
+ * @param key Session key.
+ * @param how Which API.
+ * @return The API's return code.
+ * @internal
+ * @version 2.13.0
+ */
+entropic_error_t end_session(entropic_handle_t h, const char* key, EndBy how) {
+    switch (how) {
+    case EndBy::drop: return entropic_session_drop(h, key);
+    case EndBy::clear: return entropic_session_context_clear(h, key);
+    case EndBy::restore: return entropic_session_context_set(h, key, "[]");
+    }
+    return ENTROPIC_ERROR_INVALID_ARGUMENT;
+}
+
+/**
+ * @brief Sessions holding state on one default-set server (white-box).
+ * @param h Handle.
+ * @param server "filesystem" or "entropic".
+ * @return The server's session count, or SIZE_MAX when it is not a
+ *         SessionStateOwner (which fails every equality below).
+ * @internal
+ * @version 2.13.0
+ */
+std::size_t sessions_on(entropic_handle_t h, const std::string& server) {
+    auto* owner = dynamic_cast<entropic::SessionStateOwner*>(
+        h->server_manager->get_server(server));
+    return owner != nullptr ? owner->session_count() : SIZE_MAX;
+}
+
+}  // namespace
+
+SCENARIO("gh#158: ending a session's conversation releases its read "
+         "tracker and todo list — and only its own",
+         "[api][gh158][v2.13.0]") {
+    TempDir root("release");
+    root.put("f.txt", "orig\n");
+    Handle h(root.path);
+    REQUIRE(h.ok);
+
+    for (auto how : {EndBy::drop, EndBy::clear, EndBy::restore}) {
+        const char* name = how == EndBy::drop ? "entropic_session_drop"
+            : how == EndBy::clear ? "entropic_session_context_clear"
+                                  : "entropic_session_context_set";
+        DYNAMIC_SECTION("ended by " << name) {
+            // A and B have each read f.txt and each hold a todo.
+            REQUIRE(one(h.h, "s-a", read_call("a-r", "f.txt")).find("orig")
+                    != std::string::npos);
+            REQUIRE(one(h.h, "s-b", read_call("b-r", "f.txt")).find("orig")
+                    != std::string::npos);
+            one(h.h, "s-a", todo_add("a-t", "alpha-before"));
+            one(h.h, "s-b", todo_add("b-t", "beta-kept"));
+            REQUIRE(sessions_on(h.h, "filesystem") == 2U);
+            REQUIRE(sessions_on(h.h, "entropic") == 2U);
+
+            REQUIRE(end_session(h.h, "s-a", how) == ENTROPIC_OK);
+
+            // Bounded growth: A's entries are GONE, not merely emptied.
+            CHECK(sessions_on(h.h, "filesystem") == 1U);
+            CHECK(sessions_on(h.h, "entropic") == 1U);
+
+            // A's read died with its conversation: the model no longer
+            // holds that content, so a write must re-read first.
+            auto a_w = one(h.h, "s-a", write_call("a-w", "f.txt", "a\n"));
+            INFO("A's write after " << name << ": " << a_w);
+            CHECK(refused_unread(a_w));
+            CHECK(slurp(root.path / "f.txt") == "orig\n");
+
+            auto a_t = one(h.h, "s-a", todo_add("a-t2", "alpha-after"));
+            INFO("A's list after " << name << ": " << a_t);
+            CHECK(a_t.find("alpha-before") == std::string::npos);
+            CHECK(a_t.find("alpha-after") != std::string::npos);
+
+            // B's state is untouched.
+            auto b_t = one(h.h, "s-b", todo_add("b-t2", "beta-two"));
+            INFO("B's list: " << b_t);
+            CHECK(b_t.find("beta-kept") != std::string::npos);
+            auto b_w = one(h.h, "s-b", write_call("b-w", "f.txt", "b\n"));
+            INFO("B's write: " << b_w);
+            CHECK(written(b_w));
+        }
+    }
+}
+
+SCENARIO("gh#158: clearing the default conversation releases the default "
+         "session's read tracker",
+         "[api][gh158][v2.13.0]") {
+    TempDir root("release_default");
+    root.put("f.txt", "orig\n");
+    Handle h(root.path);
+    REQUIRE(h.ok);
+
+    GIVEN("the default session has read f.txt") {
+        REQUIRE(one(h.h, "", read_call("d-r", "f.txt")).find("orig")
+                != std::string::npos);
+        WHEN("entropic_context_clear runs") {
+            REQUIRE(entropic_context_clear(h.h) == ENTROPIC_OK);
+            THEN("a write must re-read first") {
+                auto w = one(h.h, "", write_call("d-w", "f.txt", "x\n"));
+                INFO("default write: " << w);
+                CHECK(refused_unread(w));
+                CHECK(slurp(root.path / "f.txt") == "orig\n");
             }
         }
     }

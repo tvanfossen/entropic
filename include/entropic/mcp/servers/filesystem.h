@@ -3,16 +3,18 @@
  * @file filesystem.h
  * @brief Filesystem MCP server — read/write/edit/glob/grep/list_directory.
  *
- * Enforces read-before-write via FileAccessTracker, size gate on reads,
- * ContextAnchor on read_file, path security (no traversal outside root).
+ * Enforces read-before-write via FileAccessTracker — per SESSION since
+ * gh#158 — size gate on reads, ContextAnchor on read_file, path security
+ * (no traversal outside root).
  *
- * @version 1.8.5
+ * @version 2.13.0
  */
 
 #pragma once
 
 #include <entropic/mcp/server_base.h>
 #include <entropic/mcp/servers/ignore_matcher.h>
+#include <entropic/mcp/session_scoped.h>
 #include <entropic/types/config.h>
 
 #include <filesystem>
@@ -27,38 +29,58 @@ namespace entropic {
 /**
  * @brief Tracks file read state for read-before-write enforcement.
  *
- * gh#158 (v2.13.0): locked. One FilesystemServer serves every unbound
- * session on a handle, and `concurrent_sessions` defaults true, so
- * read_file (records) and write_file / edit_file (consult) reach this map
- * from several run threads at once — an unsynchronized `unordered_map`
- * insert racing a lookup is heap corruption, not a stale answer.
+ * gh#158 (v2.13.0), two passes. First LOCKED: one FilesystemServer serves
+ * every unbound session on a handle, and `concurrent_sessions` defaults
+ * true, so read_file and write_file / edit_file reached one map from
+ * several run threads at once. Then re-scoped PER SESSION: a shared map
+ * let session B overwrite a file only session A had read. Reads are now
+ * recorded and consulted under the calling session's key, and released
+ * with that session's conversation (`release_session`).
  *
  * @version 2.13.0
  */
 class FileAccessTracker {
 public:
     /**
-     * @brief Record that a file was read.
+     * @brief Record that `session` read a file.
+     * @param session Session key the read belongs to ("" = default).
      * @param path Canonical file path.
      * @param hash Content hash at time of read.
      * @threadsafety Safe from any thread (gh#158).
      * @version 2.13.0
      */
-    void record_read(const std::string& path, size_t hash);
-
+    void record_read(const std::string& session, const std::string& path,
+                     size_t hash);
 
     /**
-     * @brief Check if a file was ever read.
+     * @brief Check whether `session` has read a file.
+     * @param session Session key asking.
      * @param path Canonical file path.
-     * @return true if previously read.
+     * @return true only when THIS session recorded a read of `path`.
      * @threadsafety Safe from any thread (gh#158).
      * @version 2.13.0
      */
-    bool was_read(const std::string& path) const;
+    bool was_read(const std::string& session, const std::string& path) const;
+
+    /**
+     * @brief Forget every read `session` recorded (gh#158).
+     * @param session Session key.
+     * @return true when the session had recorded reads.
+     * @threadsafety Safe from any thread.
+     * @version 2.13.0
+     */
+    bool release_session(const std::string& session);
+
+    /**
+     * @brief Sessions currently holding recorded reads.
+     * @return Session count.
+     * @version 2.13.0
+     */
+    std::size_t session_count() const;
 
 private:
-    mutable std::mutex mutex_;                      ///< Guards reads_ (gh#158)
-    std::unordered_map<std::string, size_t> reads_; ///< path → hash
+    /// @brief session → (canonical path → content hash). gh#158.
+    SessionScoped<std::unordered_map<std::string, size_t>> reads_;
 };
 
 /**
@@ -121,9 +143,14 @@ class ListDirectoryTool;
 
 /**
  * @brief Filesystem MCP server with read-before-write enforcement.
- * @version 1.8.5
+ *
+ * gh#158 (v2.13.0): also a SessionStateOwner — its read tracker is per
+ * session, and the facade releases a session's reads with its
+ * conversation.
+ *
+ * @version 2.13.0
  */
-class FilesystemServer : public MCPServerBase {
+class FilesystemServer : public MCPServerBase, public SessionStateOwner {
 public:
     /**
      * @brief Construct with root directory, config, and data dir.
@@ -169,6 +196,21 @@ public:
      * @version 1.8.5
      */
     FileAccessTracker& tracker();
+
+    /**
+     * @brief Release `key`'s recorded reads (gh#158).
+     * @param key Session key.
+     * @return true when the session had recorded reads.
+     * @version 2.13.0
+     */
+    bool release_session(const std::string& key) override;
+
+    /**
+     * @brief Sessions whose reads this server currently tracks (gh#158).
+     * @return Session count.
+     * @version 2.13.0
+     */
+    std::size_t session_count() const override;
 
     /**
      * @brief Get the filesystem config.
@@ -283,7 +325,7 @@ private:
     std::filesystem::path root_dir_;  ///< Project root
     FilesystemConfig config_;         ///< Filesystem config
     int max_read_bytes_ = 0;          ///< Size gate limit
-    FileAccessTracker tracker_;       ///< Read tracking
+    FileAccessTracker tracker_;       ///< Read tracking, per session (gh#158)
     IgnoreMatcher ignore_;            ///< gitignore + explorerignore (#15)
 
     /// @brief Guards the approver pair against a concurrent install.

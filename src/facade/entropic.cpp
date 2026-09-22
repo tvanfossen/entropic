@@ -3181,16 +3181,24 @@ entropic_error_t entropic_set_queue_observer(
 
 /**
  * @brief Clear conversation history.
+ *
+ * gh#158 (v2.13.0): also releases the cleared session's per-session tool
+ * state (read-before-write reads, todo list) — the model no longer holds
+ * what it read, so a later write must read again.
+ *
  * @param handle Engine handle returned by entropic_create.
  * @return ENTROPIC_OK on success.
  * @req REQ-API-005
  * @req REQ-ABI-001
- * @version 2.0.1
+ * @req REQ-LOOP-009
+ * @version 2.13.0
  */
 entropic_error_t entropic_context_clear(entropic_handle_t handle) {
     if (!handle || !handle->engine) { return ENTROPIC_ERROR_INVALID_HANDLE; }
     entropic::HandleApiLock lock(handle);  // gh#59 v2.3.1: mutex + log scope
+    const auto key = handle->engine->active_session_key();
     handle->engine->clear_conversation();
+    entropic::release_session_tool_state(handle, key);
     return ENTROPIC_OK;
 }
 
@@ -3423,14 +3431,16 @@ static bool parse_restore_payload(entropic_handle_t handle,
  * move under a turn is the conversation it appends to, not the handle.
  *
  * On success the session's resident KV is dropped, so the restored history
- * cannot decode against a prefix the conversation it replaced left behind.
+ * cannot decode against a prefix the conversation it replaced left behind,
+ * and its per-session tool state (gh#158: read-before-write reads, todo
+ * list) is released for the same reason.
  *
  * @param handle Engine handle (validated by the caller).
  * @param key Session to replace; "" = default.
  * @param messages_json JSON array of message objects.
  * @return ENTROPIC_OK, INVALID_ARGUMENT, or ALREADY_RUNNING.
  * @utility
- * @version 2.13.0
+ * @version 2.13.0 [reviewed]
  */
 static entropic_error_t session_context_set_inner(
     entropic_handle_t handle,
@@ -3454,6 +3464,9 @@ static entropic_error_t session_context_set_inner(
     if (handle->orchestrator) {
         handle->orchestrator->forget_session_kv(key);
     }
+    // gh#158: the reads and todos that described the replaced history
+    // describe nothing now.
+    entropic::release_session_tool_state(handle, key);
     return ENTROPIC_OK;
 }
 
@@ -3515,11 +3528,15 @@ entropic_error_t entropic_session_context_count(
  * why the issue observed it "is not isolation" — with two callers active
  * there was no ordering in which it was correct.
  *
+ * gh#158 (v2.13.0): also releases that session's per-session tool state
+ * (read-before-write reads, todo list), and only that session's.
+ *
  * @param handle Engine handle.
  * @param session_key Session to clear; NULL or "" = default session.
  * @return ENTROPIC_OK on success.
  * @req REQ-LOOP-001
- * @version 2.12.0
+ * @req REQ-LOOP-009
+ * @version 2.13.0
  */
 entropic_error_t entropic_session_context_clear(
     entropic_handle_t handle,
@@ -3528,17 +3545,25 @@ entropic_error_t entropic_session_context_clear(
         return ENTROPIC_ERROR_INVALID_HANDLE;
     }
     entropic::HandleApiLock lock(handle);
-    handle->engine->clear_conversation_for(session_key ? session_key : "");
+    const std::string key = session_key ? session_key : "";
+    handle->engine->clear_conversation_for(key);
+    entropic::release_session_tool_state(handle, key);
     return ENTROPIC_OK;
 }
 
 /**
  * @brief Forget a session entirely (gh#144, v2.12.0).
+ *
+ * gh#158 (v2.13.0): also releases that session's per-session tool state
+ * (read-before-write reads, todo list), so dropped sessions leave nothing
+ * behind on the servers.
+ *
  * @param handle Engine handle.
  * @param session_key Session to drop; "" is cleared rather than erased.
  * @return ENTROPIC_OK on success.
  * @req REQ-LOOP-001
- * @version 2.12.0
+ * @req REQ-LOOP-009
+ * @version 2.13.0
  */
 entropic_error_t entropic_session_drop(
     entropic_handle_t handle,
@@ -3547,7 +3572,9 @@ entropic_error_t entropic_session_drop(
         return ENTROPIC_ERROR_INVALID_HANDLE;
     }
     entropic::HandleApiLock lock(handle);
-    handle->engine->drop_session(session_key ? session_key : "");
+    const std::string key = session_key ? session_key : "";
+    handle->engine->drop_session(key);
+    entropic::release_session_tool_state(handle, key);
     return ENTROPIC_OK;
 }
 

@@ -8,6 +8,7 @@
 #include <entropic/mcp/servers/entropic_server.h>
 #include <entropic/mcp/server_base.h>
 #include <entropic/types/enums.h>
+#include <entropic/types/run_scope.h>
 #include <catch2/catch_test_macros.hpp>
 #include <nlohmann/json.hpp>
 
@@ -140,8 +141,8 @@ TEST_CASE("todo update and remove actions mutate the list",
 
 TEST_CASE("todo format_list returns '(empty)' on a fresh server",
           "[entropic][v2.3.10][coverage]") {
-    // Fresh server has empty items_; the empty-list branch in
-    // format_list (line 128-129) emits "(empty)".
+    // A session with no list yet renders the empty-list branch of
+    // format_todo_list, which emits "(empty)".
     EntropicServer server({"lead", "eng"}, TEST_DATA_DIR);
 
     json args;
@@ -152,6 +153,33 @@ TEST_CASE("todo format_list returns '(empty)' on a fresh server",
     auto resp = json::parse(envelope);
     REQUIRE(resp["result"].get<std::string>().find("(empty)")
             != std::string::npos);
+}
+
+TEST_CASE("gh#158: the todo list belongs to the calling session",
+          "[entropic][gh158][v2.13.0]") {
+    // The list is keyed by the session published to the dispatching
+    // thread; the ToolExecutor publishes the key it routed the call on.
+    EntropicServer server({"lead", "eng"}, TEST_DATA_DIR);
+    auto add = [&](const char* session, const char* item) {
+        RunSessionScope scope(session);
+        json args;
+        args["action"] = "add";
+        args["content"] = item;
+        auto resp = json::parse(server.execute("todo", args.dump()));
+        return resp["result"].get<std::string>();
+    };
+    add("s-a", "alpha");
+    auto b = add("s-b", "beta");
+    CHECK(b.find("beta") != std::string::npos);
+    CHECK(b.find("alpha") == std::string::npos);
+    CHECK(server.session_count() == 2U);
+
+    CHECK(server.release_session("s-a"));
+    CHECK(server.session_count() == 1U);
+    auto a = add("s-a", "alpha-again");
+    CHECK(a.find("alpha-again") != std::string::npos);
+    CHECK(a.find("0. [pending] alpha-again") != std::string::npos);
+    CHECK_FALSE(server.release_session("s-none"));
 }
 
 TEST_CASE("test_delegate_emits_stop", "[entropic]") {

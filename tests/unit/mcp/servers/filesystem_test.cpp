@@ -13,6 +13,7 @@
 #include <entropic/mcp/servers/filesystem.h>
 #include <entropic/mcp/server_base.h>
 #include <entropic/types/config.h>
+#include <entropic/types/run_scope.h>
 #include <catch2/catch_test_macros.hpp>
 #include <nlohmann/json.hpp>
 #include <unistd.h>
@@ -273,6 +274,73 @@ TEST_CASE("test_write_file_allows_write_after_read_even_if_changed",
     // read-and-unchanged. Documenting this honestly beats a test whose name
     // promises detection that no code performs.
     REQUIRE_FALSE(result.contains("error"));
+}
+
+TEST_CASE("gh#158: the read tracker is per session, and a lookup never "
+          "grows it", "[filesystem][gh158][v2.13.0]") {
+    /**
+     * @brief FileAccessTracker keys reads by session; was_read of an
+     *        unknown session allocates nothing; release forgets one
+     *        session only.
+     * @internal
+     * @version 2.13.0
+     */
+    FileAccessTracker t;
+    t.record_read("s-a", "/r/x.txt", 1);
+    CHECK(t.was_read("s-a", "/r/x.txt"));
+    CHECK_FALSE(t.was_read("s-b", "/r/x.txt"));
+    CHECK_FALSE(t.was_read("", "/r/x.txt"));
+    CHECK(t.session_count() == 1U);  // the lookups created nothing
+
+    t.record_read("s-b", "/r/y.txt", 2);
+    CHECK(t.session_count() == 2U);
+    CHECK(t.release_session("s-a"));
+    CHECK_FALSE(t.was_read("s-a", "/r/x.txt"));
+    CHECK(t.was_read("s-b", "/r/y.txt"));
+    CHECK(t.session_count() == 1U);
+    CHECK_FALSE(t.release_session("s-a"));  // already gone
+}
+
+TEST_CASE("gh#158: write_file consults the CALLING session's reads",
+          "[filesystem][gh158][v2.13.0]") {
+    /**
+     * @brief The server keys by the session published to the dispatching
+     *        thread (the ToolExecutor publishes the key it routed on).
+     * @internal
+     * @version 2.13.0
+     */
+    TempDir tmp;
+    write_test_file(tmp.path(), "f.txt", "original");
+    auto server = make_server(tmp.path());
+    json read_args;
+    read_args["path"] = "f.txt";
+    json write_args;
+    write_args["path"] = "f.txt";
+    write_args["content"] = "changed";
+
+    {
+        RunSessionScope a("s-a");
+        server.execute("read_file", read_args.dump());
+    }
+    json b_result;
+    {
+        RunSessionScope b("s-b");
+        b_result = parse_result(
+            server.execute("write_file", write_args.dump()));
+    }
+    REQUIRE(b_result.contains("error"));
+    CHECK(b_result["error"].get<std::string>() == "read_before_write");
+
+    json a_result;
+    {
+        RunSessionScope a("s-a");
+        a_result = parse_result(
+            server.execute("write_file", write_args.dump()));
+    }
+    CHECK_FALSE(a_result.contains("error"));
+    CHECK(server.session_count() == 1U);
+    CHECK(server.release_session("s-a"));
+    CHECK(server.session_count() == 0U);
 }
 
 TEST_CASE("test_edit_str_replace", "[filesystem]") {

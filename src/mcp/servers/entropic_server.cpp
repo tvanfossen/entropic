@@ -20,6 +20,7 @@
 #include <entropic/mcp/utf8_sanitize.h>
 #include <entropic/core/directives.h>
 #include <entropic/types/logging.h>
+#include <entropic/types/run_scope.h>
 
 #include <nlohmann/json.hpp>
 
@@ -51,13 +52,15 @@ struct TodoItem {
 /**
  * @brief Tool for managing a persistent todo list.
  *
- * gh#158 (v2.13.0): the list lives on the TOOL, so it is one list per
- * EntropicServer — shared by every session on that server set (the
- * handle's default set serves all unbound sessions). Locked; whether it
- * should be per session is an open design question (decision #66).
+ * gh#158 (v2.13.0): one list PER SESSION. The tool object is one per
+ * EntropicServer, and the handle's default set serves every unbound
+ * session, so a list kept on the object was shared — session B's result
+ * listed session A's items (and before that, two sessions appending raced
+ * the vector into heap corruption). The list is now keyed by the calling
+ * session and released with that session's conversation.
  *
  * @dg_internal
- * @version 2.13.0
+ * @version 2.13.0 [reviewed]
  */
 class TodoTool : public ToolBase {
 public:
@@ -89,33 +92,28 @@ public:
     std::string anchor_key(
         const std::string& args_json) const override;
 
+    /**
+     * @brief Forget a session's list (gh#158).
+     * @param key Session key.
+     * @return true when the session had a list.
+     * @dg_internal
+     * @version 2.13.0
+     */
+    bool release(const std::string& key) { return lists_.release(key); }
+
+    /**
+     * @brief Sessions holding a list (gh#158).
+     * @return Session count.
+     * @dg_internal
+     * @version 2.13.0
+     */
+    std::size_t session_count() const { return lists_.session_count(); }
+
 private:
-    /**
-     * @brief Apply an add/update/remove action to the todo list.
-     *
-     * Extracted from execute() to keep it knots-clean.
-     *
-     * @param action One of "add" / "update" / "remove".
-     * @param args Parsed tool arguments.
-     * @dg_internal
-     * @version 2.3.7
-     */
-    void apply_todo_action(const std::string& action,
-                           const nlohmann::json& args);
-
-    /// @brief gh#158: guards items_. The default server set has ONE
-    /// EntropicServer, so concurrent sessions append from several run
-    /// threads; unguarded, a racing push_back corrupted the vector.
-    std::mutex mutex_;
-    std::vector<TodoItem> items_; ///< Todo list state
-
-    /**
-     * @brief Format the todo list as human-readable text.
-     * @return Formatted todo list string.
-     * @dg_internal
-     * @version 1.8.5
-     */
-    std::string format_list() const;
+    /// @brief gh#158: session key → that session's list, under a leaf
+    /// mutex. Concurrent sessions reach one EntropicServer from several
+    /// run threads.
+    SessionScoped<std::vector<TodoItem>> lists_;
 };
 
 /**
@@ -130,87 +128,86 @@ std::string TodoTool::anchor_key(
     return "todo_state";
 }
 
+namespace {
+
 /**
- * @brief Format todo list as numbered text.
- * @return Formatted string.
+ * @brief Format a todo list as numbered text.
+ * @param items The list.
+ * @return Formatted string, or "(empty)".
  * @dg_internal
- * @version 1.8.5
+ * @version 2.13.0
  */
-std::string TodoTool::format_list() const {
-    if (items_.empty()) {
+std::string format_todo_list(const std::vector<TodoItem>& items) {
+    if (items.empty()) {
         return "(empty)";
     }
     std::string out;
-    for (size_t i = 0; i < items_.size(); ++i) {
+    for (size_t i = 0; i < items.size(); ++i) {
         out += std::to_string(i) + ". [" +
-               items_[i].status + "] " +
-               items_[i].content + "\n";
+               items[i].status + "] " +
+               items[i].content + "\n";
     }
     return out;
 }
 
 /**
- * @brief Dispatch todo action and build response.
- * @param args_json JSON with action, content, index, status.
- * @return ServerResponse with formatted list and directives.
- * @dg_internal
- * @version 1.8.5
- */
-/**
- * @brief Apply an add/update/remove action to the todo list.
+ * @brief Apply an add/update/remove action to one session's list.
+ * @param items The calling session's list.
  * @param action One of "add" / "update" / "remove".
  * @param args Parsed tool arguments.
  * @dg_internal
- * @version 2.3.7
+ * @version 2.13.0
  */
-void TodoTool::apply_todo_action(const std::string& action,
-                                 const nlohmann::json& args) {
+void apply_todo_action(std::vector<TodoItem>& items,
+                       const std::string& action,
+                       const nlohmann::json& args) {
     if (action == "add") {
         std::string content = args.at("content").get<std::string>();
-        items_.push_back({content, "pending"});
+        items.push_back({content, "pending"});
         logger->info("[todo] add: {}", content);
     } else if (action == "update") {
         auto idx = args.at("index").get<size_t>();
-        if (idx < items_.size()) {
-            items_[idx].status = args.value("status", items_[idx].status);
-            items_[idx].content = args.value("content", items_[idx].content);
-            logger->info("[todo] update #{}: {}", idx, items_[idx].status);
+        if (idx < items.size()) {
+            items[idx].status = args.value("status", items[idx].status);
+            items[idx].content = args.value("content", items[idx].content);
+            logger->info("[todo] update #{}: {}", idx, items[idx].status);
         }
     } else if (action == "remove") {
         auto idx = args.at("index").get<size_t>();
-        if (idx < items_.size()) {
+        if (idx < items.size()) {
             logger->info("[todo] remove #{}", idx);
-            items_.erase(items_.begin() + static_cast<ptrdiff_t>(idx));
+            items.erase(items.begin() + static_cast<ptrdiff_t>(idx));
         }
     }
 }
 
+}  // namespace
+
 /**
  * @brief Execute the todo tool (add/update/remove) and emit directives.
  *
- * gh#158 (v2.13.0): the action and the render run under ONE hold of
- * `mutex_`, so the list a call returns is the list its own action
- * produced. The TSan run before this aborted with an impossible
- * allocation size inside `items_.push_back` — heap corruption, not a
- * stale read.
+ * gh#158 (v2.13.0): acts on THE CALLING SESSION's list — the session the
+ * ToolExecutor routed this call on, published to its thread. The action
+ * and the render run under ONE hold of the list's lock, so the list a
+ * call returns is the list its own action produced.
  *
  * @param args_json JSON with "action" plus the action's own fields.
  * @return A ServerResponse whose result is the re-rendered todo list
  *         and whose directives are context_anchor + notify_presenter.
  * @req REQ-MCP-024
  * @req REQ-LOOP-009
- * @version 2.13.0
+ * @version 2.13.0 [reviewed]
  */
 ServerResponse TodoTool::execute(const std::string& args_json) {
     auto args = nlohmann::json::parse(args_json);
     std::string action = args.at("action").get<std::string>();
 
-    std::string rendered;
-    {
-        std::lock_guard<std::mutex> lock(mutex_);
-        apply_todo_action(action, args);
-        rendered = format_list();
-    }
+    const auto session = current_run_session();
+    std::string rendered = lists_.with(session, [&](auto& items) {
+        apply_todo_action(items, action, args);
+        return format_todo_list(items);
+    });
+    logger->info("[todo] session='{}' action={}", session, action);
 
     nlohmann::json result;
     result["todo_state"] = rendered;
@@ -1759,6 +1756,28 @@ void EntropicServer::set_state_provider(
         followup_->set_provider(&state_provider_);
     }
     logger->info("State provider set for introspection tools");
+}
+
+/**
+ * @brief Release a session's todo list (gh#158).
+ * @param key Session key.
+ * @return true when the session had a list.
+ * @req REQ-MCP-024
+ * @req REQ-LOOP-009
+ * @version 2.13.0
+ */
+bool EntropicServer::release_session(const std::string& key) {
+    return todo_->release(key);
+}
+
+/**
+ * @brief Sessions holding a todo list on this server (gh#158).
+ * @return Session count.
+ * @req REQ-LOOP-009
+ * @version 2.13.0
+ */
+std::size_t EntropicServer::session_count() const {
+    return todo_->session_count();
 }
 
 } // namespace entropic

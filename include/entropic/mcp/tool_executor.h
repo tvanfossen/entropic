@@ -343,14 +343,19 @@ private:
 
     /**
      * @brief Process a single tool call (precondition check + execute).
+     *
+     * Works on a COPY of @p incoming: gh#168 lets the PRE_TOOL_CALL hook
+     * rewrite the call's arguments, and everything after that point must
+     * observe the rewritten call.
+     *
      * @param ctx Loop context.
-     * @param call Tool call.
+     * @param incoming Tool call as the model emitted it.
      * @return Result messages.
      * @dg_internal
-     * @version 1.8.5
+     * @version 2.13.0
      */
     std::vector<Message> process_single_call(
-        LoopContext& ctx, const ToolCall& call);
+        LoopContext& ctx, const ToolCall& incoming);
 
     /**
      * @brief Check if batch should stop.
@@ -556,14 +561,58 @@ private:
 
     /**
      * @brief Fire PRE_TOOL_CALL hook; returns true if cancelled.
-     * @param ctx Loop context.
-     * @param call Tool call.
+     *
+     * gh#168 (v2.13.0): when the hook returns 0 AND writes
+     * ``*modified_json``, the modification is APPLIED to @p call before
+     * dispatch. Pre-2.13.0 this path did ``free(mod); return rc != 0;``
+     * — the channel ``entropic.h`` advertises in its allocation
+     * contract was discarded for every tool on every call.
+     *
+     * @param ctx Loop context (read-only).
+     * @param[in,out] call Tool call; its ARGUMENTS may be rewritten by
+     *                the hook. Untouched when the hook cancels, writes
+     *                nothing, or hands back a payload the guard refuses.
      * @return true if hook returned non-zero (cancel).
      * @dg_internal
-     * @version 2.0.6-rc19
+     * @version 2.13.0
      */
-    bool fire_pre_tool_hook(const LoopContext& ctx,
-                            const ToolCall& call);
+    bool fire_pre_tool_hook(const LoopContext& ctx, ToolCall& call);
+
+    /**
+     * @brief Apply a PRE_TOOL_CALL hook's ``*modified_json`` to a call.
+     *
+     * gh#168 (v2.13.0). The payload is the same object shape the hook
+     * received in its ``context_json``; only ``args`` is read, and only
+     * ``args`` may change:
+     *
+     * - ``args`` MUST be present and MUST be a JSON object. It replaces
+     *   both ``ToolCall::arguments_json`` and ``ToolCall::arguments``,
+     *   so everything computed downstream — schema validation, the
+     *   duplicate-detection key, permission patterns, the POST hook's
+     *   context — sees one consistent call.
+     * - ``tool_name``, if present, MUST equal the call's own name. A
+     *   hook may enrich a call; it may NOT re-route it to a different
+     *   tool, which would let a plugin bypass per-tier allowed_tools.
+     * - The payload crosses a plugin ``.so``, so it is run through
+     *   mcp::sanitize_utf8 BEFORE parsing (gh#113/#114/#132 class);
+     *   nlohmann rejects an ill-formed byte inside a string, so
+     *   sanitizing after the parse would refuse a merely-dirty payload.
+     *
+     * REFUSAL IS LOUD AND TOTAL: any violation logs at ERROR with the
+     * reason and the verbatim payload, and the call is then dispatched
+     * with the model's ORIGINAL arguments. Cancellation keeps exactly
+     * one channel (a non-zero return), so a buggy host hook can never
+     * turn itself into an agent-visible tool denial, and a partly-valid
+     * payload is never half-applied.
+     *
+     * @param[in,out] call Tool call whose arguments are rewritten.
+     * @param modified The hook's NUL-terminated payload (non-null).
+     * @return true when the rewrite was applied, false when refused.
+     * @dg_internal
+     * @version 2.13.0
+     */
+    static bool apply_pre_tool_modification(ToolCall& call,
+                                            const char* modified);
 
     /**
      * @brief Fire tool complete callback.

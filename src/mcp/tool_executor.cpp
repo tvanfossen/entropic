@@ -902,7 +902,7 @@ PreconditionCheck ToolExecutor::check_approval_pc(
  * path drops the hook.
  *
  * @param ctx Loop context.
- * @param call Tool call.
+ * @param incoming Tool call as the model emitted it.
  * @return Exactly one Message: the executed tool's result, the
  *         hook-cancelled denial, or the precondition rejection — each
  *         carrying its result_kind in metadata.
@@ -911,7 +911,12 @@ PreconditionCheck ToolExecutor::check_approval_pc(
  * @version 2.13.0
  */
 std::vector<Message> ToolExecutor::process_single_call(
-    LoopContext& ctx, const ToolCall& call) {
+    LoopContext& ctx, const ToolCall& incoming) {
+    // gh#168 (v2.13.0): the PRE_TOOL_CALL hook may rewrite the call's
+    // ARGUMENTS, so the executor works on its own copy — preconditions,
+    // dispatch, the dup cache and the POST hook all then see one
+    // consistent call rather than the model's superseded version.
+    ToolCall call = incoming;
     // Hook: PRE_TOOL_CALL first — fires for every attempt, including
     // those that a precondition will reject. (E9, 2.0.6-rc19)
     if (fire_pre_tool_hook(ctx, call)) {
@@ -1056,29 +1061,138 @@ void ToolExecutor::finalize_tool_call(LoopContext& ctx, const ToolCall& call,
 }
 
 /**
+ * @brief Does a PRE_TOOL_CALL payload try to change the call's identity?
+ *
+ * gh#168. Absent `tool_name` is fine — the hook simply did not restate
+ * it. Anything else must be the string the call already carries; a
+ * non-string value counts as an attempted rename, not as "absent".
+ *
+ * @param parsed Parsed (object) payload.
+ * @param tool_name The fully-qualified name of the call being made.
+ * @return true when the payload names a different tool.
+ * @dg_internal
+ * @version 2.13.0
+ */
+static bool pre_mod_renames_tool(const nlohmann::json& parsed,
+                                 const std::string& tool_name) {
+    auto it = parsed.find("tool_name");
+    return it != parsed.end()
+        && !(it->is_string() && it->get<std::string>() == tool_name);
+}
+
+/**
+ * @brief Why a PRE_TOOL_CALL modification must be refused (gh#168).
+ * @param parsed Parsed payload (any JSON type).
+ * @param tool_name Name of the call being modified.
+ * @return Empty when the payload is acceptable; otherwise the reason,
+ *         phrased for the ERROR log a host operator has to act on.
+ * @dg_internal
+ * @version 2.13.0
+ */
+static std::string pre_mod_refusal(const nlohmann::json& parsed,
+                                   const std::string& tool_name) {
+    std::string reason;
+    if (!parsed.is_object()) {
+        reason = "payload is not a JSON object";
+    } else if (pre_mod_renames_tool(parsed, tool_name)) {
+        reason = "payload changes the call's identity — a hook may "
+                 "rewrite arguments, never the tool it routes to";
+    } else if (!parsed.contains("args")
+               || !parsed.at("args").is_object()) {
+        reason = "payload carries no 'args' object";
+    }
+    return reason;
+}
+
+/**
+ * @brief Replace a call's arguments from a validated `args` object.
+ *
+ * gh#168. BOTH representations are rewritten: `arguments_json` (what
+ * serialize_args hands the server and the hooks) and the `arguments`
+ * map (what tool_call_key hashes for duplicate detection). Writing only
+ * one would let a rewritten call collide with the original in the dup
+ * cache. Non-string values are dumped, matching the convention
+ * interface_factory uses when it builds a ToolCall from model output.
+ *
+ * @param call Tool call to rewrite.
+ * @param args The payload's `args` object.
+ * @dg_internal
+ * @version 2.13.0
+ */
+static void overwrite_call_arguments(ToolCall& call,
+                                     const nlohmann::json& args) {
+    call.arguments_json = args.dump();
+    call.arguments.clear();
+    for (const auto& [k, v] : args.items()) {
+        call.arguments[k] = v.is_string() ? v.get<std::string>() : v.dump();
+    }
+}
+
+/**
+ * @brief Apply a PRE_TOOL_CALL hook's modification — see header (gh#168).
+ * @param call Tool call whose arguments are rewritten.
+ * @param modified The hook's payload.
+ * @return true when applied, false when refused.
+ * @req REQ-MCP-017
+ * @version 2.13.0
+ */
+bool ToolExecutor::apply_pre_tool_modification(ToolCall& call,
+                                               const char* modified) {
+    // A registered hook is a plugin .so — an external boundary in BOTH
+    // directions (gh#3 / gh#111 / gh#132). Sanitize BEFORE the parse:
+    // nlohmann rejects an ill-formed UTF-8 byte inside a string, so
+    // sanitizing afterwards would refuse a payload that is merely dirty.
+    const std::string sanitized = mcp::sanitize_utf8(modified);
+    auto parsed = nlohmann::json::parse(sanitized, nullptr, false);
+    std::string refusal = parsed.is_discarded()
+        ? std::string{"payload is not valid JSON"}
+        : pre_mod_refusal(parsed, call.name);
+    if (!refusal.empty()) {
+        logger->error(
+            "[hook] PRE_TOOL_CALL modification REFUSED for '{}': {}. "
+            "Dispatching the call with the model's own arguments. "
+            "Payload: {}", call.name, refusal, sanitized);
+        return false;
+    }
+    overwrite_call_arguments(call, parsed.at("args"));
+    logger->info("[hook] PRE_TOOL_CALL rewrote args for '{}': {}",
+                 call.name, call.arguments_json);
+    return true;
+}
+
+/**
  * @brief Fire PRE_TOOL_CALL hook.
  *
  * Fires for EVERY attempt, including ones a precondition will go on to
  * reject, carrying tool name, args, tier and iteration.
  *
+ * gh#168 (v2.13.0): a proceed (rc == 0) that writes `*modified_json` now
+ * rewrites the call's ARGUMENTS before dispatch instead of having the
+ * string freed unread. A cancel (rc != 0) still frees without applying
+ * — the cancelled call is never dispatched, so there is nothing to
+ * modify, and overloading the two signals would let a malformed payload
+ * masquerade as a policy denial.
+ *
  * @param ctx Loop context.
- * @param call Tool call.
+ * @param[in,out] call Tool call; arguments may be rewritten in place.
  * @return true when the hook returned non-zero, cancelling the call
  *         before dispatch; false when no hook is wired or it allowed the
- *         call. Any string the pre-hook wrote is freed, not applied —
- *         only POST_TOOL_CALL may rewrite content.
+ *         call.
  * @req REQ-MCP-017
- * @version 2.0.6-rc19
+ * @version 2.13.0
  */
 bool ToolExecutor::fire_pre_tool_hook(
-    const LoopContext& ctx, const ToolCall& call) {
+    const LoopContext& ctx, ToolCall& call) {
     if (hook_iface_.fire_pre == nullptr) { return false; }
     auto json = build_pre_tool_json(call, ctx.locked_tier,
                                     ctx.metrics.iterations);
     char* mod = nullptr;
     int rc = hook_iface_.fire_pre(hook_iface_.registry,
         ENTROPIC_HOOK_PRE_TOOL_CALL, json.c_str(), &mod);
-    free(mod);
+    if (mod != nullptr) {
+        if (rc == 0) { apply_pre_tool_modification(call, mod); }
+        free(mod);
+    }
     return rc != 0;
 }
 

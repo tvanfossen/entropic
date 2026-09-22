@@ -6406,11 +6406,44 @@
     '
   version: 2.10.4
 - id: REQ-MCP-017
-  name: PRE/POST_TOOL_CALL hooks fire on every exit path and POST may rewrite the result
+  name: PRE/POST_TOOL_CALL hooks fire on every exit path, PRE may rewrite the args
+    and POST the result
   module: MCP Servers and Tool Dispatch
   description: 'PRE_TOOL_CALL fires with tool name, args, tier, and iteration before
 
-    dispatch; a non-zero return cancels the call. POST_TOOL_CALL fires for
+    dispatch; a non-zero return cancels the call. A PRE hook that proceeds
+
+    (returns 0) and writes `*modified_json` REWRITES THE ARGUMENTS of the call
+
+    before dispatch: the payload is an object of the same shape the hook
+
+    received and only its `args` object is read, replacing both
+
+    ToolCall::arguments_json and ToolCall::arguments so schema validation, the
+
+    duplicate key, permission patterns and the POST context all observe one
+
+    consistent call. Only the arguments may change — a payload that is not
+
+    valid JSON, is not an object, carries no `args` object, or names a
+
+    different `tool_name` is REFUSED IN FULL: the engine logs at ERROR with the
+
+    reason and the verbatim payload and dispatches the model''s original
+
+    arguments, never half-applying and never converting the refusal into a
+
+    cancellation (cancellation keeps exactly one channel, a non-zero return),
+
+    because a hook may enrich a call but must not re-route it past per-tier
+
+    allowed_tools. The payload crosses a plugin .so, so it is sanitized to
+
+    valid UTF-8 BEFORE parsing. Before v2.13.0 the engine freed
+
+    `*modified_json` on this path without applying it, so no PRE_TOOL_CALL hook
+
+    could change any call on any tool (gh#168). POST_TOOL_CALL fires for
 
     EVERY outcome — executed, pre-hook cancel, and each precondition rejection —
 
@@ -6442,7 +6475,19 @@
 
     the modified string on the success, duplicate-rejection, and
 
-    schema-rejection paths alike.
+    schema-rejection paths alike; When a PRE hook returns 0 and writes an
+
+    `args` object, Then the dispatched tool receives those arguments and the
+
+    POST context reports them; When that payload names a different tool, is
+
+    not JSON, is not an object, carries no `args`, or carries a non-object
+
+    `args`, Then the call dispatches with the model''s own arguments; When a
+
+    PRE hook writes a payload AND returns non-zero, Then the call is still
+
+    cancelled and the payload is not applied.
 
     '
   verified_by: '"PRE/POST_TOOL_CALL fire for successful calls", "PRE_TOOL_CALL cancel
@@ -6455,12 +6500,24 @@
 
     schema-rejection content", "POST_TOOL_CALL with *modified_json == NULL
 
-    leaves content untouched", "Chained POST_TOOL_CALL hooks: last write wins"
+    leaves content untouched", "Chained POST_TOOL_CALL hooks: last write wins",
+
+    "gh#168: a PRE_TOOL_CALL hook''s modified args reach the tool", "gh#168:
+
+    the rewrite is visible to the dup cache and POST hook", "gh#168: a
+
+    modification that renames the tool is refused", "gh#168: a malformed
+
+    modification is refused, not half-applied", "gh#168: a rewritten payload
+
+    carrying bad UTF-8 is sanitized, not rejected", "gh#168: a non-zero return
+
+    still cancels, modification or not"
 
     — tests/unit/mcp/tool_executor_test.cpp
 
     '
-  version: 2.10.4
+  version: 2.13.0
 - id: REQ-MCP-019
   name: Tool results are size-capped with a marker and classified into typed kinds
   module: MCP Servers and Tool Dispatch

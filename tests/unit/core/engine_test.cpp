@@ -3374,3 +3374,206 @@ SCENARIO("gh#169: the parent relay receives the capped child's real work",
         }
     }
 }
+
+// ── gh#181 (v2.13.0): the thinking-budget hard cut, same defect ──────
+//
+// Sibling of gh#169 on the OTHER budget path. AgentEngine::hard_cut_budget
+// pushed an assistant message whose CONTENT was
+// "[thinking budget exhausted — the turn was hard-cut after the completion
+//  nudge went unheeded; no tool call was emitted]".
+// DelegationManager::extract_summary takes the last assistant message, so a
+// child hard-cut by the thinking budget handed its parent that string where
+// its result belonged — identical in kind to the iteration cap.
+//
+// The two differ in LIKELIHOOD, not in kind: the cut fires when a model
+// narrates instead of calling a tool, so "it produced something substantive
+// first" is less often true here. That is an argument for carrying whatever
+// exists and saying plainly when nothing does — the empty case below is the
+// one this path hits more often, and it must stay distinguishable.
+//
+// The helpers (last_assistant / capturing hooks) are gh#169's, reused
+// deliberately: both paths are asserted through the same lens.
+
+SCENARIO("gh#181: a thinking-budget hard cut carries the run's real content",
+         "[engine][gh181][budget][regression][2.13.0]") {
+    GIVEN("a model that narrates real work and never calls a tool") {
+        MockInference mock;
+        mock.is_complete = false;   // never completes naturally
+        // 54 chars ≈ 13 token-equivalents — one turn exceeds the limit.
+        mock.response =
+            "inspection done: the grain silo hatch seal is cracked";
+        auto iface = make_mock_interface(mock);
+        LoopConfig lc;
+        lc.max_iterations = 10;     // high — the BUDGET must stop it first
+        lc.budget_mode = entropic::BudgetMode::tokens;
+        lc.budget_limit = 10;
+        CompactionConfig cc;
+        AgentEngine engine(iface, lc, cc);
+
+        WHEN("the budget nudges and then hard-cuts the turn") {
+            LoopContext ctx;
+            ctx.messages = make_messages();
+            engine.run_loop(ctx);
+
+            THEN("the cut fired before the iteration cap") {
+                CHECK(mock.generate_call_count == 2);
+            }
+            AND_THEN("the final assistant message carries the real work") {
+                // RED before the fix: the cut message REPLACED the run's
+                // output, so a parent read the placeholder where the
+                // agent's own text belonged.
+                CHECK(gh169::last_assistant(ctx).find("grain silo hatch")
+                      != std::string::npos);
+            }
+            AND_THEN("the cut annotates it rather than replacing it") {
+                CHECK(gh169::last_assistant(ctx).find(
+                          "thinking budget exhausted")
+                      != std::string::npos);
+            }
+            AND_THEN("terminal_reason keeps its own distinct value") {
+                auto it = ctx.metadata.find("terminal_reason");
+                REQUIRE(it != ctx.metadata.end());
+                CHECK(it->second == "budget_exhausted_thinking");
+                CHECK(ctx.state == AgentState::COMPLETE);
+            }
+            AND_THEN("the carry is recorded as a typed signal") {
+                auto it = ctx.metadata.find("cap_carried_content");
+                REQUIRE(it != ctx.metadata.end());
+                CHECK(it->second == "true");
+            }
+        }
+    }
+}
+
+SCENARIO("gh#181: a hard cut with nothing substantive stays distinguishable",
+         "[engine][gh181][budget][regression][2.13.0]") {
+    GIVEN("a model burning the budget on whitespace") {
+        MockInference mock;
+        mock.is_complete = false;
+        // Charged against the budget (600 chars ≈ 150 tokens) but not
+        // substantive — "substantive" is byte-level, not length-based.
+        mock.response = std::string(600, ' ');
+        auto iface = make_mock_interface(mock);
+        LoopConfig lc;
+        lc.max_iterations = 10;
+        lc.budget_mode = entropic::BudgetMode::tokens;
+        lc.budget_limit = 100;
+        CompactionConfig cc;
+        AgentEngine engine(iface, lc, cc);
+
+        WHEN("the budget hard-cuts the turn") {
+            LoopContext ctx;
+            ctx.messages = make_messages();
+            engine.run_loop(ctx);
+
+            THEN("the cut message says so in words") {
+                auto last = gh169::last_assistant(ctx);
+                CHECK(last.find("no substantive output")
+                      != std::string::npos);
+                CHECK(last.find("thinking budget exhausted")
+                      != std::string::npos);
+            }
+            AND_THEN("and in the typed signal a parent can branch on") {
+                auto it = ctx.metadata.find("cap_carried_content");
+                REQUIRE(it != ctx.metadata.end());
+                CHECK(it->second == "false");
+            }
+            AND_THEN("terminal_reason keeps its own distinct value") {
+                auto it = ctx.metadata.find("terminal_reason");
+                REQUIRE(it != ctx.metadata.end());
+                CHECK(it->second == "budget_exhausted_thinking");
+            }
+        }
+    }
+}
+
+SCENARIO("gh#181: the parent relay receives the hard-cut child's real work",
+         "[engine][gh181][budget][delegation][regression][2.13.0]") {
+    GIVEN("a lead relaying one delegate whose child burns its budget") {
+        MockInference mock;
+        mock.is_complete = false;
+        // 63 chars ≈ 15 token-equivalents; limit 12 → nudge, then cut.
+        mock.response =
+            "field report: the culvert at mile 12 is scoured, add riprap";
+        // Parent's FIRST parse returns a tool call so the injector fires;
+        // every later parse falls back to "[]", so the child narrates its
+        // way into the hard cut without ever emitting entropic.complete.
+        mock.tool_calls_queue.push_back(
+            R"([{"name":"test.mock","arguments":{}}])");
+        mock.tool_calls_json = "[]";
+        auto iface = make_mock_interface(mock);
+        LoopConfig lc;
+        lc.max_iterations = 6;      // the cut must land before the cap
+        lc.budget_mode = entropic::BudgetMode::tokens;
+        lc.budget_limit = 12;
+        CompactionConfig cc;
+        AgentEngine engine(iface, lc, cc);
+        engine.set_relay_single_delegate("lead");
+
+        gh169::DelegHookCap cap;
+        engine.set_hooks(gh169::make_capturing_hooks(&cap));
+
+        TierResolutionInterface tri{};
+        tri.resolve_tier = [](const std::string&, void*) -> ChildContextInfo {
+            ChildContextInfo info;
+            info.valid = true;
+            info.system_prompt = "child agent";
+            return info;
+        };
+        engine.set_tier_resolution(tri);
+
+        DelegInjector injector;
+        ToolExecutionInterface tex{};
+        tex.process_tool_calls = inject_delegation_once;
+        tex.user_data = &injector;
+        engine.set_tool_executor(tex);
+
+        WHEN("the parent delegates and the child is hard-cut") {
+            LoopContext ctx;
+            ctx.messages = make_messages();
+            ctx.locked_tier = "lead";
+            engine.run_loop(ctx);
+
+            auto it = ctx.metadata.find("explicit_completion_summary");
+            REQUIRE(it != ctx.metadata.end());
+
+            THEN("the relayed summary carries the child's own output") {
+                // RED before the fix: the relay read
+                // "[partial — budget_exhausted] [thinking budget
+                //  exhausted — ... no tool call was emitted]" and the
+                // lead reported the work as missing.
+                CHECK(it->second.find("culvert at mile 12")
+                      != std::string::npos);
+            }
+            AND_THEN("it was the thinking-budget cut that ended the child") {
+                CHECK(it->second.find("thinking budget exhausted")
+                      != std::string::npos);
+            }
+            AND_THEN("it is still tagged partial") {
+                CHECK(it->second.substr(0, 8) == "[partial");
+                CHECK(ctx.metadata.at("relay_status")
+                      == "budget_exhausted_relayed");
+            }
+            AND_THEN("ON_DELEGATE_COMPLETE keeps its field names and "
+                     "semantics") {
+                // A consumer parses success / target_tier / result_kind
+                // out of this payload; a hard-cut child is still a failed
+                // delegation, and carrying its work does not change that.
+                std::string deleg_json;
+                for (const auto& [point, json] : cap.post) {
+                    if (point == ENTROPIC_HOOK_ON_DELEGATE_COMPLETE) {
+                        deleg_json = json;
+                    }
+                }
+                REQUIRE_FALSE(deleg_json.empty());
+                auto j = nlohmann::json::parse(deleg_json);
+                CHECK(j.at("success").get<bool>() == false);
+                CHECK(j.at("target_tier").get<std::string>() == "eng");
+                CHECK(j.at("result_kind").get<std::string>()
+                      == "delegation_failed");
+                CHECK(j.at("summary").get<std::string>().find(
+                          "culvert at mile 12") != std::string::npos);
+            }
+        }
+    }
+}

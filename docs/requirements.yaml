@@ -4963,7 +4963,8 @@
     '
   version: 2.10.4
 - id: REQ-LOOP-005
-  name: Opt-in thinking-budget gating with nudge then hard cut
+  name: Opt-in thinking-budget gating with nudge then a hard cut that carries the
+    run's real output
   module: Agent Loop
   description: 'When budget_mode is tokens or wall_clock and budget_limit > 0, the
 
@@ -4985,6 +4986,44 @@
 
     defaults to off, preserving pre-v2.5.0 behavior exactly.
 
+    The hard-cut message CARRIES the run''s last substantive assistant
+
+    content and ANNOTATES it — "<the agent''s own output>\n\n[thinking
+
+    budget exhausted after the completion nudge went unheeded; no tool
+
+    call was emitted — the text above is the agent''s last substantive
+
+    output; it did not signal completion]" — instead of replacing it. A
+
+    run that produced nothing substantive instead yields "[thinking
+
+    budget exhausted ... — no substantive output was produced before the
+
+    cut]", and metadata["cap_carried_content"] carries the same
+
+    distinction as a typed "true"/"false" so a consumer need not match
+
+    prose.
+
+    WHY the carry (gh#181): DelegationManager::extract_summary takes the
+
+    last assistant message as DelegationResult::summary, so before
+
+    v2.13.0 the placeholder REPLACED a hard-cut child''s work in the
+
+    parent-tier relay and in the ON_DELEGATE_COMPLETE payload — the
+
+    sibling of gh#169 on the other budget path. This stop and the
+
+    iteration cap (REQ-LOOP-002) share ONE implementation,
+
+    AgentEngine::finish_with_carried_output, and differ only in reason
+
+    text and in terminal_reason, which keeps its distinct value
+
+    "budget_exhausted_thinking".
+
     The window resets only on genuine progress — a tool result whose
 
     result_kind is ok or ok_empty (gh#84). Rejected duplicates,
@@ -5004,6 +5043,28 @@
 
     hard cut with terminal_reason "budget_exhausted_thinking" follows.
 
+    Given a run whose turns produced real content, When the hard cut
+
+    fires, Then the last assistant message contains that content AND the
+
+    cut annotation, and metadata["cap_carried_content"] == "true".
+
+    Given a run whose every turn was whitespace, When the hard cut fires,
+
+    Then the last assistant message says no substantive output was
+
+    produced and metadata["cap_carried_content"] == "false".
+
+    Given a relay-tier lead whose single delegate is hard-cut by the
+
+    thinking budget, When the child loop ends, Then the relayed summary
+
+    is tagged "[partial" AND contains the child''s own output, and the
+
+    ON_DELEGATE_COMPLETE payload still reports success=false, the target
+
+    tier, and result_kind="delegation_failed".
+
     Given a successful tool call, When the budget is charged, Then the
 
     counters and the nudge latch reset.
@@ -5021,7 +5082,13 @@
 
     rejected-duplicate tool calls do NOT reset the budget"; "gh#84: a
 
-    successful tool call DOES reset the budget" —
+    successful tool call DOES reset the budget"; "gh#181: a
+
+    thinking-budget hard cut carries the run''s real content"; "gh#181: a
+
+    hard cut with nothing substantive stays distinguishable"; "gh#181:
+
+    the parent relay receives the hard-cut child''s real work" —
 
     /home/tvanfossen/Projects/entropic/tests/unit/core/engine_test.cpp
 

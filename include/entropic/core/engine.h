@@ -1332,6 +1332,41 @@ private:
     void force_iteration_cap_completion(LoopContext& ctx);
 
     /**
+     * @brief Synthesize the final assistant message a forced stop owes.
+     *
+     * The mechanism BOTH engine-authored terminals share — the
+     * iteration cap (gh#169) and the thinking-budget hard cut (gh#181,
+     * v2.13.0). Carries the run's last substantive assistant content,
+     * annotates it with @p reason rather than replacing it, writes
+     * @p terminal_reason and the typed
+     * ``ctx.metadata["cap_carried_content"]`` ("true" / "false"), and
+     * forces COMPLETE.
+     *
+     * One implementation on purpose: the two stops differ only in their
+     * reason text and their terminal_reason value, and two hand-rolled
+     * copies of the same annotation is how they drift apart.
+     * ``cap_carried_content`` is likewise ONE key for both, so a
+     * consumer asks "did the handed-back text contain the agent's own
+     * work?" in one place; ``terminal_reason`` already says which stop
+     * fired.
+     *
+     * @param ctx Loop context (messages, metadata, state mutated).
+     * @param reason Reason clause rendered inside the trailing bracket.
+     * @param stop_noun What stopped the run ("cap" / "cut"), used only
+     *                  in the nothing-was-produced wording.
+     * @param terminal_reason Value written to
+     *                        ``metadata["terminal_reason"]`` —
+     *                        "budget_exhausted" for the cap,
+     *                        "budget_exhausted_thinking" for the cut.
+     *                        Both values are unchanged by gh#181.
+     * @version 2.13.0
+     */
+    void finish_with_carried_output(LoopContext& ctx,
+                                    const std::string& reason,
+                                    const std::string& stop_noun,
+                                    const std::string& terminal_reason);
+
+    /**
      * @brief Execute a single loop iteration.
      * @param ctx Loop context.
      * @version 1.8.4
@@ -1692,9 +1727,19 @@ private:
 
     /**
      * @brief Second-exhaustion hard cut (failure note + terminal).
+     *
+     * gh#181 (v2.13.0): the note ANNOTATES the run's last substantive
+     * assistant content instead of replacing it. Pre-2.13.0 the cut
+     * message's CONTENT was the placeholder, and a child hard-cut by
+     * the thinking budget therefore handed its parent that string
+     * where its result belonged (DelegationManager::extract_summary
+     * reads the last assistant message) — the sibling of gh#169.
+     * ``terminal_reason`` is still "budget_exhausted_thinking", a
+     * distinct value from the iteration cap's.
+     *
      * @param ctx Loop context.
      * @dg_internal
-     * @version 2.5.0
+     * @version 2.13.0
      */
     void hard_cut_budget(LoopContext& ctx);
 

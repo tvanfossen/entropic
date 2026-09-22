@@ -566,29 +566,38 @@ static std::string last_substantive_assistant(const LoopContext& ctx) {
 }
 
 /**
- * @brief Build the capped run's final assistant content (gh#169).
+ * @brief Build an engine-forced stop's final assistant content.
  *
- * The cap ANNOTATES the agent's last substantive output instead of
- * replacing it: DelegationManager::extract_summary reads the last
- * assistant message, so replacing it handed the parent a placeholder
- * where the child's work belonged. The two branches are worded
- * differently on purpose — a child that produced nothing must stay
- * distinguishable from one that produced work and then ran out.
+ * Shared by BOTH engine-authored terminals — the iteration cap (gh#169)
+ * and the thinking-budget hard cut (gh#181). Either one ANNOTATES the
+ * agent's last substantive output instead of replacing it:
+ * DelegationManager::extract_summary reads the last assistant message,
+ * so replacing it handed the parent a placeholder where the child's
+ * work belonged. One annotator, because two hand-rolled copies of the
+ * same wording is how the two paths drift apart.
+ *
+ * The two branches are worded differently on purpose — a child that
+ * produced nothing must stay distinguishable from one that produced
+ * work and then ran out. That distinction matters MORE on the budget
+ * path: the cut fires when a model narrates instead of calling a tool,
+ * so "it produced something first" is less often true there.
  *
  * @param carried Last substantive assistant content ("" when none).
- * @param iterations Iterations consumed.
+ * @param reason Reason clause, rendered inside the trailing bracket.
+ * @param stop_noun What stopped the run ("cap" / "cut"), used only in
+ *                  the nothing-was-produced wording.
  * @return The content for the synthetic completion message.
  * @dg_internal
  * @version 2.13.0
  */
-static std::string annotate_iteration_cap(const std::string& carried,
-                                          int iterations) {
-    const std::string note = "[iteration cap reached after "
-        + std::to_string(iterations) + " iterations";
-    std::string out = note
-        + " — no substantive output was produced before the cap]";
+static std::string annotate_hard_stop(const std::string& carried,
+                                      const std::string& reason,
+                                      const std::string& stop_noun) {
+    std::string out = "[" + reason
+        + " — no substantive output was produced before the "
+        + stop_noun + "]";
     if (!carried.empty()) {
-        out = carried + "\n\n" + note
+        out = carried + "\n\n[" + reason
             + " — the text above is the agent's last substantive output; "
               "it did not signal completion]";
     }
@@ -596,28 +605,56 @@ static std::string annotate_iteration_cap(const std::string& carried,
 }
 
 /**
- * @brief Force the synthetic completion the iteration cap owes (gh#169).
+ * @brief Synthesize the final assistant message a forced stop owes.
  *
  * Appends the annotated last substantive output as the final assistant
- * message, records terminal_reason = "budget_exhausted" (unchanged, and
- * still what DelegationResult::success and the parent-tier relay read),
- * plus the typed cap_carried_content signal, and forces COMPLETE.
+ * message, records the caller's terminal_reason (unchanged by gh#169 /
+ * gh#181, and still what DelegationResult::success and the parent-tier
+ * relay read), plus the typed cap_carried_content signal, and forces
+ * COMPLETE.
  *
  * @param ctx Loop context (messages, metadata and state mutated).
+ * @param reason Reason clause for annotate_hard_stop.
+ * @param stop_noun What stopped the run ("cap" / "cut").
+ * @param terminal_reason Value written to metadata["terminal_reason"].
  * @req REQ-LOOP-002
+ * @req REQ-LOOP-005
  * @version 2.13.0
  */
-void AgentEngine::force_iteration_cap_completion(LoopContext& ctx) {
+void AgentEngine::finish_with_carried_output(
+    LoopContext& ctx,
+    const std::string& reason,
+    const std::string& stop_noun,
+    const std::string& terminal_reason) {
     std::string carried = last_substantive_assistant(ctx);
     Message forced;
     forced.role = "assistant";
-    forced.content = annotate_iteration_cap(carried,
-                                            ctx.metrics.iterations);
+    forced.content = annotate_hard_stop(carried, reason, stop_noun);
     ctx.messages.push_back(std::move(forced));
-    ctx.metadata["terminal_reason"] = "budget_exhausted";
+    ctx.metadata["terminal_reason"] = terminal_reason;
     ctx.metadata["cap_carried_content"] =
         carried.empty() ? "false" : "true";
     set_state(ctx, AgentState::COMPLETE);
+}
+
+/**
+ * @brief Force the synthetic completion the iteration cap owes (gh#169).
+ *
+ * gh#181 (v2.13.0): the mechanism moved to
+ * finish_with_carried_output, now shared with the thinking-budget hard
+ * cut. The rendered text and terminal_reason are unchanged.
+ *
+ * @param ctx Loop context (messages, metadata and state mutated).
+ * @req REQ-LOOP-002
+ * @version 2.13.0 [reviewed]
+ */
+void AgentEngine::force_iteration_cap_completion(LoopContext& ctx) {
+    finish_with_carried_output(
+        ctx,
+        "iteration cap reached after "
+            + std::to_string(ctx.metrics.iterations) + " iterations",
+        "cap",
+        "budget_exhausted");
 }
 
 /**
@@ -817,18 +854,31 @@ void AgentEngine::nudge_budget_completion(LoopContext& ctx) {
 
 /**
  * @brief Second-exhaustion hard cut, failure visible in history. (gh#80)
+ *
+ * gh#181 (v2.13.0): the cut ANNOTATES the run's last substantive
+ * assistant content instead of replacing it with a placeholder — the
+ * sibling defect of gh#169 on the other budget path. A child hard-cut
+ * here handed its parent "[thinking budget exhausted — ... no tool call
+ * was emitted]" where its result belonged, because
+ * DelegationManager::extract_summary takes the last assistant message.
+ *
+ * terminal_reason stays "budget_exhausted_thinking" — a DISTINCT value
+ * from the iteration cap's "budget_exhausted", and one a consumer may
+ * key on to tell the two stops apart.
+ *
+ * @param ctx Loop context (messages, metadata and state mutated).
  * @req REQ-LOOP-005
- * @version 2.5.0
+ * @version 2.13.0
  */
 void AgentEngine::hard_cut_budget(LoopContext& ctx) {
     logger->warn("[BUDGET] thinking budget exhausted after nudge — "
                  "hard-cutting turn");
-    Message cut{"assistant",
-        "[thinking budget exhausted — the turn was hard-cut after the "
-        "completion nudge went unheeded; no tool call was emitted]"};
-    ctx.messages.push_back(std::move(cut));
-    ctx.metadata["terminal_reason"] = "budget_exhausted_thinking";
-    set_state(ctx, AgentState::COMPLETE);
+    finish_with_carried_output(
+        ctx,
+        "thinking budget exhausted after the completion nudge went "
+        "unheeded; no tool call was emitted",
+        "cut",
+        "budget_exhausted_thinking");
 }
 
 /**

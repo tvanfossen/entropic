@@ -9,10 +9,12 @@
 #include <catch2/catch_approx.hpp>
 #include <entropic/config/loader.h>
 #include <entropic/config/bundled_models.h>
+#include <entropic/config/validate.h>  // gh#153: configure-time refusals
 #include <cstdlib>
 #include <filesystem>
 #include <fstream>
 #include <string>
+#include <vector>
 #include <unistd.h>
 
 /**
@@ -409,6 +411,83 @@ SCENARIO("gh#148: gpu_layers accepts a count or the word auto",
                 REQUIRE(err.empty());
                 CHECK(config.models.tiers["lead"].gpu_layers == 15);
                 CHECK_FALSE(config.models.tiers["lead"].gpu_layers_auto);
+            }
+        }
+    }
+}
+
+SCENARIO("gh#153 #42(iii): cpu_moe_layers parses, and is absent by default",
+         "[config][loader][expert_offload][gh153][2.13.0]")
+{
+    GIVEN("a tier asking for expert-tensor offload on an explicit split") {
+        auto registry = load_test_registry();
+        entropic::ParsedConfig config;
+        std::string yaml =
+            "models:\n"
+            "  lead:\n"
+            "    path: primary\n"
+            "    gpu_layers: 31\n"
+            "    cpu_moe_layers: 18\n"
+            "  default: lead\n";
+
+        WHEN("the config is parsed") {
+            auto err = entropic::config::load_config_from_string(
+                yaml, registry, config);
+
+            THEN("the count lands on the tier verbatim") {
+                REQUIRE(err.empty());
+                REQUIRE(config.models.tiers.count("lead") == 1);
+                CHECK(config.models.tiers["lead"].cpu_moe_layers == 18);
+                CHECK(config.models.tiers["lead"].gpu_layers == 31);
+            }
+        }
+    }
+
+    GIVEN("a tier that does not mention the key at all") {
+        auto registry = load_test_registry();
+        entropic::ParsedConfig config;
+        std::string yaml =
+            "models:\n"
+            "  lead:\n"
+            "    path: primary\n"
+            "    gpu_layers: 31\n"
+            "  default: lead\n";
+
+        WHEN("the config is parsed") {
+            auto err = entropic::config::load_config_from_string(
+                yaml, registry, config);
+
+            THEN("it stays 0 — no overrides, byte-identical to pre-v2.13.0") {
+                REQUIRE(err.empty());
+                CHECK(config.models.tiers["lead"].cpu_moe_layers == 0);
+            }
+        }
+    }
+
+    GIVEN("a tier pairing the key with gpu_layers: auto") {
+        auto registry = load_test_registry();
+        entropic::ParsedConfig config;
+        std::string yaml =
+            "models:\n"
+            "  lead:\n"
+            "    path: primary\n"
+            "    gpu_layers: auto\n"
+            "    cpu_moe_layers: 18\n"
+            "  default: lead\n";
+
+        WHEN("the config is loaded and validated") {
+            auto err = entropic::config::load_config_from_string(
+                yaml, registry, config);
+            std::vector<std::string> warnings;
+            if (err.empty()) {
+                err = entropic::config::validate_config(config, warnings);
+            }
+
+            THEN("the load is refused by name, not silently derived") {
+                REQUIRE_FALSE(err.empty());
+                INFO(err);
+                CHECK(err.find("cpu_moe_layers") != std::string::npos);
+                CHECK(err.find("gpu_layers: auto") != std::string::npos);
             }
         }
     }

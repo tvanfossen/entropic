@@ -185,6 +185,39 @@ struct ModelConfig {
 
     bool use_mlock = true;                   ///< Lock model in system RAM
 
+    /// @brief EXPERIMENTAL: layers whose ROUTED-EXPERT tensors go to the host
+    /// while everything else follows `gpu_layers` (gh#153, decision #42(iii)).
+    ///
+    /// `gpu_layers` is role-blind — a layer is wholly on the card or wholly
+    /// on the host — so a model that does not fit spends VRAM on rarely
+    /// touched expert weights and exiles attention AND ITS KV to system RAM.
+    /// This places the first `N` layers' expert FFN tensors
+    /// (`ffn_{gate,up,down,gate_up}_exps` and their per-expert scales) on the
+    /// CPU; attention, KV, the router, the shared/dense FFN, norms and
+    /// embeddings are untouched and still follow `gpu_layers`.
+    ///
+    /// It maps 1:1 onto llama.cpp's `--n-cpu-moe` / `-ncmoe`
+    /// (`LLAMA_ARG_N_CPU_MOE`) and is named for it deliberately: the
+    /// mechanism, the semantics ("the FIRST N layers") and the tensor
+    /// patterns are upstream's, so an operator who has read llama.cpp's docs
+    /// transfers what they know without translation.
+    ///
+    /// `0` (default) installs no overrides at all and is byte-identical to
+    /// every release before v2.13.0. There is no "all layers" sentinel:
+    /// negative values are REFUSED, not reinterpreted.
+    ///
+    /// @warning PROTOTYPE, pending measurement. The gh#148 residency math
+    ///          (`estimate_footprint_bytes`, `gpu_layers: auto`) prices a
+    ///          layer as a whole layer and knows nothing about expert
+    ///          placement, so `gpu_layers: auto` is refused in combination
+    ///          with this key and an explicit `gpu_layers` is required. Also
+    ///          refused: a negative count, `gpu_layers: 0` (nothing is on the
+    ///          card to move off), a model that declares no experts, and a
+    ///          count beyond the model's layer count — the last two at load
+    ///          time, since they need GGUF metadata.
+    /// @version 2.13.0
+    int cpu_moe_layers = 0;
+
     /* ── llama.cpp pass-through ────────────────────────── */
     int reasoning_budget = -1;               ///< Think token budget (-1 = unlimited)
     std::string cache_type_k = "f16";        ///< KV cache key quantization type

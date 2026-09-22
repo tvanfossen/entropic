@@ -1159,7 +1159,8 @@
     batch\" tool-call generation;\n  - `capabilities` — e.g. declaring `vision` for the tiers\
     \ that can serve\n    image content;\n  - the full llama.cpp runtime knob set (gpu_layers,\
     \ n_batch, n_ubatch,\n    n_threads, cache_type_k/v, flash_attn, tensor_split, split_mode,\n\
-    \    main_gpu, offload_kqv, rope_freq_base/scale, n_parallel, use_mlock),\n    which is\
+    \    main_gpu, offload_kqv, rope_freq_base/scale, n_parallel, use_mlock,\n    cpu_moe_layers\
+    \ — EXPERIMENTAL, see REQ-INFER-027),\n    which is\
     \ likewise consumer-tunable on the speculative draft model via\n    `inference.speculative.draft.<field>`.\n\
     Tier parsing is a superset of model parsing: TierConfig extends ModelConfig,\nso every\
     \ knob available to a model is available to a tier, plus the\nidentity/grammar/auto_chain/routable\
@@ -1184,7 +1185,7 @@
     SCENARIO(\"Parse config with tiers\") — tests/unit/config/loader_test.cpp\nSCENARIO(\"\
     gh#133 mcp.plugins parses into MCPConfig::plugins\") —\n  tests/unit/config/loader_test.cpp\n\
     (per-tier require_tool_call parse: none)\n"
-  version: 2.10.4
+  version: 2.13.0
 - id: REQ-CFG-006
   name: Fail-loud validation — reject bad or inert configuration at load time
   module: Configuration
@@ -8670,3 +8671,124 @@
 
     '
   version: 2.10.4
+- id: REQ-INFER-027
+  name: Expert-tensor offload places routed experts on the host while attention and
+    KV stay resident (EXPERIMENTAL)
+  module: Inference Backends
+  description: 'models.<tier>.cpu_moe_layers: N places the ROUTED-EXPERT FFN tensors
+
+    of the first N layers on the host through llama.cpp''s
+
+    llama_model_params::tensor_buft_overrides, the mechanism behind
+
+    --n-cpu-moe / -ncmoe. Everything else — attention and its KV, the
+
+    router, the shared/dense FFN, norms and embeddings — is untouched and
+
+    still follows gpu_layers. The pattern tail is copied verbatim from the
+
+    vendored LLM_FFN_EXPS_REGEX and matched with the same std::regex_search
+
+    llama.cpp uses, so the selected set is upstream''s, not an invention.
+
+
+    The override array is OWNED for the duration of the load: llama.cpp
+
+    copies neither the array nor its const char* patterns, so
+
+    ExpertOffloadOverrides fills its strings once, appends the null
+
+    terminator the loader''s walk requires, and forbids copy and move.
+
+
+    N = 0 (the default, and the value an absent key leaves) builds no array
+
+    at all; tensor_buft_overrides stays the nullptr
+
+    llama_model_default_params() already carries, so an unconfigured tier
+
+    loads byte-identically to v2.12.2.
+
+
+    Four combinations are REFUSED, never clamped. At configure time, by
+
+    name and with the tier named: a negative N (there is no "all layers"
+
+    sentinel), N > 0 with gpu_layers: 0 (nothing is on the card to move
+
+    off), and N > 0 with gpu_layers: auto (the admission gate prices whole
+
+    layers and does not model expert placement, so its derived split would
+
+    not describe this load). At load time, against GGUF metadata the config
+
+    layer cannot read: a model declaring no experts, and N beyond the
+
+    model''s layer count. A load-time refusal frees the model and fails the
+
+    activation with last_error_ set.
+
+
+    EXPERIMENTAL and default off, pending measurement. The residency and
+
+    admission footprint math (REQ-INFER-019) is deliberately unchanged and
+
+    still prices a layer as a whole layer.
+
+    '
+  acceptance_criteria: 'Given cpu_moe_layers = N and a layer count, When the override list
+    is
+
+    built, Then it holds exactly the expert-tensor patterns for layers
+
+    0..N-1 in order, is null-terminated, and every pattern points into
+
+    storage the list owns for its whole life. Given a gemma4 MoE layer''s
+
+    tensor names, Then the pattern for that layer matches every
+
+    ffn_{gate,up,down,gate_up}_exps weight and scale and matches no
+
+    attention, router, dense/shared-FFN, norm or embedding tensor, and the
+
+    pattern for layer 1 does not match blk.10. Given the key is omitted,
+
+    Then cpu_moe_layers == 0, no patterns are built and the override
+
+    pointer is null. Given a negative N, gpu_layers: 0, or gpu_layers:
+
+    auto, Then config validation fails with a reason naming the offending
+
+    key. Given a model with no experts or fewer layers than N, Then the
+
+    load is refused rather than clamped.
+
+    '
+  verified_by: 'SCENARIO "v2.13.0: the expert pattern is llama.cpp''s, not our invention";
+
+    "v2.13.0: the patterns select gemma4 expert tensors and nothing else";
+
+    "v2.13.0: the override array is a valid, owning C contract";
+
+    "v2.13.0: an absent cpu_moe_layers installs no overrides at all";
+
+    "v2.13.0: impossible expert-offload combinations are refused loudly";
+
+    "v2.13.0: the load-time refusals need the model, and say so" —
+
+    tests/unit/inference/expert_offload_test.cpp
+
+    SCENARIO "gh#153 #42(iii): cpu_moe_layers is refused at configure time
+
+    when it cannot mean what it says" — tests/unit/config/validate_test.cpp
+
+    SCENARIO "gh#153 #42(iii): cpu_moe_layers parses, and is absent by
+
+    default" — tests/unit/config/loader_test.cpp
+
+    (LlamaCppBackend::expert_offload_admits load-time refusal: none — it
+
+    needs a real MoE GGUF, which no CPU unit test loads)
+
+    '
+  version: 2.13.0

@@ -215,7 +215,10 @@ gemma4_a4b_qat:
   # this runs partially offloaded. `gpu_layers` moves WHOLE layers,
   # attention included, which is the wrong split for an MoE — the
   # right lever is tensor-targeted expert offload (llama.cpp -ncmoe),
-  # which entropic does not expose yet.
+  # exposed EXPERIMENTALLY since v2.13.0 as the per-tier
+  # `cpu_moe_layers: N` (default off, pending measurement; requires an
+  # explicit `gpu_layers`, since the admission math still prices whole
+  # layers). See architecture decision #75.
   mmproj_key: gemma4_a4b_qat_mmproj
 
 gemma4_a4b_qat_mmproj:

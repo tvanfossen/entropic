@@ -22,6 +22,7 @@
 #include "session_pool_util.h"
 #include "batch_kv_util.h"   // gh#158: batch sequence plan
 #include "context_fit.h"     // v2.13.0: prompt-vs-context admission gate
+#include "expert_offload_buft.h"  // gh#153 #42(iii): expert-tensor offload
 #include "warm_keep_util.h"  // gh#96: common_prefix_len / warm_keep_cut
 #include "tool_call_markers.h"  // gh#103: family-aware tool-call close marker
 #include "batch_util.h"  // gh#98: batch_shared_prefix_len / batch_is_viable
@@ -40,6 +41,7 @@
 #include <nlohmann/json.hpp>
 
 #include <cmath>
+#include <cstdlib>  // std::atoi — GGUF expert_count arrives as a string
 #include <cstring>
 #include <optional>
 #include <stdexcept>
@@ -319,10 +321,20 @@ llama_model* load_tier_model(const char* path,
  * ABC gate as new MVP-10 model-load knobs land (`split_mode`,
  * `main_gpu`, `offload_kqv`, `rope_freq_*`).
  *
+ * @param cfg Tier config.
+ * @param moe Expert-tensor overrides. Borrowed, NOT copied: llama.cpp keeps
+ *            the raw pointer and dereferences its `const char*` patterns
+ *            throughout tensor placement, so this object must outlive the
+ *            `llama_model_load_from_file` call the params are handed to.
+ *            Empty when `cpu_moe_layers == 0`, in which case `data()` is
+ *            nullptr and the assignment below is a no-op against
+ *            `llama_model_default_params()`.
  * @utility
  * @version 2.13.0
  */
-llama_model_params build_load_mparams(const entropic::ModelConfig& cfg) {
+llama_model_params build_load_mparams(
+    const entropic::ModelConfig& cfg,
+    const entropic::ExpertOffloadOverrides& moe) {
     llama_model_params m = llama_model_default_params();
     m.n_gpu_layers = cfg.gpu_layers;
     m.load_mode = mmap_load_mode(cfg.use_mlock);
@@ -331,7 +343,39 @@ llama_model_params build_load_mparams(const entropic::ModelConfig& cfg) {
     // is "none" (pin) or "row" (small-tensor placement). 0 keeps
     // pre-v2.3.19 load bit-for-bit.
     m.main_gpu = cfg.main_gpu;
+    // gh#153 #42(iii) (v2.13.0, EXPERIMENTAL): routed-expert tensors to the
+    // host so attention and its KV keep the VRAM. nullptr when off.
+    m.tensor_buft_overrides = moe.data();
     return m;
+}
+
+/**
+ * @brief `<arch>.expert_count` from a loaded model's GGUF metadata.
+ *
+ * There is no `llama_model_n_expert` at this pin, and hparams are not
+ * exposed, so this reads the same metadata key llama.cpp itself parses
+ * (`LLM_KV_EXPERT_COUNT`, `"%s.expert_count"`) through the string KV map
+ * `llama_model_meta_val_str` serves. Absent on a dense model, which is
+ * exactly the signal the expert-offload refusal needs.
+ *
+ * @param model Loaded model.
+ * @return Declared expert count, or 0 when the model declares none.
+ * @utility
+ * @version 2.13.0
+ */
+int model_expert_count(const llama_model* model) {
+    char arch[64] = {0};
+    if (llama_model_meta_val_str(model, "general.architecture",
+                                 arch, sizeof(arch)) < 0) {
+        return 0;
+    }
+    const std::string key = std::string(arch) + ".expert_count";
+    char value[32] = {0};
+    if (llama_model_meta_val_str(model, key.c_str(),
+                                 value, sizeof(value)) < 0) {
+        return 0;
+    }
+    return std::atoi(value);
 }
 
 } // anonymous namespace
@@ -515,13 +559,20 @@ bool LlamaCppBackend::finish_activation() {
  * re-place its layers without being read again. That is what `keep_warm`
  * pays for, and it is untouched.
  *
+ * v2.13.0 (gh#153 #42(iii)): also carries the EXPERIMENTAL expert-tensor
+ * overrides, whose owning holder must outlive the load call below.
+ *
  * @param config Validated model config.
  * @return true on success; sets last_error_ on failure.
  * @req REQ-INFER-002
- * @version 2.13.0
+ * @req REQ-INFER-027
+ * @version 2.13.0 [reviewed]
  */
 bool LlamaCppBackend::do_load_active(const ModelConfig& config) {
-    llama_model_params mparams = build_load_mparams(config);
+    // Outlives the load below — llama.cpp borrows the pattern strings.
+    const ExpertOffloadOverrides moe(config.cpu_moe_layers,
+                                     ggml_backend_cpu_buffer_type());
+    llama_model_params mparams = build_load_mparams(config, moe);
 
     model_ = load_tier_model(config.path.c_str(), mparams);
     if (model_ == nullptr) {
@@ -536,11 +587,64 @@ bool LlamaCppBackend::do_load_active(const ModelConfig& config) {
     }
 
     bind_model_handles();
+    if (!expert_offload_admits(config)) { return false; }
     logger->info("Model loaded into target residency: gpu_layers={}, "
                  "{} tokens in vocab, recurrent={}",
                  config.gpu_layers, llama_vocab_n_tokens(vocab_),
                  is_recurrent_);
     return finish_activation();
+}
+
+/**
+ * @brief Refuse a loaded model that cannot honour `cpu_moe_layers`
+ *        (gh#153 #42(iii), v2.13.0, EXPERIMENTAL).
+ *
+ * The two refusals that need GGUF metadata — a dense model, and a count
+ * beyond the block count — and therefore cannot be made by
+ * `expert_offload_conflict_reason` at configure time, because entropic reads
+ * no GGUF metadata before loading. Failing here costs one wasted load and is
+ * still the right trade: the alternative is a configuration that quietly
+ * placed nothing and an operator who measures the technique instead of their
+ * mistake.
+ *
+ * Frees the model on refusal, leaving the backend in the same clean,
+ * recoverable state a failed load leaves it in.
+ *
+ * @param config Tier config carrying `cpu_moe_layers`.
+ * @return true to proceed; false with `last_error_` set.
+ * @dg_internal
+ * @req REQ-INFER-027
+ * @version 2.13.0
+ */
+bool LlamaCppBackend::expert_offload_admits(const ModelConfig& config) {
+    const int n_layer = llama_model_n_layer(model_);
+    const std::string why = expert_offload_load_refusal(
+        config.cpu_moe_layers, n_layer, model_expert_count(model_));
+    if (why.empty()) {
+        if (config.cpu_moe_layers > 0) {
+            // The engagement signal. A knob that silently places nothing
+            // measures as "the technique does not help", so say what was
+            // asked for and point at the numbers that prove it landed:
+            // llama.cpp's own `load_tensors:` buffer-size lines shift from
+            // the device buffer to CPU_Mapped, and at DEBUG it names every
+            // tensor it overrode.
+            logger->info("[expert-offload] EXPERIMENTAL: experts of the "
+                         "first {} of {} layers -> host; attention, KV, "
+                         "router, dense/shared FFN and norms follow "
+                         "gpu_layers={}. Confirm placement in "
+                         "llama_ggml.log ('load_tensors:' buffer sizes).",
+                         config.cpu_moe_layers, n_layer, config.gpu_layers);
+        }
+        return true;
+    }
+
+    last_error_ = "cpu_moe_layers refused: " + why;
+    logger->error("{}", last_error_);
+    tokenizer_.reset();
+    llama_model_free(model_);
+    model_ = nullptr;
+    vocab_ = nullptr;
+    return false;
 }
 
 /**
@@ -557,11 +661,18 @@ bool LlamaCppBackend::do_load_active(const ModelConfig& config) {
  * it. Freeing first removes the simultaneity (and the duplicate model
  * metadata/buffers) without changing the load contract.
  *
+ * v2.13.0 (gh#153 #42(iii)): also carries the EXPERIMENTAL expert-tensor
+ * overrides, whose owning holder must outlive the load call below.
+ *
  * @dg_internal
- * @version 2.13.0
+ * @req REQ-INFER-027
+ * @version 2.13.0 [reviewed]
  */
 bool LlamaCppBackend::load_gpu_model() {
-    llama_model_params mparams = build_load_mparams(config());
+    // Outlives the load below — llama.cpp borrows the pattern strings.
+    const ExpertOffloadOverrides moe(config().cpu_moe_layers,
+                                     ggml_backend_cpu_buffer_type());
+    llama_model_params mparams = build_load_mparams(config(), moe);
 
     if (!config().tensor_split.empty()) {
         // TODO: parse tensor_split string into float array for multi-GPU
@@ -595,7 +706,7 @@ bool LlamaCppBackend::load_gpu_model() {
     }
 
     bind_model_handles();
-    return true;
+    return expert_offload_admits(config());
 }
 
 /**

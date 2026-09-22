@@ -1,1 +1,288 @@
-[]
+[
+  {
+    "req_id": "REQ-CFG-001",
+    "req_name": "Layered configuration resolution with most-specific-layer-wins precedence",
+    "functions": [
+      {
+        "name": "parse_models_config",
+        "file": "src/config/loader.cpp",
+        "version": "2.13.0"
+      },
+      {
+        "name": "parse_config_string",
+        "file": "src/config/loader.cpp",
+        "version": "2.13.0"
+      }
+    ]
+  },
+  {
+    "req_id": "REQ-CFG-002",
+    "req_name": "Whole-block replace semantics for models and routing across layers",
+    "functions": [
+      {
+        "name": "parse_models_config",
+        "file": "src/config/loader.cpp",
+        "version": "2.13.0"
+      }
+    ]
+  },
+  {
+    "req_id": "REQ-CFG-003",
+    "req_name": "Bundled model registry resolution \u2014 keys, selectors, and search order",
+    "functions": [
+      {
+        "name": "resolve_model_path",
+        "file": "src/config/loader.cpp",
+        "version": "2.8.0"
+      },
+      {
+        "name": "parse_model_config",
+        "file": "src/config/loader.cpp",
+        "version": "2.13.0"
+      }
+    ]
+  },
+  {
+    "req_id": "REQ-CFG-005",
+    "req_name": "Per-tier knobs override global defaults without an all-or-nothing switch",
+    "functions": [
+      {
+        "name": "parse_gpu_layers",
+        "file": "src/config/loader.cpp",
+        "version": "2.13.0"
+      },
+      {
+        "name": "parse_model_config",
+        "file": "src/config/loader.cpp",
+        "version": "2.13.0"
+      },
+      {
+        "name": "parse_tier_config",
+        "file": "src/config/loader.cpp",
+        "version": "2.13.0"
+      }
+    ]
+  },
+  {
+    "req_id": "REQ-CFG-006",
+    "req_name": "Fail-loud validation \u2014 reject bad or inert configuration at load time",
+    "functions": [
+      {
+        "name": "resolve_model_path",
+        "file": "src/config/loader.cpp",
+        "version": "2.8.0"
+      },
+      {
+        "name": "parse_config_string",
+        "file": "src/config/loader.cpp",
+        "version": "2.13.0"
+      },
+      {
+        "name": "validate",
+        "file": "src/config/validate.cpp",
+        "version": "2.13.0"
+      },
+      {
+        "name": "validate_model_tiers",
+        "file": "src/config/validate.cpp",
+        "version": "1.8.3"
+      },
+      {
+        "name": "warn_unresolved_tier_grammars",
+        "file": "src/config/validate.cpp",
+        "version": "2.13.0"
+      },
+      {
+        "name": "expert_offload_conflict_reason",
+        "file": "src/inference/expert_offload.h",
+        "version": "2.13.0"
+      }
+    ]
+  },
+  {
+    "req_id": "REQ-DELEG-005",
+    "req_name": "Opt-in delegation sandbox isolation, wired end to end",
+    "functions": [
+      {
+        "name": "parse_delegation_config",
+        "file": "src/config/loader.cpp",
+        "version": "2.13.0"
+      }
+    ]
+  },
+  {
+    "req_id": "REQ-INFER-002",
+    "req_name": "Teardown releases every model, context and adapter handle",
+    "functions": [
+      {
+        "name": "do_load_active",
+        "file": "src/inference/llama_cpp_backend.cpp",
+        "version": "2.13.0 [reviewed]"
+      }
+    ]
+  },
+  {
+    "req_id": "REQ-INFER-005",
+    "req_name": "Every decode path honours cooperative cancellation within one token",
+    "functions": [
+      {
+        "name": "generate_after_prefill",
+        "file": "src/inference/llama_cpp_backend.cpp",
+        "version": "2.10.4"
+      },
+      {
+        "name": "do_generate_streaming_text_only",
+        "file": "src/inference/llama_cpp_backend.cpp",
+        "version": "2.8.3"
+      }
+    ]
+  },
+  {
+    "req_id": "REQ-INFER-007",
+    "req_name": "Named grammars are registered, validated, and resolved by a fixed precedence",
+    "functions": [
+      {
+        "name": "grammar_search_paths",
+        "file": "src/config/validate.cpp",
+        "version": "2.13.0"
+      },
+      {
+        "name": "warn_unresolved_tier_grammars",
+        "file": "src/config/validate.cpp",
+        "version": "2.13.0"
+      }
+    ]
+  },
+  {
+    "req_id": "REQ-INFER-008",
+    "req_name": "Every declared grammar source reaches the sampler and exactly one wins",
+    "functions": [
+      {
+        "name": "active_tool_grammar",
+        "file": "src/inference/llama_cpp_backend.h",
+        "version": "2.13.0"
+      }
+    ]
+  },
+  {
+    "req_id": "REQ-INFER-009",
+    "req_name": "Tool staging drives a native render whose parse context is captured",
+    "functions": [
+      {
+        "name": "parse_response",
+        "file": "src/inference/llama_cpp_backend.cpp",
+        "version": "2.9.0"
+      }
+    ]
+  },
+  {
+    "req_id": "REQ-INFER-026",
+    "req_name": "A prompt that cannot fit the tier context is refused, never decoded",
+    "functions": [
+      {
+        "name": "refuse_over_context",
+        "file": "src/inference/llama_cpp_backend.cpp",
+        "version": "2.13.0"
+      }
+    ]
+  },
+  {
+    "req_id": "REQ-INFER-027",
+    "req_name": "Expert-tensor offload places routed experts on the host while attention and KV stay resident (EXPERIMENTAL)",
+    "functions": [
+      {
+        "name": "validate",
+        "file": "src/config/validate.cpp",
+        "version": "2.13.0"
+      },
+      {
+        "name": "expert_block_pattern",
+        "file": "src/inference/expert_offload.h",
+        "version": "2.13.0"
+      },
+      {
+        "name": "expert_offload_patterns",
+        "file": "src/inference/expert_offload.h",
+        "version": "2.13.0"
+      },
+      {
+        "name": "expert_offload_conflict_reason",
+        "file": "src/inference/expert_offload.h",
+        "version": "2.13.0"
+      },
+      {
+        "name": "expert_offload_load_refusal",
+        "file": "src/inference/expert_offload.h",
+        "version": "2.13.0"
+      },
+      {
+        "name": "data",
+        "file": "src/inference/expert_offload_buft.h",
+        "version": "2.13.0"
+      },
+      {
+        "name": "do_load_active",
+        "file": "src/inference/llama_cpp_backend.cpp",
+        "version": "2.13.0 [reviewed]"
+      },
+      {
+        "name": "expert_offload_admits",
+        "file": "src/inference/llama_cpp_backend.cpp",
+        "version": "2.13.0"
+      },
+      {
+        "name": "load_gpu_model",
+        "file": "src/inference/llama_cpp_backend.cpp",
+        "version": "2.13.0 [reviewed]"
+      }
+    ]
+  },
+  {
+    "req_id": "REQ-MCP-021",
+    "req_name": "Filesystem tools are root-confined, read-before-write gated, and size-bounded",
+    "functions": [
+      {
+        "name": "parse_outside_root_access",
+        "file": "src/config/loader.cpp",
+        "version": "2.13.0"
+      },
+      {
+        "name": "parse_outside_root_list",
+        "file": "src/config/loader.cpp",
+        "version": "2.13.0"
+      }
+    ]
+  },
+  {
+    "req_id": "REQ-MCP-023",
+    "req_name": "Bash and git servers gate on operator approval, not command pattern matching; bash enforces a timeout on the whole process group",
+    "functions": [
+      {
+        "name": "parse_bash_config",
+        "file": "src/config/loader.cpp",
+        "version": "2.13.0"
+      }
+    ]
+  },
+  {
+    "req_id": "REQ-TYPE-005",
+    "req_name": "Config types declare their own defaults; optional means absent, not default",
+    "functions": [
+      {
+        "name": "parse_gpu_layers",
+        "file": "src/config/loader.cpp",
+        "version": "2.13.0"
+      },
+      {
+        "name": "parse_model_config",
+        "file": "src/config/loader.cpp",
+        "version": "2.13.0"
+      },
+      {
+        "name": "parse_tier_config",
+        "file": "src/config/loader.cpp",
+        "version": "2.13.0"
+      }
+    ]
+  }
+]

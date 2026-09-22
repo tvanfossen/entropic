@@ -103,6 +103,12 @@ add_executable(entropic-inference-tests
     inference/session_residency_test.cpp
     # v2.12.0: oversized-model GPU/CPU split from actual free VRAM.
     inference/partial_offload_test.cpp
+    # gh#153 #42(iii) (v2.13.0): expert-tensor offload — the pattern set is
+    # matched against the literal gemma4 MoE tensor names with the same
+    # std::regex_search llama-model-loader.cpp uses, and the tail regex is
+    # compared against the vendored LLM_FFN_EXPS_REGEX so a pin bump that
+    # renames it fails here instead of silently offloading nothing.
+    inference/expert_offload_test.cpp
     # gh#149 (v2.13.0): the REPORTING side of that same policy — a model
     # test's SKIP text must name the rule that actually fired. Pure string
     # mapping over tests/model/model_skip_reason.h, so it runs on CPU with

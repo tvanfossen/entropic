@@ -10,6 +10,9 @@
 
 // gh#144 (v2.12.0): pure session-pool geometry + conflict rules.
 #include "../inference/session_pool_util.h"
+// gh#153 #42(iii) (v2.13.0): pure expert-offload conflict rules. Vendor-free
+// on purpose — entropic-config links no llama.cpp.
+#include "../inference/expert_offload.h"
 
 static auto s_log = entropic::log::get("config");
 
@@ -38,7 +41,8 @@ std::string validate_allowed_tools(const std::vector<std::string>& tools)
  * @param config Model config to validate.
  * @return Empty string on success, error message on failure.
  * @req REQ-CFG-006
- * @version 2.12.0
+ * @req REQ-INFER-027
+ * @version 2.13.0
  */
 std::string validate(const ModelConfig& config)
 {
@@ -63,6 +67,13 @@ std::string validate(const ModelConfig& config)
     // asserting at decode).
     if (err.empty()) {
         err = session_pool_conflict_reason(config);
+    }
+
+    // gh#153 #42(iii) (v2.13.0): expert offload is EXPERIMENTAL and its
+    // impossible combinations are refused by name here rather than
+    // discovered as "the knob did nothing" after a multi-second load.
+    if (err.empty()) {
+        err = expert_offload_conflict_reason(config);
     }
 
     return err;

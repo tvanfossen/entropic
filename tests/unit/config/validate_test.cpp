@@ -648,3 +648,81 @@ SCENARIO("gh#154 every bundled identity grammar stem resolves",
         }
     }
 }
+
+SCENARIO("gh#153 #42(iii): cpu_moe_layers is refused at configure time when "
+         "it cannot mean what it says",
+         "[config][validate][expert_offload][gh153][2.13.0]") {
+    GIVEN("a tier that never mentions cpu_moe_layers") {
+        ModelConfig cfg;
+        cfg.path = "/tmp/model.gguf";
+
+        THEN("validation is unaffected — the omitted key is the default and "
+             "the default is off") {
+            REQUIRE(cfg.cpu_moe_layers == 0);
+            CHECK(validate(cfg).empty());
+        }
+    }
+
+    GIVEN("a tier with an explicit split and an explicit expert offload") {
+        ModelConfig cfg;
+        cfg.path = "/tmp/model.gguf";
+        cfg.gpu_layers = 31;
+        cfg.cpu_moe_layers = 18;
+
+        THEN("it validates") {
+            CHECK(validate(cfg).empty());
+        }
+    }
+
+    GIVEN("a negative cpu_moe_layers") {
+        ModelConfig cfg;
+        cfg.path = "/tmp/model.gguf";
+        cfg.gpu_layers = 31;
+        cfg.cpu_moe_layers = -1;
+
+        WHEN("validate is called") {
+            const auto err = validate(cfg);
+
+            THEN("it is refused rather than read as 'all layers'") {
+                REQUIRE_FALSE(err.empty());
+                INFO(err);
+                CHECK(err.find("cpu_moe_layers") != std::string::npos);
+            }
+        }
+    }
+
+    GIVEN("cpu_moe_layers on a CPU-only tier") {
+        ModelConfig cfg;
+        cfg.path = "/tmp/model.gguf";
+        cfg.gpu_layers = 0;
+        cfg.cpu_moe_layers = 8;
+
+        WHEN("validate is called") {
+            const auto err = validate(cfg);
+
+            THEN("it is refused instead of silently doing nothing") {
+                REQUIRE_FALSE(err.empty());
+                INFO(err);
+                CHECK(err.find("gpu_layers: 0") != std::string::npos);
+            }
+        }
+    }
+
+    GIVEN("cpu_moe_layers alongside gpu_layers: auto") {
+        ModelConfig cfg;
+        cfg.path = "/tmp/model.gguf";
+        cfg.gpu_layers_auto = true;
+        cfg.cpu_moe_layers = 8;
+
+        WHEN("validate is called") {
+            const auto err = validate(cfg);
+
+            THEN("it is refused — the admission gate prices whole layers and "
+                 "knows nothing about expert placement") {
+                REQUIRE_FALSE(err.empty());
+                INFO(err);
+                CHECK(err.find("gpu_layers: auto") != std::string::npos);
+            }
+        }
+    }
+}

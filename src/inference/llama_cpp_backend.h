@@ -1407,6 +1407,22 @@ protected:
     void bind_model_handles();
 
     /**
+     * @brief Refuse a loaded model that cannot honour `cpu_moe_layers`.
+     *
+     * gh#153 #42(iii) (v2.13.0, EXPERIMENTAL). The expert-offload refusals
+     * that need GGUF metadata — a model declaring no experts, and a count
+     * beyond the block count — so they cannot be made at configure time by
+     * `expert_offload_conflict_reason`. Runs immediately after a load that
+     * carried overrides; frees the model and sets `last_error_` on refusal.
+     *
+     * @param config Tier config carrying `cpu_moe_layers`.
+     * @return true to proceed; false with `last_error_` set.
+     * @dg_internal
+     * @version 2.13.0
+     */
+    bool expert_offload_admits(const ModelConfig& config);
+
+    /**
      * @brief Context + sampler + mmproj, shared by both activation paths.
      *
      * The tail of `do_activate` after the model is resident, so the gh#148

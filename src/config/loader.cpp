@@ -30,7 +30,7 @@ namespace entropic::config {
  * knots ABC gate as new MVP-10 model-load knobs land.
  * @utility
  * @dg_internal
- * @version 2.12.0
+ * @version 2.13.0
  */
 static void parse_model_runtime_knobs(
     ryml::ConstNodeRef node, ModelConfig& config)
@@ -48,6 +48,9 @@ static void parse_model_runtime_knobs(
     extract(node, "rope_freq_scale", config.rope_freq_scale); // gh#23 v2.3.22
     extract(node, "n_parallel", config.n_parallel); // gh#23 v2.3.23
     extract(node, "max_sessions", config.max_sessions); // gh#144 v2.12.0
+    // gh#153 #42(iii) (v2.13.0, EXPERIMENTAL): expert-tensor offload.
+    // Absent leaves the struct default 0 — no overrides, byte-identical.
+    extract(node, "cpu_moe_layers", config.cpu_moe_layers);
     extract(node, "flash_attn", config.flash_attn);
 }
 

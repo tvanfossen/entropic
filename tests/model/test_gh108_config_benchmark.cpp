@@ -17,6 +17,13 @@
  *   [mtp-a4b]        gh#153: the same comparison on Gemma 4 26B-A4B QAT,
  *                    partially offloaded with `gpu_layers: auto`.
  *
+ * The two gh#153 cases run the SAME code and are judged by DIFFERENT rules,
+ * selected from the residency the engine resolved rather than from the case:
+ * a fully resident trunk must show MTP clearing the floor, a partially
+ * resident one must only show MTP not being materially worse than plain.
+ * That is decision #74; the reasoning is restated at the residency block
+ * below, next to the code that applies it.
+ *
  * A note on `throughput_tok_s`, which both halves read: the backend stamps its
  * clock BEFORE tokenize + prefill on the plain and the MTP path alike, so it is
  * tokens over the WHOLE generate call, not decode alone. The gh#153 cases print
@@ -311,6 +318,9 @@ TEST_CASE("gh#108 benchmark: E4B Q8 baseline vs E4B Q2-mobile+MTP+flash+q4KV "
 //     order (kOrder) so neither floor arm inherits a fixed predecessor.
 //   * No pinned multiplier. MTP must clear the floor by at least the floor
 //     again, and by no less than kMinMarginPct.
+//   * And no pinned RULE either: what MTP is required to do is chosen from
+//     the residency the engine resolved, not from which case is running
+//     (decision #74, `ResidencyRule` below).
 //
 // The tiers share one GGUF, so they share one backend (the orchestrator pools
 // by path): every arm decodes on the same weights, the same KV configuration
@@ -365,8 +375,73 @@ constexpr int kContextLength = 8192;
 ///        figures and decision #44 are stated at.
 constexpr int kNDraft = 4;
 /// @brief Least clearance above the floor, in percentage points, so a near-zero
-///        floor from one lucky pair of runs cannot certify a trivial effect.
+///        floor from one lucky pair of runs cannot certify a trivial effect —
+///        and, read the other way round, cannot condemn a trivial one either.
+///        Both residency rules use it as their materiality threshold.
 constexpr double kMinMarginPct = 5.0;
+
+/**
+ * @brief What MTP is required to do, chosen by how much of the trunk is
+ *        actually on the GPU (decision #74).
+ *
+ * MTP's win tracks the RESIDENT FRACTION, not the card. Verifying a draft of
+ * `n_draft` tokens is one forward pass over a batch of `n_draft + 1` rather
+ * than of 1. On GPU-resident layers that batch is very nearly free: a decode
+ * step there is bandwidth-bound on the weights, and the extra rows ride along
+ * in the same read. On CPU-resident layers it is not — those layers are
+ * compute-bound on a much slower unit, so verification cost scales with the
+ * drafted batch, and on a MoE the drafted tokens can route to DIFFERENT
+ * experts than the single token would have, multiplying the host-side work
+ * again.
+ *
+ * Measured on one card with one engine at one n_draft (gh#153, GTX 1080 Ti,
+ * n_draft=4): **+42.8 %** on a fully resident E4B QAT, **-0.92 %** on an A4B
+ * QAT at 18 of 31 layers — and the A4B's accept rate was HIGHER (0.473 vs
+ * 0.331), so the loss is not a drafting failure. A single pinned threshold
+ * would have to be wrong for one of those two.
+ *
+ * The rule is therefore selected from what the engine RESOLVED:
+ *
+ *   FULLY RESIDENT      MTP must CLEAR the floor. The win is the claim.
+ *   PARTIALLY RESIDENT  MTP must not be materially WORSE than plain. No win
+ *                       is claimed; the assertion only holds the line that
+ *                       enabling MTP does not COST anything under offload.
+ *
+ * Both outcomes are computed and printed on every run; only the one the
+ * residency selects is asserted. The measured figure is always recorded WITH
+ * the resident fraction, because it means nothing without it: the same A4B
+ * on a 12 GB card is still partial, at a better fraction, and is expected to
+ * report a BETTER number under the SAME rule rather than a different rule.
+ */
+enum class ResidencyRule {
+    kClearsFloor,   ///< Fully resident: MTP must beat plain by > required_pct
+    kNotWorse,      ///< Partial: MTP must be no worse than -allowed_loss_pct
+};
+
+/**
+ * @brief Layers the engine actually placed on the GPU.
+ *
+ * Read from the config the BACKEND holds AFTER admission, where `auto` has
+ * already become a number (decision #65) and `-1` still carries llama.cpp's
+ * "every layer". The YAML string is never consulted: `-1` and `auto` both
+ * state an intent, and only one of them survives contact with the card.
+ *
+ * llama.cpp's own `CPU_Mapped` buffer line would be the more direct
+ * measurement, but it is stderr from vendored code, and this case takes every
+ * figure from the engine's in-process records precisely so that nothing
+ * depends on scraping a log. The layer count is the residency the engine
+ * reports in process. Note the one thing it does not capture: at exactly
+ * `gpu_layers == n_layer` llama.cpp leaves the non-repeating output tensors
+ * host-side, so "fully resident" there means every REPEATING layer.
+ *
+ * @param gpu_layers Resolved offload; negative means all.
+ * @param n_layer Model's repeating-layer count, or -1 when unreadable.
+ * @return Layers on the GPU, clamped to [0, n_layer]; -1 when n_layer is.
+ */
+int resident_layers_for(int gpu_layers, int n_layer) {
+    if (gpu_layers < 0) { return n_layer; }
+    return std::min(gpu_layers, n_layer);
+}
 
 /// @brief One arm: a tier name plus what that tier is configured to do.
 struct ArmSpec {
@@ -437,13 +512,26 @@ struct ArmStats {
     }
 };
 
-/// @brief Floor and effect, computed once and printed in that order.
+/// @brief Floor and effect, computed once and printed in that order, plus
+///        BOTH residency rules' outcomes and which of them is asserted.
 struct Verdict {
     double floor_pct = 0.0;     ///< |plain - control| / min(plain, control)
     double baseline = 0.0;      ///< The FASTER plain arm — conservative
     double effect_pct = 0.0;    ///< mtp vs baseline
-    double required_pct = 0.0;  ///< floor + max(floor, kMinMarginPct)
-    bool clears = false;
+    double margin_pct = 0.0;    ///< max(floor, kMinMarginPct) — materiality
+    double required_pct = 0.0;  ///< kClearsFloor: effect must EXCEED this
+    double allowed_loss_pct = 0.0;  ///< kNotWorse: effect must be >= -this
+    bool clears = false;        ///< kClearsFloor's outcome, always computed
+    bool not_worse = false;     ///< kNotWorse's outcome, always computed
+    ResidencyRule rule = ResidencyRule::kClearsFloor;  ///< The ASSERTED one
+    double resident_fraction = 0.0;  ///< Reported beside every figure
+    bool passes = false;        ///< The asserted rule's outcome
+
+    /// @brief One word for the rule, for the JSON summary and the log.
+    const char* rule_id() const {
+        return rule == ResidencyRule::kClearsFloor ? "clears_floor"
+                                                   : "not_worse_than_plain";
+    }
 };
 
 /// @brief What the run actually resolved to — recorded, not assumed.
@@ -455,6 +543,9 @@ struct RunInfo {
     uint64_t target_bytes = 0;
     entropic::ModelConfig model;  ///< The backend's config AFTER admission
     int n_layer = -1;
+    int resident_layers = -1;     ///< Of n_layer, after `auto`/`-1` resolved
+    double resident_fraction = 0.0;  ///< resident_layers / n_layer
+    bool fully_resident = false;  ///< Selects the rule — see ResidencyRule
     std::string offload;          ///< "full" | "partial" | "cpu"
     long vram_used_mib = -1;      ///< Device-wide, after load (best-effort)
     std::string gpu;
@@ -604,8 +695,12 @@ RunInfo describe_run(const BenchModel& m,
         info.n_layer = llama_model_n_layer(llama->llama_model_ptr());
     }
     const int gl = info.model.gpu_layers;
-    const bool all = gl < 0 || (info.n_layer > 0 && gl >= info.n_layer);
-    info.offload = gl == 0 ? "cpu" : (all ? "full" : "partial");
+    info.resident_layers = resident_layers_for(gl, info.n_layer);
+    info.fully_resident =
+        info.n_layer > 0 && info.resident_layers == info.n_layer;
+    info.resident_fraction = info.n_layer > 0
+        ? static_cast<double>(info.resident_layers) / info.n_layer : 0.0;
+    info.offload = gl == 0 ? "cpu" : (info.fully_resident ? "full" : "partial");
     info.vram_used_mib = query_vram_used_mb();
     info.gpu = shell_first_line(
         "nvidia-smi --query-gpu=name --format=csv,noheader -i 0 2>/dev/null");
@@ -751,17 +846,33 @@ ArmStats aggregate(const std::vector<Trial>& trials, const std::string& arm) {
     return s;
 }
 
-/// @brief Floor first, then the effect judged against it.
+/// @brief Floor first, then the effect judged against it — under BOTH rules,
+///        with the residency choosing which one is asserted.
+///
+/// The kNotWorse tolerance is the SAME quantity as the kClearsFloor margin,
+/// `max(floor, kMinMarginPct)`, read the other way round. A floor that came
+/// out near zero on one lucky pair of plain runs must not turn an ordinary
+/// wobble into a recorded regression, exactly as it must not certify an
+/// ordinary wobble as a win. On the A4B run that corrected decision #42 the
+/// floor was 1.00 % and the effect -0.92 %: a bare-floor bound would have
+/// passed that by 0.08 pp, which is not a margin, it is a coincidence.
 Verdict judge(const ArmStats& plain, const ArmStats& control,
-              const ArmStats& mtp) {
+              const ArmStats& mtp, const RunInfo& info) {
     Verdict v;
     const double lo = std::min(plain.tok_s, control.tok_s);
     v.baseline = std::max(plain.tok_s, control.tok_s);
     v.floor_pct = lo > 0.0 ? 100.0 * (v.baseline - lo) / lo : 0.0;
     v.effect_pct = v.baseline > 0.0
         ? 100.0 * (mtp.tok_s - v.baseline) / v.baseline : 0.0;
-    v.required_pct = v.floor_pct + std::max(v.floor_pct, kMinMarginPct);
+    v.margin_pct = std::max(v.floor_pct, kMinMarginPct);
+    v.required_pct = v.floor_pct + v.margin_pct;
+    v.allowed_loss_pct = v.margin_pct;
     v.clears = v.effect_pct > v.required_pct;
+    v.not_worse = v.effect_pct >= -v.allowed_loss_pct;
+    v.rule = info.fully_resident ? ResidencyRule::kClearsFloor
+                                 : ResidencyRule::kNotWorse;
+    v.resident_fraction = info.resident_fraction;
+    v.passes = info.fully_resident ? v.clears : v.not_worse;
     return v;
 }
 
@@ -802,22 +913,35 @@ void print_config(const BenchModel& m, const RunInfo& info) {
         info.gpu.c_str(), info.vram_used_mib, m.measured_rounds);
 }
 
-/// @brief Human report. The FLOOR is printed above the EFFECT so the two
-///        cannot be read the other way round.
-void print_report(const BenchModel& m, const RunInfo& info,
-                  const std::map<std::string, ArmStats>& s, const Verdict& v) {
-    print_config(m, info);
-    std::printf("----------------------------------------------------------------\n"
-                "NOISE FLOOR — two identical plain arms\n");
-    print_arm("plain", s.at("plain"));
-    print_arm("control", s.at("control"));
-    std::printf("  floor        %8.2f %%\n"
-                "EFFECT — MTP vs the faster plain arm\n", v.floor_pct);
-    print_arm("mtp", s.at("mtp"));
-    std::printf("  effect       %+8.2f %%   required > %.2f %% "
-                "(floor + max(floor, %.1f pp))  -> %s\n",
-                v.effect_pct, v.required_pct, kMinMarginPct,
-                v.clears ? "CLEARS THE FLOOR" : "DOES NOT CLEAR THE FLOOR");
+/// @brief The residency line and BOTH rules' outcomes. Printed BELOW the
+///        floor and the effect, so neither can be read as the other; the
+///        rule that is actually asserted is marked, so the one that is not
+///        cannot be mistaken for the verdict.
+void print_verdict(const RunInfo& info, const Verdict& v) {
+    const bool full = v.rule == ResidencyRule::kClearsFloor;
+    std::printf(
+        "RESIDENCY — %d of %d layers on the GPU (%.1f %%, offload=%s, from "
+        "the RESOLVED gpu_layers=%d)\n  rule: %s\n",
+        info.resident_layers, info.n_layer, 100.0 * v.resident_fraction,
+        info.offload.c_str(), info.model.gpu_layers,
+        full ? "FULLY RESIDENT — MTP must CLEAR the floor"
+             : "PARTIALLY RESIDENT — MTP must only not be materially WORSE "
+               "than plain; no win is claimed under partial offload");
+    std::printf("  clears floor   %-3s  effect %+.2f %% > required %.2f %% "
+                "(floor + max(floor, %.1f pp))%s\n",
+                v.clears ? "YES" : "NO", v.effect_pct, v.required_pct,
+                kMinMarginPct, full ? "   <- ASSERTED" : "");
+    std::printf("  not worse      %-3s  effect %+.2f %% >= -%.2f %% "
+                "(max(floor, %.1f pp))%s\n"
+                "  VERDICT        %s (rule: %s, resident %.1f %%)\n",
+                v.not_worse ? "YES" : "NO", v.effect_pct, v.allowed_loss_pct,
+                kMinMarginPct, full ? "" : "   <- ASSERTED",
+                v.passes ? "PASS" : "FAIL", v.rule_id(),
+                100.0 * v.resident_fraction);
+}
+
+/// @brief The grammar arm, which is a #147 observation and not a claim.
+void print_grammar_arm(const std::map<std::string, ArmStats>& s) {
     const auto& g = s.at("mtp_grammar");
     const auto& u = s.at("mtp");
     std::printf("MTP UNDER TIER GRAMMAR '%s' (source=%s, resolved=%s) — the "
@@ -830,6 +954,24 @@ void print_report(const BenchModel& m, const RunInfo& info,
                 "the grammar to compare against\n",
                 g.accept_rate(), u.accept_rate(),
                 u.tok_s > 0.0 ? 100.0 * (g.tok_s - u.tok_s) / u.tok_s : 0.0);
+}
+
+/// @brief Human report. The FLOOR is printed above the EFFECT so the two
+///        cannot be read the other way round, and the RULE below both so it
+///        reads as a judgment of them rather than as another measurement.
+void print_report(const BenchModel& m, const RunInfo& info,
+                  const std::map<std::string, ArmStats>& s, const Verdict& v) {
+    print_config(m, info);
+    std::printf("----------------------------------------------------------------\n"
+                "NOISE FLOOR — two identical plain arms\n");
+    print_arm("plain", s.at("plain"));
+    print_arm("control", s.at("control"));
+    std::printf("  floor        %8.2f %%\n"
+                "EFFECT — MTP vs the faster plain arm\n", v.floor_pct);
+    print_arm("mtp", s.at("mtp"));
+    std::printf("  effect       %+8.2f %%\n", v.effect_pct);
+    print_verdict(info, v);
+    print_grammar_arm(s);
 }
 
 /// @brief Per-trial rows, printed only for a VALID run.
@@ -861,11 +1003,35 @@ fs::path summary_path(const std::string& label) {
          / ("gh153_mtp_" + label + ".json");
 }
 
-/// @brief The configuration block of the summary — every field read back
-///        from what the engine resolved, not from what this file asked for.
+/// @brief The configuration block — every field read back from what the
+///        engine resolved, not from what this file asked for. The residency
+///        fields are the ones the rule is chosen from (decision #74), so
+///        they sit next to the values they were derived from.
+nlohmann::json config_json(const BenchModel& m, const RunInfo& info) {
+    return {{"context_length", info.model.context_length},
+            {"gpu_layers_configured", m.gpu_layers},
+            {"gpu_layers_resolved", info.model.gpu_layers},
+            {"n_layer", info.n_layer},
+            {"resident_layers", info.resident_layers},
+            {"resident_fraction", info.resident_fraction},
+            {"fully_resident", info.fully_resident},
+            {"offload", info.offload},
+            {"flash_attn", info.model.flash_attn},
+            {"cache_type_k", info.model.cache_type_k},
+            {"cache_type_v", info.model.cache_type_v},
+            {"use_mlock", info.model.use_mlock},
+            {"n_draft", kNDraft},
+            {"temperature", 0.0},
+            {"max_tokens", m.max_tokens},
+            {"enable_thinking", false},
+            {"vram_used_mib_after_load", info.vram_used_mib},
+            {"yaml", info.yaml}};
+}
+
+/// @brief The run header of the summary: what was measured, and how.
 nlohmann::json run_json(const BenchModel& m, const RunInfo& info) {
     return {
-        {"schema", "entropic.gh153.mtp-bench/1"},
+        {"schema", "entropic.gh153.mtp-bench/2"},
         {"issue", "gh#153"},
         {"entropic_version", entropic_version()},
         {"git_sha", info.git_sha},
@@ -877,21 +1043,7 @@ nlohmann::json run_json(const BenchModel& m, const RunInfo& info) {
                    {"file_bytes", info.target_bytes}}},
         {"mtp_head", {{"key", m.head_key},
                       {"file", info.head_path.filename().string()}}},
-        {"config", {{"context_length", info.model.context_length},
-                    {"gpu_layers_configured", m.gpu_layers},
-                    {"gpu_layers_resolved", info.model.gpu_layers},
-                    {"n_layer", info.n_layer},
-                    {"offload", info.offload},
-                    {"flash_attn", info.model.flash_attn},
-                    {"cache_type_k", info.model.cache_type_k},
-                    {"cache_type_v", info.model.cache_type_v},
-                    {"use_mlock", info.model.use_mlock},
-                    {"n_draft", kNDraft},
-                    {"temperature", 0.0},
-                    {"max_tokens", m.max_tokens},
-                    {"enable_thinking", false},
-                    {"vram_used_mib_after_load", info.vram_used_mib},
-                    {"yaml", info.yaml}}},
+        {"config", config_json(m, info)},
         {"method", {{"warmup", "one discarded round, every arm once"},
                     {"measured_rounds", m.measured_rounds},
                     {"order", "Williams square: each arm once per position, "
@@ -905,7 +1057,14 @@ nlohmann::json run_json(const BenchModel& m, const RunInfo& info) {
                                                "prefill included"},
                     {"floor", "|plain - control| / min(plain, control)"},
                     {"effect", "mtp / max(plain, control) - 1"},
-                    {"required", "floor + max(floor, 5 pp)"}}},
+                    {"required", "floor + max(floor, 5 pp)"},
+                    {"rule", "decision #74 — the assertion is chosen from the "
+                             "RESOLVED residency, not from the case: fully "
+                             "resident, MTP must clear the floor; partially "
+                             "resident, MTP must only be no worse than plain "
+                             "by more than max(floor, 5 pp), because "
+                             "verification cost scales with the drafted "
+                             "batch on CPU-resident layers"}}},
         {"prompt", kReviewPrompt},
         {"grammar", {{"key", kGrammarKey}, {"gbnf", kGrammarGbnf}}},
     };
@@ -920,6 +1079,9 @@ nlohmann::json arm_json(const ArmSpec& arm, const ArmStats& s,
         {"quant", info.quant},
         {"gpu_layers", info.model.gpu_layers},
         {"offload", info.offload},
+        // Beside the tok/s, not only in the config block: a row lifted out
+        // of this array must carry the condition its figure depends on.
+        {"resident_fraction", info.resident_fraction},
         {"mtp", arm.mtp},
         {"n_draft", arm.mtp ? kNDraft : 0},
         {"grammar", {{"source", s.grammar_source},
@@ -982,11 +1144,23 @@ nlohmann::json valid_summary(const BenchModel& m, const RunInfo& info,
     doc["floor"] = {{"plain_tok_s", s.at("plain").tok_s},
                     {"control_tok_s", s.at("control").tok_s},
                     {"floor_pct", v.floor_pct}};
+    // Both rules' outcomes, the one that was ASSERTED, and the residency
+    // that chose it — so a figure read out of this file years from now
+    // cannot be detached from the condition that makes it mean anything.
     doc["effect"] = {{"mtp_tok_s", s.at("mtp").tok_s},
                      {"baseline_tok_s", v.baseline},
                      {"effect_pct", v.effect_pct},
+                     {"floor_pct", v.floor_pct},
+                     {"rule", v.rule_id()},
+                     {"fully_resident", info.fully_resident},
+                     {"resident_layers", info.resident_layers},
+                     {"n_layer", info.n_layer},
+                     {"resident_fraction", info.resident_fraction},
                      {"required_pct", v.required_pct},
-                     {"clears_floor", v.clears}};
+                     {"allowed_loss_pct", v.allowed_loss_pct},
+                     {"clears_floor", v.clears},
+                     {"not_worse_than_plain", v.not_worse},
+                     {"passes", v.passes}};
     const auto& g = s.at("mtp_grammar");
     const auto& u = s.at("mtp");
     doc["grammar_arm"] = {
@@ -1032,6 +1206,14 @@ void run_four_arm_bench(const BenchModel& m) {
              "the configuration this case measures");
         REQUIRE(info.model.gpu_layers != 0);
     }
+    {
+        // The rule is CHOSEN from the layer count (decision #74), so a layer
+        // count we could not read is a broken run, not a case for guessing a
+        // rule. Fail loud rather than fall back to the weaker assertion.
+        INFO("the model's layer count could not be read, so the resident "
+             "fraction is unknown and neither residency rule can be selected");
+        REQUIRE(info.n_layer > 0);
+    }
 
     entropic::GenerationParams params;
     params.temperature = 0.0f;
@@ -1069,7 +1251,7 @@ void run_four_arm_bench(const BenchModel& m) {
     std::map<std::string, ArmStats> stats;
     for (const auto& arm : as) { stats[arm.name] = aggregate(trials, arm.name); }
     const auto verdict =
-        judge(stats.at("plain"), stats.at("control"), stats.at("mtp"));
+        judge(stats.at("plain"), stats.at("control"), stats.at("mtp"), info);
     print_report(m, info, stats, verdict);
     print_trials(trials);
     write_summary(out, valid_summary(m, info, stats, verdict, trials));
@@ -1077,9 +1259,17 @@ void run_four_arm_bench(const BenchModel& m) {
 
     INFO("MTP " << stats.at("mtp").tok_s << " tok/s vs the faster plain arm "
          << verdict.baseline << " tok/s: effect " << verdict.effect_pct
-         << " % against a floor of " << verdict.floor_pct
-         << " % (required > " << verdict.required_pct << " %)");
-    REQUIRE(verdict.clears);
+         << " % against a floor of " << verdict.floor_pct << " %, with "
+         << info.resident_layers << " of " << info.n_layer
+         << " layers resident (" << 100.0 * info.resident_fraction
+         << " %), judged by '" << verdict.rule_id() << "' — "
+         << (info.fully_resident
+                 ? "fully resident, so the effect must EXCEED "
+                 : "partially resident, so the effect must be no worse than -")
+         << (info.fully_resident ? verdict.required_pct
+                                 : verdict.allowed_loss_pct)
+         << " %");
+    REQUIRE(verdict.passes);
 }
 
 }  // namespace gh153
@@ -1088,7 +1278,12 @@ TEST_CASE("gh#153 MTP vs plain decode throughput — four arms, Gemma 4 E4B "
           "QAT fully offloaded",
           "[.][model][gh153][benchmark][mtp-e4b]") {
     // The consumer's configuration (#153): E4B QAT + its head, flash, q4_0 KV,
-    // every layer on the GPU.
+    // every layer on the GPU. `-1` is an INTENT — the case asserts the
+    // fully-resident rule only because 42 of 42 layers came back resident.
+    //
+    // Measured 2026-09 on a GTX 1080 Ti: plain 53.11 / control 53.09 / mtp
+    // 75.84 tok/s (accept 0.331), floor 0.045 %, effect +42.8 % (decision
+    // #42). That is what CLEARS THE FLOOR is expected to print here.
     gh153::run_four_arm_bench(
         {"e4b", "gemma4_e4b_qat", "mtp_e4b", "-1", 512, 4});
 }
@@ -1100,6 +1295,18 @@ TEST_CASE("gh#153 MTP vs plain decode throughput — four arms, Gemma 4 26B-A4B 
     // derives the split from free VRAM and the summary records what it chose.
     // Shorter generations than E4B — a partially offloaded MoE decodes several
     // times slower — so the four arms still fit a bounded run.
+    //
+    // This case does NOT assert a speedup, and the reason is measured rather
+    // than assumed (decision #74). On the same 1080 Ti at 18 of 31 layers:
+    // plain 18.86 / control 18.68 / mtp 18.68 tok/s, floor 1.00 %, effect
+    // -0.92 % — with an accept rate of 0.473, HIGHER than the fully resident
+    // E4B's 0.331. Drafting works; the verify is what costs, on the 13 layers
+    // that are not on the card. The MTP head itself was fully resident (5/5
+    // layers offloaded), so a CPU-side drafter is not the explanation.
+    //
+    // The same rule is expected to hold on a 12 GB card, where this model is
+    // still partial at a better fraction: a better number, under this rule,
+    // not a different rule.
     gh153::run_four_arm_bench(
         {"a4b", "gemma4_a4b_qat", "mtp_a4b", "auto", 256, 4});
 }

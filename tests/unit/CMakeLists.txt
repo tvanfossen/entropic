@@ -546,6 +546,9 @@ add_executable(entropic-api-tests
     # v2.13.0: outside-root file access asks the host's path approver by
     # default, with explicit allow/deny lists; workspaces stay confined.
     api/path_approval_test.cpp
+    # gh#158 (v2.13.0): the built-in servers' own state — read tracker and
+    # working directory — shared by concurrent sessions on the default set.
+    api/builtin_server_sharing_test.cpp
     # v2.0.11: External bridge tests (links facade for ENTROPIC_EXPORT symbols)
     mcp/external_bridge_test.cpp
     # gh#130 (v2.10.2): bridge final-text selection — includes the private

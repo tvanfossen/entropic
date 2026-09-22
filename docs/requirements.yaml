@@ -5204,9 +5204,15 @@
 
     the sandbox manager materializes (`base_mutex_`), the external MCP
 
-    client''s JSON-RPC id counter (atomic, REQ-MCP-026), and the whole
+    client''s JSON-RPC id counter (atomic, REQ-MCP-026), the filesystem
 
-    generation path. Deleted rather than locked: the TokenCounter memo, an
+    server''s read-before-write tracker (its own mutex: one FilesystemServer
+
+    serves every unbound session, so read_file and write_file reach its map
+
+    from several run threads at once), and the whole generation path.
+
+    Deleted rather than locked: the TokenCounter memo, an
 
     address-keyed map written from a const method, which was both a data
 
@@ -5324,6 +5330,12 @@
     TEST_CASE "gh#158 entropic_interrupt_session targets exactly one run" —
 
     /home/tvanfossen/Projects/entropic/tests/unit/api/entropic_capi_test.cpp;
+
+    SCENARIO "gh#158: two sessions reading and writing through ONE filesystem
+
+    server share its read tracker safely" —
+
+    /home/tvanfossen/Projects/entropic/tests/unit/api/builtin_server_sharing_test.cpp;
 
     SCENARIO "gh#158: two concurrent sessions do not bleed into each other" —
 

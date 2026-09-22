@@ -36,31 +36,43 @@ namespace entropic {
 /**
  * @brief Record that a file was read with its content hash.
  *
- * The tracker is what makes read-before-write enforceable: the hash
- * stored here is compared at write time to detect external
- * modification.
+ * The tracker is what makes read-before-write enforceable: write_file
+ * and edit_file refuse an existing file with no recorded read.
+ *
+ * gh#158 (v2.13.0): under `mutex_`, because concurrent sessions on the
+ * default server set record from several run threads at once.
  *
  * @param path Canonical file path.
  * @param hash Content hash at time of read.
  * @req REQ-MCP-021
- * @version 1.8.5
+ * @req REQ-LOOP-009
+ * @version 2.13.0
  */
 void FileAccessTracker::record_read(const std::string& path,
                                     size_t hash) {
-    reads_[path] = hash;
+    {
+        std::lock_guard<std::mutex> lock(mutex_);
+        reads_[path] = hash;
+    }
     logger->info("Tracked read: {}", path);
 }
 
 
 /**
- * @brief Check if a file was ever read in this session.
+ * @brief Check if a file was ever read on this server.
+ *
+ * gh#158 (v2.13.0): under `mutex_` — the lookup races a concurrent
+ * session's insert otherwise.
+ *
  * @param path Canonical file path.
  * @return true when a read was recorded for this path, regardless of
  *         whether the content has since changed.
  * @req REQ-MCP-021
- * @version 1.8.5
+ * @req REQ-LOOP-009
+ * @version 2.13.0
  */
 bool FileAccessTracker::was_read(const std::string& path) const {
+    std::lock_guard<std::mutex> lock(mutex_);
     return reads_.count(path) > 0;
 }
 

@@ -26,7 +26,14 @@ namespace entropic {
 
 /**
  * @brief Tracks file read state for read-before-write enforcement.
- * @version 1.8.5
+ *
+ * gh#158 (v2.13.0): locked. One FilesystemServer serves every unbound
+ * session on a handle, and `concurrent_sessions` defaults true, so
+ * read_file (records) and write_file / edit_file (consult) reach this map
+ * from several run threads at once — an unsynchronized `unordered_map`
+ * insert racing a lookup is heap corruption, not a stale answer.
+ *
+ * @version 2.13.0
  */
 class FileAccessTracker {
 public:
@@ -34,7 +41,8 @@ public:
      * @brief Record that a file was read.
      * @param path Canonical file path.
      * @param hash Content hash at time of read.
-     * @version 1.8.5
+     * @threadsafety Safe from any thread (gh#158).
+     * @version 2.13.0
      */
     void record_read(const std::string& path, size_t hash);
 
@@ -43,11 +51,13 @@ public:
      * @brief Check if a file was ever read.
      * @param path Canonical file path.
      * @return true if previously read.
-     * @version 1.8.5
+     * @threadsafety Safe from any thread (gh#158).
+     * @version 2.13.0
      */
     bool was_read(const std::string& path) const;
 
 private:
+    mutable std::mutex mutex_;                      ///< Guards reads_ (gh#158)
     std::unordered_map<std::string, size_t> reads_; ///< path → hash
 };
 

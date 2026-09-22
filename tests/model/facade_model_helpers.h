@@ -95,6 +95,34 @@ struct TierSpec {
     /// Set it to false when the scenario needs no completion contract.
     /// @version 2.13.0
     std::optional<bool> explicit_completion;
+
+    /// @brief Identity `max_iterations` frontmatter (E6). -1 = absent.
+    ///
+    /// The per-tier loop cap. It is the ONLY way a facade test can make a
+    /// DELEGATION CHILD hit the iteration cap: `LoopConfig::max_iterations`
+    /// is engine-wide, and a child loop reads its override through
+    /// `AgentEngine::run_loop` -> `apply_identity_overrides` ->
+    /// `get_tier_param(tier, "max_iterations")`, which the facade answers
+    /// from this frontmatter field (`populate_tier_info`,
+    /// src/facade/entropic.cpp). Note that `entropic.delegate`'s own
+    /// `max_turns` argument does NOT cap the child — it only reaches the
+    /// storage record — so a scenario that needs a capped child must set
+    /// this.
+    /// @version 2.13.0
+    int max_iterations = -1;
+
+    /// @brief Identity `max_consecutive_empty_turns` frontmatter (gh#123).
+    ///
+    /// -1 = absent, which leaves the engine default of 3. A tier that owes
+    /// an explicit completion it cannot emit is nudged
+    /// ("[SYSTEM] Your previous response contained no tool call ... Retry.")
+    /// and, on the fourth such turn, FAILS the loop into `AgentState::ERROR`
+    /// — a terminal state, so neither the iteration cap nor the
+    /// thinking-budget cut fires after it. A scenario whose subject IS one
+    /// of those terminals raises the allowance so the ladder cannot reach
+    /// the run first.
+    /// @version 2.13.0
+    int max_consecutive_empty_turns = -1;
 };
 
 /**
@@ -250,6 +278,14 @@ private:
         if (t.explicit_completion.has_value()) {
             fm += std::string("explicit_completion: ")
                 + (*t.explicit_completion ? "true" : "false") + "\n";
+        }
+        if (t.max_iterations > 0) {
+            fm += "max_iterations: "
+                + std::to_string(t.max_iterations) + "\n";
+        }
+        if (t.max_consecutive_empty_turns > 0) {
+            fm += "max_consecutive_empty_turns: "
+                + std::to_string(t.max_consecutive_empty_turns) + "\n";
         }
         if (!t.allowed_tools.empty()) {
             fm += "allowed_tools:\n";

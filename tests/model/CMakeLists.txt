@@ -436,6 +436,16 @@ set_tests_properties(model/test-gh166-workspaces PROPERTIES TIMEOUT 1200)
 add_model_test(test-outside-root-approval test_outside_root_approval.cpp)
 set_tests_properties(model/test-outside-root-approval PROPERTIES TIMEOUT 900)
 
+# gh#169 + gh#181 (v2.13.0): the EMERGENT multi-turn test both budget
+# terminals owed. A real child does real work, hits the iteration cap in one
+# scenario and the thinking-budget hard cut in the other, and the PARENT must
+# receive that work — not the placeholder — through hook 9 and through its own
+# context, one turn later. Two scenarios, two model loads (both tiers share
+# one 2.44 GiB backend, keyed by path), a handful of short turns each.
+add_model_test(test-gh169-gh181-budget-carry test_gh169_gh181_budget_carry.cpp)
+set_tests_properties(model/test-gh169-gh181-budget-carry
+    PROPERTIES TIMEOUT 1200)
+
 # gh#99 (v2.8.0): facade-driven per-call tier grammar switching on one model.
 add_model_test(test-gh99-run-as test_gh99_run_as.cpp)
 set_tests_properties(model/test-gh99-run-as PROPERTIES TIMEOUT 300)

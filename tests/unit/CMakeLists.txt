@@ -551,6 +551,9 @@ add_executable(entropic-api-tests
     # gh#158 (v2.13.0): the built-in servers' own state — read tracker and
     # working directory — shared by concurrent sessions on the default set.
     api/builtin_server_sharing_test.cpp
+    # v2.13.0: mcp.bash.timeout_seconds reaches the dispatched bash server,
+    # and the timeout is enforced end to end.
+    api/bash_timeout_config_test.cpp
     # v2.0.11: External bridge tests (links facade for ENTROPIC_EXPORT symbols)
     mcp/external_bridge_test.cpp
     # gh#130 (v2.10.2): bridge final-text selection — includes the private

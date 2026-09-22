@@ -619,14 +619,74 @@ static std::string parse_external_mcp_config(
 }
 
 /**
+ * @brief Parse `mcp.bash` (v2.13.0).
+ *
+ * `timeout_seconds` must be a positive integer. Zero and negatives are
+ * REFUSED rather than clamped or read as "no limit": the timeout is what
+ * stops a runaway command holding a run thread (and every lock above it),
+ * and a consumer who wrote 0 meaning "off" and silently got either reading
+ * would believe a posture that is not in force. An absent key keeps 30.
+ *
+ * @param node YAML node for the "bash" section.
+ * @param[out] config Output bash config.
+ * @return Empty string on success, error message on a non-positive value.
+ * @req REQ-MCP-023
+ * @version 2.13.0
+ */
+static std::string parse_bash_config(
+    ryml::ConstNodeRef node,
+    BashConfig& config)
+{
+    int timeout = config.timeout_seconds;
+    std::string err;
+    if (extract(node, "timeout_seconds", timeout) && timeout < 1) {
+        err = "mcp.bash.timeout_seconds: must be a positive number of "
+              "seconds, got " + std::to_string(timeout);
+    } else {
+        config.timeout_seconds = timeout;
+    }
+    return err;
+}
+
+/**
+ * @brief Parse the MCP section's per-server sub-sections (v2.13.0).
+ *
+ * Split out of parse_mcp_config when `mcp.bash` joined `filesystem` and
+ * `external`, to keep that function inside the knots ABC gate. The first
+ * error wins; `external` has no failure mode of its own.
+ *
+ * @param node YAML node for "mcp" section.
+ * @param[out] config Output MCP config.
+ * @return Empty string on success, else the first section's error.
+ * @dg_internal
+ * @version 2.13.0
+ */
+static std::string parse_mcp_sections(
+    ryml::ConstNodeRef node,
+    MCPConfig& config)
+{
+    std::string err;
+    if (node.has_child("filesystem")) {
+        err = parse_filesystem_config(node["filesystem"], config.filesystem);
+    }
+    if (err.empty() && node.has_child("bash")) {
+        err = parse_bash_config(node["bash"], config.bash);
+    }
+    if (node.has_child("external")) {
+        parse_external_mcp_config(node["external"], config.external);
+    }
+    return err;
+}
+
+/**
  * @brief Parse the MCP section from a YAML node.
  * @param node YAML node for "mcp" section.
  * @param[out] config Output MCP config.
  * @return Empty string on success, error message on failure — v2.13.0
  *         propagates the filesystem section's error, which used to be
- *         dropped here.
+ *         dropped here, and the bash section's.
  * @dg_internal
- * @version 2.13.0
+ * @version 2.13.0 [reviewed]
  */
 static std::string parse_mcp_config(
     ryml::ConstNodeRef node,
@@ -650,16 +710,7 @@ static std::string parse_mcp_config(
             config.plugins.push_back(expand_home(std::filesystem::path(p)));
         }
     }
-
-    std::string err;
-    if (node.has_child("filesystem")) {
-        err = parse_filesystem_config(node["filesystem"], config.filesystem);
-    }
-    if (node.has_child("external")) {
-        parse_external_mcp_config(node["external"], config.external);
-    }
-
-    return err;
+    return parse_mcp_sections(node, config);
 }
 
 /**

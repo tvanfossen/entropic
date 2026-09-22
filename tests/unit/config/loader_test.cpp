@@ -1419,3 +1419,50 @@ SCENARIO("mcp.filesystem outside_root_allow / outside_root_deny parse as "
         }
     }
 }
+
+// ── v2.13.0: mcp.bash.timeout_seconds ──────────────────────────────────
+
+SCENARIO("mcp.bash.timeout_seconds parses, defaults to 30, and refuses a "
+         "non-positive value", "[config][loader][bash][v2.13.0]")
+{
+    GIVEN("a config with no mcp.bash section") {
+        // Repo rule: every optional key gets a test where it is ABSENT.
+        entropic::ParsedConfig config;
+        auto err = parse_yaml_body("bash_omitted",
+            "mcp:\n  enable_bash: true\n", config);
+        THEN("the documented 30 s default holds") {
+            REQUIRE(err.empty());
+            CHECK(config.mcp.bash.timeout_seconds == 30);
+        }
+    }
+    GIVEN("an mcp.bash section without timeout_seconds") {
+        entropic::ParsedConfig config;
+        auto err = parse_yaml_body("bash_empty",
+            "mcp:\n  bash: {}\n", config);
+        THEN("the default holds") {
+            REQUIRE(err.empty());
+            CHECK(config.mcp.bash.timeout_seconds == 30);
+        }
+    }
+    GIVEN("timeout_seconds: 600") {
+        entropic::ParsedConfig config;
+        auto err = parse_yaml_body("bash_600",
+            "mcp:\n  bash:\n    timeout_seconds: 600\n", config);
+        THEN("it is carried through") {
+            REQUIRE(err.empty());
+            CHECK(config.mcp.bash.timeout_seconds == 600);
+        }
+    }
+    GIVEN("timeout_seconds: 0 or negative") {
+        for (const char* v : {"0", "-1"}) {
+            entropic::ParsedConfig config;
+            auto err = parse_yaml_body(std::string("bash_bad") + v,
+                std::string("mcp:\n  bash:\n    timeout_seconds: ") + v
+                    + "\n", config);
+            THEN("the load fails and names the key") {
+                INFO("value " << v << " -> " << err);
+                CHECK(err.find("mcp.bash.timeout_seconds") != std::string::npos);
+            }
+        }
+    }
+}

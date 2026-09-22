@@ -858,6 +858,22 @@ struct ExternalMCPConfig {
 };
 
 /**
+ * @brief Bash MCP server configuration (v2.13.0).
+ *
+ * `mcp.bash.timeout_seconds` is the wall-clock limit on one `bash.execute`
+ * call. On expiry the command's WHOLE process group is killed (background
+ * children included), the shell is reaped, and the model receives a typed
+ * `timeout` error naming the limit and the elapsed time. Until v2.13.0 the
+ * limit was a constructor default nothing enforced. Must be >= 1: a zero or
+ * negative value fails the config load rather than meaning "unbounded".
+ *
+ * @version 2.13.0
+ */
+struct BashConfig {
+    int timeout_seconds = 30;  ///< Per-command wall-clock limit (>= 1)
+};
+
+/**
  * @brief Reconnection policy configuration for external MCP servers.
  * @version 1.8.7
  */
@@ -891,8 +907,12 @@ struct MCPConfig {
     bool enable_diagnostics = true;  ///< Enable diagnostics server
     bool enable_web = true;          ///< Enable web server
     FilesystemConfig filesystem;     ///< Filesystem server config
+    BashConfig bash;                 ///< Bash server config (v2.13.0)
     ExternalMCPConfig external;      ///< External MCP server config (Entropic-as-server)
-    int server_timeout_seconds = 30; ///< Server timeout (5–300)
+    /// Parsed since v1.8.1 and read by NOTHING in the C++ engine — the bash
+    /// limit is `bash.timeout_seconds`, external tool calls use
+    /// `tool_call_timeout_ms`. Kept only so existing configs still load.
+    int server_timeout_seconds = 30;
     std::string working_dir;         ///< Server working directory (empty = CWD) (v2.0.4)
 
     /**

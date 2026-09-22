@@ -6886,7 +6886,7 @@
     '
   version: 2.13.0
 - id: REQ-MCP-023
-  name: Bash and git servers gate on operator approval, not command pattern matching
+  name: Bash and git servers gate on operator approval, not command pattern matching; bash enforces a timeout on the whole process group
   module: MCP Servers and Tool Dispatch
   description: '`bash.execute` deliberately has no command allowlist or denylist: the
 
@@ -6918,6 +6918,40 @@
 
     branch/checkout/reset against its repo root.
 
+    Since v2.13.0 bash ENFORCES its timeout (`mcp.bash.timeout_seconds`,
+
+    default 30, >= 1 or the config load fails): each command runs as
+
+    `/bin/sh -c` leading its OWN process group, with stdout and stderr on one
+
+    pipe and stdin on /dev/null. When the wall-clock limit passes, the whole
+
+    group is SIGKILLed, the shell is reaped, and the result is a typed
+
+    `{"error":"timeout","message","timeout_seconds","elapsed_ms","output"}`
+
+    — the message names the limit and the elapsed time, and `output` keeps
+
+    what the command printed before the kill. When a command finishes inside
+
+    the limit, anything it left running in its group (background jobs) is
+
+    killed before the call returns, so no process outlives the tool call and
+
+    no zombie is left; a background child holding the output pipe no longer
+
+    holds the call open. A process that deliberately leaves the group
+
+    (setsid) escapes; its output is abandoned after a 2 s grace. A command
+
+    killed by signal N reports exit code 128+N. Until v2.13.0 the timeout
+
+    was stored and never read, and bash.h claimed the server "blocks
+
+    dangerous commands" — it never did; command gating is the permission
+
+    layer and tool approval.
+
     '
   acceptance_criteria: 'Given a command writing to stdout or stderr, Then both are captured
     with
@@ -6934,8 +6968,44 @@
 
     the repo root.
 
+    Given a command that outlives the timeout, Then it returns a timeout error
+
+    well before it would have finished, naming the limit, and afterwards the
+
+    shell is reaped and no live process remains in its group; Given a command
+
+    that starts a background child, Then the child is dead once the call
+
+    returns, and a child holding the output pipe does not hold the call open;
+
+    Given a command inside its limit, Then its own exit code and both output
+
+    streams are returned; Given mcp.bash.timeout_seconds, Then the dispatched
+
+    server uses it (absent: 30), and 0 or a negative value fails the load.
+
     '
-  verified_by: '"Execute captures stdout output", "Execute captures stderr output",
+  verified_by: '"bash: a command that outlives the timeout is killed with its whole
+
+    process group, and the model is told why", "bash: a background child is not
+
+    left running after the command returns", "bash: a background child holding
+
+    the output pipe does not hang the call", "bash: a command inside its limit
+
+    still reports its own exit code and output" —
+
+    tests/unit/mcp/servers/bash_test.cpp; SCENARIO "mcp.bash.timeout_seconds
+
+    reaches the dispatched bash server" —
+
+    tests/unit/api/bash_timeout_config_test.cpp; SCENARIO
+
+    "mcp.bash.timeout_seconds parses, defaults to 30, and refuses a
+
+    non-positive value" — tests/unit/config/loader_test.cpp;
+
+    "Execute captures stdout output", "Execute captures stderr output",
 
     "Execute respects working directory", "Execute nonexistent command returns
 
@@ -6956,7 +7026,7 @@
     NOTE: the working_dir metacharacter gate itself has no test.
 
     '
-  version: 2.10.4
+  version: 2.13.0
 - id: REQ-MCP-024
   name: Engine-level entropic.* tools validate their arguments and emit typed directives
   module: MCP Servers and Tool Dispatch

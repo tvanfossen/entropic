@@ -85,6 +85,17 @@ mcp:
   enable_git: true
   enable_diagnostics: true
   enable_web: true
+  bash:
+    # Wall-clock limit on ONE bash.execute call, in seconds (>= 1; 0 or a
+    # negative value fails the config load). On expiry the command's whole
+    # process group — background children included — is killed and the model
+    # gets a typed `timeout` error naming the limit and the elapsed time.
+    # Anything a command leaves running in the background is killed when it
+    # returns. Until v2.13.0 this limit existed only on paper; raise it if
+    # your tools run long builds or test suites through bash.
+    # The bash tool does NOT filter commands: gate them with
+    # permissions.allow / permissions.deny and tool approval.
+    timeout_seconds: 30
   filesystem:
     # Paths OUTSIDE the project root (mcp.working_dir, else the cwd):
     #   false    — refuse every one ("Path escapes project root: ...")

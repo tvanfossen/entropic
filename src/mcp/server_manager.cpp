@@ -44,6 +44,9 @@ ServerManager::ServerManager(
  * arrives with dispatch, envelope shape and anchoring already provided
  * by the base and only its own tools and overrides on top.
  *
+ * v2.13.0: the bash server gets `mcp.bash.timeout_seconds`, which it now
+ * enforces; before, nothing passed a timeout and nothing read one.
+ *
  * @param mcp MCP config with enable flags — a disabled server is never
  *            constructed, so its tools never appear in list_tools().
  * @param tier_names Tier names for the entropic server (drives whether
@@ -53,7 +56,8 @@ ServerManager::ServerManager(
  *        delegation (gh#162).
  * @req REQ-MCP-001
  * @req REQ-MCP-007
- * @version 2.13.0
+ * @req REQ-MCP-023
+ * @version 2.13.0 [reviewed]
  */
 void ServerManager::init_builtins(
     const MCPConfig& mcp,
@@ -70,7 +74,7 @@ void ServerManager::init_builtins(
     }
     if (mcp.enable_bash) {
         register_server(std::make_unique<BashServer>(
-            project_dir_, data_dir));
+            project_dir_, data_dir, mcp.bash.timeout_seconds));
     }
     if (mcp.enable_git) {
         register_server(std::make_unique<GitServer>(

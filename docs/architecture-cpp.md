@@ -992,7 +992,7 @@ It owns all subsystems and controls their creation/destruction order.
     | git | `repo_dir_` | ctor; `set_working_dir` | was race + wrong root → `ToolRootLock` |
     | all | tool objects, `registry_`, `name_` | ctor | immutable after construction |
     | plugin | the plugin's own cwd | `set_working_dir` | `PluginServer::call_mutex_` (bytes) + `ToolRootLock` (which root) |
-    | diagnostics | `root_dir_` | ctor | immutable — never re-rooted (no `set_working_dir`) |
+    | diagnostics | `root_dir_` | ctor | immutable — never re-rooted (no `set_working_dir`), and NOT a sandbox leak (verified, fourth pass): both tools, `diagnostics` and `check_errors`, are stubs that discard their arguments and return a fixed "not yet connected (v1.8.7)" string, so nothing a sandboxed child calls reads or writes any root; `root_dir_` is read only by the ctor's log line and by `root_dir()`, which nothing in `src/` calls. Must join the `ToolRootLock` / `set_working_dir` discipline the day an LSP backend makes it touch files. (Separately: both stubs are advertised to the model by default, `enable_diagnostics: true`.) |
     | entropic | `TodoTool::items_` → `lists_` | `todo` | was race (heap corruption) → leaf lock (095a2f2); was per SERVER → per SESSION, released with the conversation (fourth pass) |
     | entropic | `state_provider_`, tier lists | configure / ctor | immutable after construction |
     | manager | `PermissionManager` lists | ctor | immutable in production — `add_permission` has no caller |

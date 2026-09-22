@@ -13,6 +13,7 @@
 #include <filesystem>
 #include <fstream>
 #include <string>
+#include <unistd.h>
 
 /**
  * @brief Return the path to the test data directory.
@@ -105,7 +106,8 @@ SCENARIO("Parse config with tiers", "[config][loader]") {
 
             THEN("MCP config is parsed") {
                 REQUIRE(config.mcp.enable_filesystem == true);
-                REQUIRE(config.mcp.filesystem.allow_outside_root == true);
+                REQUIRE(config.mcp.filesystem.allow_outside_root
+                        == entropic::OutsideRootAccess::allow);
             }
         }
     }
@@ -280,7 +282,8 @@ SCENARIO("Comprehensive config exercises every parse_* helper",
                 CHECK(config.mcp.filesystem.diagnostics_on_edit == true);
                 CHECK(config.mcp.filesystem.fail_on_errors == false);
                 CHECK(config.mcp.filesystem.diagnostics_timeout == 10);
-                CHECK(config.mcp.filesystem.allow_outside_root == true);
+                CHECK(config.mcp.filesystem.allow_outside_root
+                      == entropic::OutsideRootAccess::allow);
                 CHECK(config.mcp.filesystem.max_read_context_pct
                       == Catch::Approx(0.5f));
                 CHECK(config.mcp.filesystem.max_read_bytes == 65536);
@@ -1293,4 +1296,126 @@ SCENARIO("gh#160 delegation.isolation parses, and a bad mode is refused",
     }
 
     std::filesystem::remove_all(dir);
+}
+
+// ── v2.13.0: mcp.filesystem outside-root policy ────────────────────────
+
+/**
+ * @brief Parse a one-off YAML body as a config file.
+ * @param name File stem, unique per GIVEN.
+ * @param body YAML content.
+ * @param[out] config Parsed config.
+ * @return The loader's error string ("" on success).
+ * @internal
+ * @version 2.13.0
+ */
+static std::string parse_yaml_body(const std::string& name,
+                                   const std::string& body,
+                                   entropic::ParsedConfig& config)
+{
+    auto dir = std::filesystem::temp_directory_path()
+        / ("entropic-outside-root-" + std::to_string(::getpid()));
+    std::filesystem::create_directories(dir);
+    auto path = dir / (name + ".yaml");
+    std::ofstream(path) << body;
+    auto registry = load_test_registry();
+    auto err = entropic::config::parse_config_file(path, registry, config);
+    std::filesystem::remove(path);
+    return err;
+}
+
+SCENARIO("mcp.filesystem.allow_outside_root is tri-state and defaults to "
+         "optional", "[config][loader][outside_root][v2.13.0]")
+{
+    GIVEN("a config that never mentions allow_outside_root") {
+        // Repo rule: every optional key gets a test where it is ABSENT.
+        entropic::ParsedConfig config;
+        auto err = parse_yaml_body("omitted",
+            "mcp:\n  filesystem:\n    max_read_bytes: 1024\n", config);
+        THEN("the default is optional, with both lists empty") {
+            REQUIRE(err.empty());
+            CHECK(config.mcp.filesystem.allow_outside_root
+                  == entropic::OutsideRootAccess::optional);
+            CHECK(config.mcp.filesystem.outside_root_allow.empty());
+            CHECK(config.mcp.filesystem.outside_root_deny.empty());
+        }
+    }
+
+    GIVEN("no mcp section at all") {
+        entropic::ParsedConfig config;
+        auto err = parse_yaml_body("no_mcp", "log_level: INFO\n", config);
+        THEN("the struct default is optional too") {
+            REQUIRE(err.empty());
+            CHECK(config.mcp.filesystem.allow_outside_root
+                  == entropic::OutsideRootAccess::optional);
+        }
+    }
+
+    GIVEN("each accepted spelling") {
+        struct Case { const char* yaml; entropic::OutsideRootAccess want; };
+        const Case cases[] = {
+            {"true", entropic::OutsideRootAccess::allow},
+            {"yes", entropic::OutsideRootAccess::allow},
+            {"false", entropic::OutsideRootAccess::refuse},
+            {"no", entropic::OutsideRootAccess::refuse},
+            {"optional", entropic::OutsideRootAccess::optional},
+        };
+        for (const auto& c : cases) {
+            entropic::ParsedConfig config;
+            auto err = parse_yaml_body(std::string("spelling_") + c.yaml,
+                std::string("mcp:\n  filesystem:\n    allow_outside_root: ")
+                    + c.yaml + "\n", config);
+            INFO("allow_outside_root: " << c.yaml << " err=" << err);
+            CHECK(err.empty());
+            CHECK(config.mcp.filesystem.allow_outside_root == c.want);
+        }
+    }
+
+    GIVEN("an unrecognised value") {
+        entropic::ParsedConfig config;
+        auto err = parse_yaml_body("bogus",
+            "mcp:\n  filesystem:\n    allow_outside_root: maybe\n", config);
+        THEN("the load fails naming the key and the value — a security "
+             "switch is never silently defaulted") {
+            REQUIRE_FALSE(err.empty());
+            CHECK(err.find("allow_outside_root") != std::string::npos);
+            CHECK(err.find("maybe") != std::string::npos);
+        }
+    }
+}
+
+SCENARIO("mcp.filesystem outside_root_allow / outside_root_deny parse as "
+         "absolute paths", "[config][loader][outside_root][v2.13.0]")
+{
+    GIVEN("absolute and ~ entries in both lists") {
+        entropic::ParsedConfig config;
+        auto err = parse_yaml_body("lists",
+            "mcp:\n  filesystem:\n"
+            "    outside_root_allow:\n      - /opt/data\n      - ~/notes\n"
+            "    outside_root_deny:\n      - ~/.ssh\n", config);
+        const auto home = std::filesystem::path(std::getenv("HOME"));
+        THEN("both lists carry the entries, ~ expanded") {
+            REQUIRE(err.empty());
+            const auto& fs_cfg = config.mcp.filesystem;
+            REQUIRE(fs_cfg.outside_root_allow.size() == 2);
+            CHECK(fs_cfg.outside_root_allow[0]
+                  == std::filesystem::path("/opt/data"));
+            CHECK(fs_cfg.outside_root_allow[1] == home / "notes");
+            REQUIRE(fs_cfg.outside_root_deny.size() == 1);
+            CHECK(fs_cfg.outside_root_deny[0] == home / ".ssh");
+        }
+    }
+
+    GIVEN("a relative entry") {
+        entropic::ParsedConfig config;
+        auto err = parse_yaml_body("relative",
+            "mcp:\n  filesystem:\n"
+            "    outside_root_deny:\n      - secrets\n", config);
+        THEN("it is refused — a relative entry has no defensible anchor") {
+            REQUIRE_FALSE(err.empty());
+            CHECK(err.find("outside_root_deny") != std::string::npos);
+            CHECK(err.find("secrets") != std::string::npos);
+            CHECK(config.mcp.filesystem.outside_root_deny.empty());
+        }
+    }
 }

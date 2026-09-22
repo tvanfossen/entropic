@@ -18,6 +18,7 @@
 #include <entropic/mcp/permission_manager.h>
 #include <entropic/mcp/plugin_server.h>
 #include <entropic/mcp/server_base.h>
+#include <entropic/mcp/servers/filesystem.h>
 #include <entropic/types/config.h>
 
 #include <nlohmann/json_fwd.hpp>
@@ -149,6 +150,20 @@ public:
      * @version 2.0.6
      */
     MCPServerBase* get_server(const std::string& name) const;
+
+    /**
+     * @brief Install the outside-root approver on this set's filesystem
+     *        server (v2.13.0).
+     *
+     * The facade calls this on the handle's DEFAULT set only; a named
+     * workspace's set never gets one (gh#166 hard confinement).
+     *
+     * @param fn Approver, or nullptr to clear.
+     * @param user_data Forwarded to `fn`.
+     * @return true when a filesystem server was present to receive it.
+     * @version 2.13.0
+     */
+    bool set_outside_root_approver(OutsideRootApprover fn, void* user_data);
 
     /**
      * @brief List registered server names (in-process + external).

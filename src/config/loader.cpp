@@ -12,6 +12,7 @@
 
 #include <nlohmann/json.hpp>
 
+#include <algorithm>
 #include <fstream>
 #include <optional>
 #include <sstream>
@@ -439,12 +440,92 @@ static std::string parse_permissions_config(
 }
 
 /**
+ * @brief Parse `mcp.filesystem.allow_outside_root` (v2.13.0 tri-state).
+ *
+ * `true`/`false` keep every spelling the bool parser accepted, so a
+ * pre-2.13 config means exactly what it meant. `optional` is new. An
+ * unrecognised value is REFUSED rather than read as a default: this key
+ * is a security boundary, and a consumer who typed `maybe` and silently
+ * got either extreme would believe a posture that is not in force. An
+ * absent key leaves the field untouched (default `optional`).
+ *
+ * @param node YAML node for the "filesystem" section.
+ * @param[out] config Output filesystem config.
+ * @return Empty string on success, error message on an unknown value.
+ * @req REQ-MCP-021
+ * @version 2.13.0
+ */
+static std::string parse_outside_root_access(
+    ryml::ConstNodeRef node,
+    FilesystemConfig& config)
+{
+    std::string raw;
+    if (!extract(node, "allow_outside_root", raw)) { return ""; }
+    static const std::vector<std::string> yes = {
+        "true", "True", "TRUE", "yes", "Yes", "YES", "on", "On", "ON", "1"};
+    static const std::vector<std::string> no = {
+        "false", "False", "FALSE", "no", "No", "NO", "off", "Off", "OFF",
+        "0"};
+    std::string err;
+    if (std::find(yes.begin(), yes.end(), raw) != yes.end()) {
+        config.allow_outside_root = OutsideRootAccess::allow;
+    } else if (std::find(no.begin(), no.end(), raw) != no.end()) {
+        config.allow_outside_root = OutsideRootAccess::refuse;
+    } else if (raw == "optional") {
+        config.allow_outside_root = OutsideRootAccess::optional;
+    } else {
+        err = "mcp.filesystem.allow_outside_root: unknown value '" + raw
+            + "' (expected true, false or optional)";
+    }
+    return err;
+}
+
+/**
+ * @brief Parse one outside-root path list (`outside_root_allow`/`_deny`).
+ *
+ * Entries are `~`-expanded like every other config path, and must then be
+ * ABSOLUTE: a relative entry has no defensible anchor (the process cwd?
+ * the root it is supposed to lie outside of?), so it is refused rather
+ * than guessed. A present key replaces the list, like every other list
+ * key, so a project layer can narrow what the global layer granted.
+ *
+ * @param node YAML node for the "filesystem" section.
+ * @param key List key.
+ * @param[out] out Output list; untouched when the key is absent.
+ * @return Empty string on success, error message naming the bad entry.
+ * @req REQ-MCP-021
+ * @version 2.13.0
+ */
+static std::string parse_outside_root_list(
+    ryml::ConstNodeRef node,
+    c4::csubstr key,
+    std::vector<std::filesystem::path>& out)
+{
+    std::vector<std::string> raw;
+    if (!extract_string_list(node, key, raw)) { return ""; }
+    std::vector<std::filesystem::path> paths;
+    std::string err;
+    for (const auto& entry : raw) {
+        auto p = expand_home(std::filesystem::path(entry));
+        if (!p.is_absolute() && err.empty()) {
+            err = "mcp.filesystem." + to_string(key) + ": entry '" + entry
+                + "' is not an absolute path";
+        }
+        paths.push_back(std::move(p));
+    }
+    if (err.empty()) { out = std::move(paths); }
+    return err;
+}
+
+/**
  * @brief Parse the filesystem section from a YAML node.
  * @param node YAML node for "filesystem" section.
  * @param[out] config Output filesystem config.
- * @return Empty string on success, error message on failure.
+ * @return Empty string on success, error message on failure — v2.13.0
+ *         the outside-root keys can now fail, and a bad value there must
+ *         reach the operator rather than fall back.
  * @dg_internal
- * @version 2.13.0
+ * @version 2.13.0 [reviewed]
  */
 static std::string parse_filesystem_config(
     ryml::ConstNodeRef node,
@@ -453,7 +534,6 @@ static std::string parse_filesystem_config(
     extract(node, "diagnostics_on_edit", config.diagnostics_on_edit);
     extract(node, "fail_on_errors", config.fail_on_errors);
     extract(node, "diagnostics_timeout", config.diagnostics_timeout);
-    extract(node, "allow_outside_root", config.allow_outside_root);
     extract(node, "max_read_context_pct", config.max_read_context_pct);
     extract(node, "max_walk_entries", config.max_walk_entries);
 
@@ -462,7 +542,16 @@ static std::string parse_filesystem_config(
         config.max_read_bytes = max_read;
     }
 
-    return "";
+    auto err = parse_outside_root_access(node, config);
+    if (err.empty()) {
+        err = parse_outside_root_list(node, "outside_root_allow",
+                                      config.outside_root_allow);
+    }
+    if (err.empty()) {
+        err = parse_outside_root_list(node, "outside_root_deny",
+                                      config.outside_root_deny);
+    }
+    return err;
 }
 
 /**
@@ -533,9 +622,11 @@ static std::string parse_external_mcp_config(
  * @brief Parse the MCP section from a YAML node.
  * @param node YAML node for "mcp" section.
  * @param[out] config Output MCP config.
- * @return Empty string on success, error message on failure.
+ * @return Empty string on success, error message on failure — v2.13.0
+ *         propagates the filesystem section's error, which used to be
+ *         dropped here.
  * @dg_internal
- * @version 2.10.1
+ * @version 2.13.0
  */
 static std::string parse_mcp_config(
     ryml::ConstNodeRef node,
@@ -560,14 +651,15 @@ static std::string parse_mcp_config(
         }
     }
 
+    std::string err;
     if (node.has_child("filesystem")) {
-        parse_filesystem_config(node["filesystem"], config.filesystem);
+        err = parse_filesystem_config(node["filesystem"], config.filesystem);
     }
     if (node.has_child("external")) {
         parse_external_mcp_config(node["external"], config.external);
     }
 
-    return "";
+    return err;
 }
 
 /**
@@ -729,20 +821,23 @@ static void parse_inference_subsections(
  * @param root YAML root node.
  * @param registry Bundled models for path resolution.
  * @param config Config to populate.
+ * @return Empty string on success, else the `mcp` section's error
+ *         (v2.13.0: its outside-root keys are refused, not defaulted).
  * @dg_internal
- * @version 2.3.7
+ * @version 2.13.0
  */
-static void parse_optional_subsections(
+static std::string parse_optional_subsections(
     ryml::ConstNodeRef root,
     const BundledModels& registry,
     ParsedConfig& config)
 {
+    std::string err;
     if (root.has_child("generation"))
         parse_generation_config(root["generation"], config.generation);
     if (root.has_child("permissions"))
         parse_permissions_config(root["permissions"], config.permissions);
     if (root.has_child("mcp"))
-        parse_mcp_config(root["mcp"], config.mcp);
+        err = parse_mcp_config(root["mcp"], config.mcp);
     if (root.has_child("compaction"))
         parse_compaction_config(root["compaction"], config.compaction);
     if (root.has_child("lsp"))
@@ -752,6 +847,7 @@ static void parse_optional_subsections(
         parse_constitutional_validation_config(
             root["constitutional_validation"],
             config.constitutional_validation);
+    return err;
 }
 
 /**
@@ -793,27 +889,28 @@ static void extract_scalar_fields(ryml::ConstNodeRef root,
  *
  * gh#160 (v2.13.0): no longer infallible — `delegation.isolation` names a
  * safety posture, so an unrecognized value is refused instead of being
- * quietly read as the shipped default.
+ * quietly read as the shipped default. The same holds for the
+ * `mcp.filesystem` outside-root keys, whose error is reported first.
  *
  * @param root YAML root node.
  * @param registry Bundled models for path resolution.
  * @param config Config to populate.
  * @return Empty string on success, error message on failure.
  * @dg_internal
- * @version 2.13.0
+ * @version 2.13.0 [reviewed]
  */
 static std::string parse_optional_sections(
     ryml::ConstNodeRef root,
     const BundledModels& registry,
     ParsedConfig& config)
 {
-    parse_optional_subsections(root, registry, config);
+    auto err = parse_optional_subsections(root, registry, config);
     extract_scalar_fields(root, config);
-    if (root.has_child("delegation")) {
-        return parse_delegation_config(root["delegation"],
-                                       config.delegation);
+    if (err.empty() && root.has_child("delegation")) {
+        err = parse_delegation_config(root["delegation"],
+                                      config.delegation);
     }
-    return "";
+    return err;
 }
 
 /**

@@ -230,8 +230,8 @@ SCENARIO("gh#166: two workspaces on one handle do not read each other's "
                 // even when the model never mentions it.
                 //
                 // It fails on a SERVED cross-workspace read too, which is
-                // what the v2.13.0 gate caught: the bundled config ships
-                // `mcp.filesystem.allow_outside_root: true`, so until a
+                // what the v2.13.0 gate caught: the bundled config then
+                // shipped `mcp.filesystem.allow_outside_root: true`, so until a
                 // workspace forced its own confinement, an absolute path
                 // into the sibling repository was read out and answered.
                 // Since the markers no longer appear in any path, a match

@@ -846,10 +846,14 @@ static std::vector<std::string> collect_delegatable_tiers(
 
 /**
  * @brief Initialize MCP servers with resolved working directory.
+ *
+ * v2.13.0: also wires the default set's filesystem server to the handle's
+ * outside-root path-approval slot.
+ *
  * @param h Engine handle with config loaded.
  * @param data_dir Bundled data directory path.
  * @dg_internal
- * @version 2.13.0
+ * @version 2.13.0 [reviewed]
  */
 static void init_mcp_servers(entropic_handle_t h,
                              const std::filesystem::path& data_dir) {
@@ -867,6 +871,10 @@ static void init_mcp_servers(entropic_handle_t h,
     }
     h->server_manager->init_builtins(
         h->config.mcp, tier_names, data_dir.string(), require_context);
+    // v2.13.0: under `allow_outside_root: optional` the DEFAULT set asks
+    // the host's path approver. Workspaces are built elsewhere and never
+    // reach this line — they stay hard-confined (gh#166).
+    entropic::wire_outside_root_approver(h);
 
     // gh#133 (v2.10.1): load dlopen plugins after the builtins so a plugin
     // colliding with a built-in server name is rejected rather than shadowing

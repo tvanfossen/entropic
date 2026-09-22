@@ -174,6 +174,14 @@ public:
     /// @version 2.13.0
     bool auto_approve_tools = true;
 
+    /// @brief Extra top-level YAML appended verbatim to config.local.yaml.
+    ///
+    /// For a scenario that needs a section the generator does not write —
+    /// e.g. `mcp:` with a fixed `working_dir` and an outside-root policy
+    /// (v2.13.0). Must be complete top-level keys; "" writes nothing.
+    /// @version 2.13.0
+    std::string extra_config;
+
     /// @brief Why the last `setup()` returned nullptr ("" when it did not).
     /// @version 2.13.0
     const std::string& setup_failure() const { return setup_failure_; }
@@ -228,6 +236,7 @@ private:
         cfg += "constitutional_validation:\n  enabled: false\n";
         cfg += std::string("permissions:\n  auto_approve: ")
              + (auto_approve_tools ? "true" : "false") + "\n";
+        cfg += extra_config;
         write_file(dir_ / "config.local.yaml", cfg);
     }
 

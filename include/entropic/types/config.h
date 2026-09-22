@@ -725,14 +725,68 @@ struct PermissionsConfig {
 };
 
 /**
+ * @brief What the filesystem server does with a path outside its root.
+ *
+ * The YAML spelling of `mcp.filesystem.allow_outside_root`: `false`,
+ * `true`, or `optional` (v2.13.0). An enum rather than `optional<bool>`
+ * on purpose — `if (cfg.allow_outside_root)` on an `optional<bool>`
+ * compiles and is TRUE for an explicit `false`, which is exactly the
+ * mistake a security switch cannot afford.
+ *
+ * @version 2.13.0
+ */
+enum class OutsideRootAccess {
+    refuse,    ///< `false`: every escape refused ("Path escapes project root")
+    allow,     ///< `true`: every escape served, no prompt
+    optional,  ///< `optional`: every escape asks the host's path approver
+};
+
+/**
  * @brief Filesystem MCP server configuration.
- * @version 1.8.1
+ * @version 2.13.0
  */
 struct FilesystemConfig {
     bool diagnostics_on_edit = true;   ///< Proactive diagnostics on edit/write
     bool fail_on_errors = true;        ///< Rollback edit if it introduces errors
     float diagnostics_timeout = 1.0f;  ///< Diagnostics timeout (0.1–5.0)
-    bool allow_outside_root = false;   ///< Allow file ops outside workspace root
+
+    /// @brief Paths OUTSIDE the root: refuse, allow, or ask (v2.13.0).
+    ///
+    /// Defaults to `optional`. Until v2.13.0 this was a bool and
+    /// `data/default_config.yaml` shipped it `true`, so every consumer on
+    /// the bundled defaults gave the model unconfined READ and WRITE of the
+    /// whole filesystem — through read_file, write_file, edit_file and
+    /// list_directory — without anyone having chosen that. `optional`
+    /// sends each escaping path to the host's path approver
+    /// (`entropic_set_path_approval_callback`) with the resolved path and
+    /// read/write; with no approver registered the call is REFUSED with a
+    /// typed `outside_root_approval_required` message. It never fails
+    /// open.
+    ///
+    /// Precedence, highest first: `outside_root_deny` (always refused),
+    /// `outside_root_allow` (served, no prompt), then this setting. A path
+    /// inside the root is always served. `permissions.auto_approve` does
+    /// NOT approve an escape: it skips per-TOOL prompts, it does not widen
+    /// the filesystem boundary. A named workspace's own servers are forced
+    /// to `refuse` with an empty allow list and no approver (gh#166).
+    /// @version 2.13.0
+    OutsideRootAccess allow_outside_root = OutsideRootAccess::optional;
+
+    /// @brief Pre-approved subtrees outside the root — no prompt (v2.13.0).
+    ///
+    /// Absolute paths (`~` expanded at load). Matching is by canonical
+    /// SUBTREE: `/opt/data` covers `/opt/data/x`, never `/opt/database`.
+    /// @version 2.13.0
+    std::vector<std::filesystem::path> outside_root_allow;
+
+    /// @brief Subtrees outside the root that are ALWAYS refused (v2.13.0).
+    ///
+    /// Beats `outside_root_allow` and `allow_outside_root: true`. Same
+    /// subtree matching. Governs outside-root paths only — a deny entry
+    /// inside the root has no effect there and is warned about.
+    /// @version 2.13.0
+    std::vector<std::filesystem::path> outside_root_deny;
+
     std::optional<int> max_read_bytes; ///< Max file read size (nullopt = derive from context)
     float max_read_context_pct = 0.25f; ///< Max context % for single file read
 

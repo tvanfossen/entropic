@@ -391,6 +391,13 @@ set_tests_properties(model/test-gh165-restore PROPERTIES TIMEOUT 900)
 add_model_test(test-gh166-workspaces test_gh166_workspaces.cpp)
 set_tests_properties(model/test-gh166-workspaces PROPERTIES TIMEOUT 1200)
 
+# v2.13.0: the EMERGENT multi-turn test for outside-root approval. A real
+# model reads outside its root under `allow_outside_root: optional`; the
+# host's path approver accepts one file and rejects another, and the tool
+# results — and the model's recall two turns later — must reflect each.
+add_model_test(test-outside-root-approval test_outside_root_approval.cpp)
+set_tests_properties(model/test-outside-root-approval PROPERTIES TIMEOUT 900)
+
 # gh#99 (v2.8.0): facade-driven per-call tier grammar switching on one model.
 add_model_test(test-gh99-run-as test_gh99_run_as.cpp)
 set_tests_properties(model/test-gh99-run-as PROPERTIES TIMEOUT 300)

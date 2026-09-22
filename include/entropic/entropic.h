@@ -1307,6 +1307,13 @@ ENTROPIC_EXPORT entropic_error_t entropic_session_list(
  * that is never bound keeps using `mcp.working_dir` (else the process
  * cwd) exactly as before.
  *
+ * A workspace's filesystem tools are HARD-confined to `dir`: whatever the
+ * host set for `mcp.filesystem.allow_outside_root`, `outside_root_allow`
+ * or `entropic_set_path_approval_callback`, a path outside `dir` is
+ * refused ("Path escapes project root: ..."), because outside one
+ * workspace is inside another (v2.13.0). `outside_root_deny` still
+ * applies — it can only narrow.
+ *
  * @param handle Engine handle (must be configured).
  * @param name Workspace name, unique per handle. Non-empty.
  * @param dir Existing directory the workspace's tools resolve against.
@@ -1638,6 +1645,109 @@ ENTROPIC_EXPORT entropic_error_t entropic_set_delegation_callbacks(
     entropic_handle_t handle,
     ent_delegation_start_cb on_start,
     ent_delegation_complete_cb on_complete,
+    void* user_data);
+
+/* ── Outside-Root Path Approval (v2.13.0) ─────────────── */
+
+/**
+ * @brief What a filesystem tool is about to do with a path.
+ *
+ * `read_file` and `list_directory` READ; `write_file` and `edit_file`
+ * WRITE.
+ *
+ * @version 2.13.0
+ */
+typedef enum {
+    ENT_PATH_ACCESS_READ = 0,
+    ENT_PATH_ACCESS_WRITE = 1
+} ent_path_access_t;
+
+/**
+ * @brief One filesystem access OUTSIDE the project root, awaiting the
+ *        host's decision.
+ *
+ * Passed to `ent_path_approval_cb`. Every string is engine-owned and valid
+ * only for the callback's duration — copy what must be retained. `path` is
+ * the CANONICAL path the tool resolved (symlinks and `..` already
+ * resolved), so what the host shows the user is what would be touched,
+ * not what the model typed.
+ *
+ * @version 2.13.0
+ */
+typedef struct {
+    const char* path;         ///< Canonical absolute path outside the root
+    const char* root;         ///< Canonical project root it lies outside
+    const char* tool;         ///< Fully-qualified tool ("filesystem.write_file")
+    ent_path_access_t access; ///< READ or WRITE
+    const char* session_key;  ///< Session running the call ("" = default)
+} ent_path_approval_request_t;
+
+/**
+ * @brief Host decision for one outside-root filesystem access.
+ *
+ * Consulted only under `mcp.filesystem.allow_outside_root: optional` (the
+ * default), and only for a path that is outside the root AND matches
+ * neither `outside_root_deny` (always refused, never asked) nor
+ * `outside_root_allow` (always served, never asked). One call per tool
+ * call — the engine remembers nothing between them.
+ *
+ * @param req Request descriptor (engine-owned, callback-scoped).
+ * @param user_data Pointer passed to `entropic_set_path_approval_callback`.
+ * @return ENT_DECISION_ACCEPT to serve this one access;
+ *         ENT_DECISION_REJECT to refuse it — the model then receives a
+ *         tool error beginning `outside_root_rejected:`.
+ * @version 2.13.0
+ */
+typedef ent_decision_t (*ent_path_approval_cb)(
+    const ent_path_approval_request_t* req, void* user_data);
+
+/**
+ * @brief Register the approver for filesystem access outside the root.
+ *
+ * `mcp.filesystem.allow_outside_root` is tri-state: `false` refuses every
+ * path outside the root, `true` serves every one, and `optional` — the
+ * default since v2.13.0 — asks THIS callback. With no callback registered,
+ * `optional` REFUSES, with a tool error beginning
+ * `outside_root_approval_required:` that names the path and says how to
+ * configure access. It never fails open.
+ *
+ * Until v2.13.0 the bundled `data/default_config.yaml` set the flag to
+ * `true`, so every consumer on bundled defaults gave the model unconfined
+ * read and write of the whole filesystem. A host that relied on that must
+ * now choose: register this callback, pre-approve directories with
+ * `outside_root_allow`, or set `allow_outside_root: true` explicitly.
+ *
+ * @par Not approval: permissions.auto_approve
+ * `permissions.auto_approve` does NOT approve an outside-root access. It
+ * skips per-TOOL permission prompts; it does not widen the filesystem
+ * boundary. An auto_approve host that wants outside access uses
+ * `outside_root_allow` or `allow_outside_root: true`.
+ *
+ * @par Not consulted: named workspaces
+ * A session bound to a workspace (`entropic_workspace_create`) is
+ * confined to that workspace's root unconditionally: its servers ignore
+ * this callback and `outside_root_allow`, because outside one workspace
+ * is inside another (gh#166).
+ *
+ * @param handle Engine handle. Registration before `entropic_configure*`
+ *        is kept and applied when the servers are built.
+ * @param cb Approver, or NULL to clear (escapes then refuse).
+ * @param user_data Pointer forwarded to `cb`.
+ * @return ENTROPIC_OK on success.
+ *         - ENTROPIC_ERROR_INVALID_HANDLE — handle is NULL.
+ *
+ * @threadsafety Thread-safe. `cb` fires on the thread running the turn
+ *        that made the tool call — with `concurrent_sessions` on, several
+ *        at once — so it must be thread-safe, and it may block (to ask a
+ *        person) without holding up other sessions' registration.
+ * @req REQ-MCP-021
+ * @req REQ-API-010
+ * @req REQ-API-005
+ * @version 2.13.0
+ */
+ENTROPIC_EXPORT entropic_error_t entropic_set_path_approval_callback(
+    entropic_handle_t handle,
+    ent_path_approval_cb cb,
     void* user_data);
 
 /* ── Validation Retry Controls (v2.1.5, gh#30) ───────── */

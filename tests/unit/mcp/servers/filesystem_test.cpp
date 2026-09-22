@@ -1250,3 +1250,245 @@ TEST_CASE("gh#124: read_file not-found error message names list_directory",
     REQUIRE(result["message"].get<std::string>().find("list_directory")
             != std::string::npos);
 }
+
+// ── v2.13.0: outside-root policy + the host's path approver ─────────────
+
+namespace {
+
+/**
+ * @brief Test approver: records every request, answers a fixed verdict.
+ * @internal
+ * @version 2.13.0
+ */
+struct RecordingApprover {
+    OutsideRootVerdict answer = OutsideRootVerdict::approved; ///< Reply
+    std::vector<OutsideRootRequest> seen;                     ///< Requests
+
+    /** @brief C-style trampoline. @internal @version 2.13.0 */
+    static OutsideRootVerdict call(const OutsideRootRequest& req, void* ud) {
+        auto* self = static_cast<RecordingApprover*>(ud);
+        self->seen.push_back(req);
+        return self->answer;
+    }
+};
+
+/**
+ * @brief A root and a sibling "outside" tree under one TempDir.
+ * @internal
+ * @version 2.13.0
+ */
+struct OutsideFixture {
+    TempDir tmp;        ///< Owns both trees
+    fs::path root;      ///< Server root
+    fs::path outside;   ///< Sibling tree, outside the root
+
+    /** @brief Build both trees. @internal @version 2.13.0 */
+    OutsideFixture()
+        : root(fs::weakly_canonical(tmp.path()) / "root"),
+          outside(fs::weakly_canonical(tmp.path()) / "outside") {
+        fs::create_directories(root);
+        write_test_file(outside, "secret.txt", "OUTSIDE-SECRET\n");
+        write_test_file(outside, "data/f.txt", "DATA\n");
+    }
+};
+
+/**
+ * @brief `{"path": p}` (plus `content` when given) as a JSON string.
+ * @internal
+ * @version 2.13.0
+ */
+std::string path_json(const fs::path& p, const char* content = nullptr) {
+    json j;
+    j["path"] = p.string();
+    if (content != nullptr) { j["content"] = content; }
+    return j.dump();
+}
+
+}  // namespace
+
+TEST_CASE("outside-root optional: the approver is asked with path, root, "
+          "tool and read/write", "[filesystem][outside_root][v2.13.0]") {
+    OutsideFixture f;
+    auto server = make_server(f.root);  // default config: optional
+    RecordingApprover approver;
+    server.set_outside_root_approver(&RecordingApprover::call, &approver);
+
+    SECTION("read_file asks as a READ and an approval serves the file") {
+        auto out = server.execute("read_file",
+                                  path_json(f.outside / "secret.txt"));
+        INFO(out);
+        CHECK(out.find("OUTSIDE-SECRET") != std::string::npos);
+        REQUIRE(approver.seen.size() == 1);
+        CHECK(approver.seen[0].path == (f.outside / "secret.txt").string());
+        CHECK(approver.seen[0].root == f.root.string());
+        CHECK(approver.seen[0].tool == "filesystem.read_file");
+        CHECK(approver.seen[0].access == PathAccess::read);
+    }
+
+    SECTION("list_directory asks as a READ") {
+        server.execute("list_directory", path_json(f.outside));
+        REQUIRE(approver.seen.size() == 1);
+        CHECK(approver.seen[0].tool == "filesystem.list_directory");
+        CHECK(approver.seen[0].access == PathAccess::read);
+    }
+
+    SECTION("write_file asks as a WRITE") {
+        server.execute("write_file",
+                       path_json(f.outside / "new.txt", "hello"));
+        REQUIRE(approver.seen.size() == 1);
+        CHECK(approver.seen[0].tool == "filesystem.write_file");
+        CHECK(approver.seen[0].access == PathAccess::write);
+        CHECK(approver.seen[0].path == (f.outside / "new.txt").string());
+    }
+
+    SECTION("edit_file asks as a WRITE") {
+        json args;
+        args["path"] = (f.outside / "secret.txt").string();
+        args["old_string"] = "OUTSIDE";
+        args["new_string"] = "EDITED";
+        server.execute("edit_file", args.dump());
+        REQUIRE_FALSE(approver.seen.empty());
+        CHECK(approver.seen[0].tool == "filesystem.edit_file");
+        CHECK(approver.seen[0].access == PathAccess::write);
+    }
+
+    SECTION("the canonical path is what is asked about, not the spelling") {
+        auto spelled = f.root / ".." / "outside" / "secret.txt";
+        server.execute("read_file", path_json(spelled));
+        REQUIRE(approver.seen.size() == 1);
+        CHECK(approver.seen[0].path == (f.outside / "secret.txt").string());
+    }
+}
+
+TEST_CASE("outside-root optional: a rejection refuses, types the error, "
+          "and anchors and writes nothing", "[filesystem][outside_root][v2.13.0]") {
+    OutsideFixture f;
+    auto server = make_server(f.root);
+    RecordingApprover approver;
+    approver.answer = OutsideRootVerdict::rejected;
+    server.set_outside_root_approver(&RecordingApprover::call, &approver);
+
+    SECTION("a rejected read leaks nothing and is not anchored") {
+        auto envelope = json::parse(server.execute(
+            "read_file", path_json(f.outside / "secret.txt")));
+        auto result = envelope["result"].get<std::string>();
+        INFO(result);
+        CHECK(result.find("OUTSIDE-SECRET") == std::string::npos);
+        CHECK(result.find("outside_root_rejected") != std::string::npos);
+        CHECK(result.find("Path escapes project root") != std::string::npos);
+        // A refused read must never become a ContextAnchor (gh#143).
+        CHECK(envelope["directives"].empty());
+    }
+
+    SECTION("a rejected write creates nothing") {
+        auto out = server.execute(
+            "write_file", path_json(f.outside / "planted.txt", "x"));
+        INFO(out);
+        CHECK(out.find("outside_root_rejected") != std::string::npos);
+        CHECK_FALSE(fs::exists(f.outside / "planted.txt"));
+    }
+}
+
+TEST_CASE("outside-root optional: no approver refuses with a typed, "
+          "explicit message and no anchor", "[filesystem][outside_root][v2.13.0]") {
+    OutsideFixture f;
+    auto server = make_server(f.root);  // omitted key → optional
+    REQUIRE(server.config().allow_outside_root
+            == OutsideRootAccess::optional);
+
+    auto envelope = json::parse(server.execute(
+        "read_file", path_json(f.outside / "secret.txt")));
+    auto result = envelope["result"].get<std::string>();
+    INFO(result);
+    CHECK(result.find("OUTSIDE-SECRET") == std::string::npos);
+    CHECK(result.find("outside_root_approval_required") != std::string::npos);
+    CHECK(result.find((f.outside / "secret.txt").string())
+          != std::string::npos);
+    CHECK(envelope["directives"].empty());
+
+    SECTION("installing then CLEARING an approver returns to refusal") {
+        RecordingApprover approver;
+        server.set_outside_root_approver(&RecordingApprover::call, &approver);
+        server.set_outside_root_approver(nullptr, nullptr);
+        auto again = server.execute("read_file",
+                                    path_json(f.outside / "secret.txt"));
+        CHECK(again.find("outside_root_approval_required")
+              != std::string::npos);
+        CHECK(approver.seen.empty());
+    }
+}
+
+TEST_CASE("outside-root: the approver is asked ONLY when the lists and the "
+          "mode leave the decision open", "[filesystem][outside_root][v2.13.0]") {
+    OutsideFixture f;
+    RecordingApprover approver;
+
+    SECTION("an allowlisted subtree is served without asking") {
+        FilesystemConfig cfg;
+        cfg.outside_root_allow = {f.outside / "data"};
+        auto server = make_server(f.root, cfg);
+        server.set_outside_root_approver(&RecordingApprover::call, &approver);
+        auto out = server.execute("read_file",
+                                  path_json(f.outside / "data" / "f.txt"));
+        CHECK(out.find("DATA") != std::string::npos);
+        CHECK(approver.seen.empty());
+    }
+
+    SECTION("a denied path is refused without asking, even if the approver "
+            "would say yes") {
+        FilesystemConfig cfg;
+        cfg.outside_root_deny = {f.outside};
+        auto server = make_server(f.root, cfg);
+        server.set_outside_root_approver(&RecordingApprover::call, &approver);
+        auto out = server.execute("read_file",
+                                  path_json(f.outside / "secret.txt"));
+        CHECK(out.find("outside_root_denied") != std::string::npos);
+        CHECK(out.find("OUTSIDE-SECRET") == std::string::npos);
+        CHECK(approver.seen.empty());
+    }
+
+    SECTION("legacy true serves without asking") {
+        FilesystemConfig cfg;
+        cfg.allow_outside_root = OutsideRootAccess::allow;
+        auto server = make_server(f.root, cfg);
+        server.set_outside_root_approver(&RecordingApprover::call, &approver);
+        auto out = server.execute("read_file",
+                                  path_json(f.outside / "secret.txt"));
+        CHECK(out.find("OUTSIDE-SECRET") != std::string::npos);
+        CHECK(approver.seen.empty());
+    }
+
+    SECTION("legacy false refuses without asking, with the old message") {
+        FilesystemConfig cfg;
+        cfg.allow_outside_root = OutsideRootAccess::refuse;
+        auto server = make_server(f.root, cfg);
+        server.set_outside_root_approver(&RecordingApprover::call, &approver);
+        auto out = server.execute("read_file",
+                                  path_json(f.outside / "secret.txt"));
+        CHECK(out.find("Path escapes project root") != std::string::npos);
+        CHECK(out.find("outside_root_") == std::string::npos);
+        CHECK(approver.seen.empty());
+    }
+
+    SECTION("a path inside the root never asks") {
+        write_test_file(f.root, "in.txt", "IN\n");
+        auto server = make_server(f.root);
+        server.set_outside_root_approver(&RecordingApprover::call, &approver);
+        auto out = server.execute("read_file", path_json(f.root / "in.txt"));
+        CHECK(out.find("IN") != std::string::npos);
+        CHECK(approver.seen.empty());
+    }
+
+    SECTION("the root's string-prefix sibling is OUTSIDE and asks") {
+        // /…/root vs /…/rootling: lexically_relative, never prefix.
+        write_test_file(f.root.parent_path(), "rootling/x.txt", "SIB\n");
+        auto server = make_server(f.root);
+        approver.answer = OutsideRootVerdict::rejected;
+        server.set_outside_root_approver(&RecordingApprover::call, &approver);
+        auto out = server.execute(
+            "read_file",
+            path_json(f.root.parent_path() / "rootling" / "x.txt"));
+        CHECK(out.find("SIB") == std::string::npos);
+        CHECK(approver.seen.size() == 1);
+    }
+}

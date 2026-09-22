@@ -44,10 +44,10 @@ static entropic_error_t check_server_mgr(entropic_handle_t h) {
 /**
  * @brief The handle's MCP config, confined to a workspace root (gh#166).
  *
- * `mcp.filesystem.allow_outside_root` is a SINGLE-PROJECT convenience:
- * one repository, the operator's own machine, "let the agent read
- * /etc/os-release". `data/default_config.yaml` ships it TRUE, so it is
- * what a handle built from the bundled default actually holds.
+ * `mcp.filesystem.allow_outside_root` is a SINGLE-PROJECT setting: one
+ * repository, the operator's own machine, "let the agent read
+ * /etc/os-release". Until v2.13.0 `data/default_config.yaml` shipped it
+ * TRUE; it is now `optional` (ask the host's path approver).
  *
  * The moment one handle serves several repositories that setting stops
  * meaning what the operator agreed to. "Outside my root" no longer means
@@ -58,27 +58,117 @@ static entropic_error_t check_server_mgr(entropic_handle_t h) {
  * the model asked for the sibling by absolute path, and the bound
  * session's own server served it without a single "Path escape blocked".
  *
- * So a workspace's servers are confined unconditionally. The handle's
- * DEFAULT set — every consumer that binds no workspace, which is every
- * consumer before this release — is untouched and still honours the
- * setting verbatim.
+ * So a workspace's servers are confined unconditionally: `refuse`, an
+ * EMPTY `outside_root_allow`, and no approver is ever installed on them
+ * (only the default set is wired, in `init_mcp_servers`). Neither an
+ * allow-list entry nor "just approve it" can reach a sibling
+ * workspace. `outside_root_deny` is kept — it can only narrow. The
+ * handle's DEFAULT set — every consumer that binds no workspace — is
+ * untouched and honours the host's setting verbatim.
  *
  * @param h Engine handle (configured).
  * @return A copy of `h->config.mcp` with root confinement forced on.
  * @utility
  * @req REQ-MCP-027
  * @req REQ-MCP-021
- * @version 2.13.0
+ * @version 2.13.0 [reviewed]
  */
 static entropic::MCPConfig confined_mcp_config(entropic_handle_t h) {
     entropic::MCPConfig mcp = h->config.mcp;
-    if (mcp.filesystem.allow_outside_root) {
-        logger->info("workspace servers confine to their root "
-                     "(host mcp.filesystem.allow_outside_root=true "
-                     "applies to the default set only)");
+    auto& fs_cfg = mcp.filesystem;
+    if (fs_cfg.allow_outside_root != entropic::OutsideRootAccess::refuse
+        || !fs_cfg.outside_root_allow.empty()) {
+        logger->info("workspace servers confine to their root (host "
+                     "mcp.filesystem.allow_outside_root, outside_root_allow "
+                     "({} entries) and the path approver apply to the "
+                     "default set only)", fs_cfg.outside_root_allow.size());
     }
-    mcp.filesystem.allow_outside_root = false;
+    fs_cfg.allow_outside_root = entropic::OutsideRootAccess::refuse;
+    fs_cfg.outside_root_allow.clear();
     return mcp;
+}
+
+/**
+ * @brief FilesystemServer → consumer bridge for outside-root approval.
+ *
+ * Reads the handle's slot per call (so a later registration takes effect
+ * with no server rewiring), copies it under the slot mutex, and calls the
+ * consumer OUTSIDE the lock — the consumer may block on a person.
+ *
+ * @param req The pending access.
+ * @param ud Engine handle.
+ * @return The consumer's verdict, or `no_approver` when the slot is empty.
+ * @callback
+ * @req REQ-MCP-021
+ * @version 2.13.0
+ */
+static entropic::OutsideRootVerdict outside_root_thunk(
+    const entropic::OutsideRootRequest& req, void* ud) {
+    auto* h = static_cast<entropic_handle_t>(ud);
+    ent_path_approval_cb cb = nullptr;
+    void* cb_data = nullptr;
+    {
+        std::lock_guard<std::mutex> lock(h->path_approval_mutex);
+        cb = h->path_approval_cb;
+        cb_data = h->path_approval_data;
+    }
+    auto verdict = entropic::OutsideRootVerdict::no_approver;
+    if (cb != nullptr) {
+        const std::string session = entropic::current_run_session();
+        ent_path_approval_request_t c_req{
+            req.path.c_str(), req.root.c_str(), req.tool.c_str(),
+            req.access == entropic::PathAccess::write
+                ? ENT_PATH_ACCESS_WRITE : ENT_PATH_ACCESS_READ,
+            session.c_str()};
+        verdict = cb(&c_req, cb_data) == ENT_DECISION_ACCEPT
+            ? entropic::OutsideRootVerdict::approved
+            : entropic::OutsideRootVerdict::rejected;
+    }
+    return verdict;
+}
+
+/**
+ * @brief Wire the default set's filesystem server to the handle's slot.
+ * @param h Engine handle with `server_manager` constructed.
+ * @req REQ-MCP-021
+ * @version 2.13.0
+ */
+void entropic::wire_outside_root_approver(entropic_handle_t h) {
+    if (h != nullptr && h->server_manager) {
+        h->server_manager->set_outside_root_approver(outside_root_thunk, h);
+    }
+}
+
+/**
+ * @brief Register the outside-root path approver — see entropic.h.
+ *
+ * Only the slot changes: the default set's filesystem server already
+ * holds the thunk (wired at configure), which reads the slot per call.
+ * Workspaces are never wired, so this can never reach them.
+ *
+ * @param handle Engine handle.
+ * @param cb Approver (NULL clears).
+ * @param user_data Forwarded to `cb`.
+ * @return ENTROPIC_OK, or ENTROPIC_ERROR_INVALID_HANDLE.
+ * @req REQ-MCP-021
+ * @req REQ-API-010
+ * @req REQ-API-005
+ * @version 2.13.0
+ */
+extern "C" ENTROPIC_EXPORT entropic_error_t
+entropic_set_path_approval_callback(entropic_handle_t handle,
+                                    ent_path_approval_cb cb,
+                                    void* user_data) {
+    if (handle == nullptr) { return ENTROPIC_ERROR_INVALID_HANDLE; }
+    entropic::log::HandleLogScope scope(handle->log_id);
+    {
+        std::lock_guard<std::mutex> lock(handle->path_approval_mutex);
+        handle->path_approval_cb = cb;
+        handle->path_approval_data = user_data;
+    }
+    logger->info("path approval callback {}",
+                 cb != nullptr ? "registered" : "cleared");
+    return ENTROPIC_OK;
 }
 
 /**

@@ -9,6 +9,11 @@
         "version": "2.13.0"
       },
       {
+        "name": "entropic_context_usage",
+        "file": "src/facade/entropic.cpp",
+        "version": "2.1.8"
+      },
+      {
         "name": "entropic_state_save",
         "file": "src/facade/entropic.cpp",
         "version": "2.13.0"
@@ -60,17 +65,7 @@
         "version": "2.13.0"
       },
       {
-        "name": "entropic_workspace_create",
-        "file": "src/facade/entropic_mcp.cpp",
-        "version": "2.13.0"
-      },
-      {
         "name": "entropic_session_bind_workspace",
-        "file": "src/facade/entropic_mcp.cpp",
-        "version": "2.13.0"
-      },
-      {
-        "name": "entropic_register_mcp_server",
         "file": "src/facade/entropic_mcp.cpp",
         "version": "2.13.0"
       }
@@ -124,6 +119,16 @@
         "version": "2.13.0"
       },
       {
+        "name": "entropic_interrupt",
+        "file": "src/facade/entropic.cpp",
+        "version": "2.0.0"
+      },
+      {
+        "name": "entropic_context_usage",
+        "file": "src/facade/entropic.cpp",
+        "version": "2.1.8"
+      },
+      {
         "name": "entropic_state_save",
         "file": "src/facade/entropic.cpp",
         "version": "2.13.0"
@@ -134,9 +139,19 @@
         "version": "2.13.0"
       },
       {
+        "name": "entropic_metrics_json",
+        "file": "src/facade/entropic.cpp",
+        "version": "2.0.6-rc16.2"
+      },
+      {
         "name": "entropic_adapter_load",
         "file": "src/facade/entropic.cpp",
         "version": "2.13.0"
+      },
+      {
+        "name": "entropic_identity_count",
+        "file": "src/facade/entropic.cpp",
+        "version": "2.0.0"
       },
       {
         "name": "entropic_get_logprobs",
@@ -154,22 +169,22 @@
         "version": "2.13.0"
       },
       {
+        "name": "entropic_set_residency_observer",
+        "file": "src/facade/entropic.cpp",
+        "version": "2.2.4"
+      },
+      {
         "name": "entropic_release_model",
         "file": "src/facade/entropic.cpp",
         "version": "2.13.0"
       },
       {
-        "name": "entropic_workspace_create",
+        "name": "entropic_set_path_approval_callback",
         "file": "src/facade/entropic_mcp.cpp",
         "version": "2.13.0"
       },
       {
         "name": "entropic_session_bind_workspace",
-        "file": "src/facade/entropic_mcp.cpp",
-        "version": "2.13.0"
-      },
-      {
-        "name": "entropic_register_mcp_server",
         "file": "src/facade/entropic_mcp.cpp",
         "version": "2.13.0"
       }
@@ -185,6 +200,11 @@
         "version": "2.13.0"
       },
       {
+        "name": "entropic_metrics_json",
+        "file": "src/facade/entropic.cpp",
+        "version": "2.0.6-rc16.2"
+      },
+      {
         "name": "entropic_get_logprobs",
         "file": "src/facade/entropic.cpp",
         "version": "2.13.0"
@@ -196,11 +216,6 @@
     "req_name": "Run entry-point family, result contract, and cross-thread interruptibility",
     "functions": [
       {
-        "name": "try_begin_turn",
-        "file": "include/entropic/core/engine.h",
-        "version": "2.13.0"
-      },
-      {
         "name": "claim",
         "file": "src/facade/engine_handle.h",
         "version": "2.13.0"
@@ -209,6 +224,11 @@
         "name": "entropic_run_batch",
         "file": "src/facade/entropic.cpp",
         "version": "2.13.0"
+      },
+      {
+        "name": "entropic_interrupt",
+        "file": "src/facade/entropic.cpp",
+        "version": "2.0.0"
       },
       {
         "name": "entropic_interrupt_session",
@@ -228,6 +248,22 @@
       {
         "name": "entropic_run_session_streaming",
         "file": "src/facade/entropic.cpp",
+        "version": "2.13.0"
+      }
+    ]
+  },
+  {
+    "req_id": "REQ-API-010",
+    "req_name": "Observer and callback slots survive configure and fire uniformly",
+    "functions": [
+      {
+        "name": "entropic_set_residency_observer",
+        "file": "src/facade/entropic.cpp",
+        "version": "2.2.4"
+      },
+      {
+        "name": "entropic_set_path_approval_callback",
+        "file": "src/facade/entropic_mcp.cpp",
         "version": "2.13.0"
       }
     ]
@@ -253,9 +289,14 @@
         "version": "2.13.0"
       },
       {
-        "name": "parse_config_string",
+        "name": "load_project_layer",
         "file": "src/config/loader.cpp",
-        "version": "2.13.0"
+        "version": "2.0.6"
+      },
+      {
+        "name": "load_layered",
+        "file": "src/config/loader.cpp",
+        "version": "2.11.1"
       }
     ]
   },
@@ -267,6 +308,16 @@
         "name": "parse_models_config",
         "file": "src/config/loader.cpp",
         "version": "2.13.0"
+      },
+      {
+        "name": "load_project_layer",
+        "file": "src/config/loader.cpp",
+        "version": "2.0.6"
+      },
+      {
+        "name": "load_layered",
+        "file": "src/config/loader.cpp",
+        "version": "2.11.1"
       }
     ]
   },
@@ -299,177 +350,22 @@
         "name": "parse_tier_config",
         "file": "src/config/loader.cpp",
         "version": "2.13.0"
-      }
-    ]
-  },
-  {
-    "req_id": "REQ-CFG-006",
-    "req_name": "Fail-loud validation \u2014 reject bad or inert configuration at load time",
-    "functions": [
+      },
       {
-        "name": "parse_config_string",
+        "name": "parse_speculative_config",
         "file": "src/config/loader.cpp",
-        "version": "2.13.0"
-      },
-      {
-        "name": "warn_unresolved_tier_grammars",
-        "file": "src/config/validate.cpp",
-        "version": "2.13.0"
+        "version": "2.9.0"
       }
     ]
   },
   {
-    "req_id": "REQ-COMPACT-001",
-    "req_name": "Threshold compaction preserving task-bearing messages, snapshot first",
+    "req_id": "REQ-CFG-007",
+    "req_name": "Usable configuration with no user config present",
     "functions": [
       {
-        "name": "count_message",
-        "file": "src/core/compaction.cpp",
-        "version": "2.13.0"
-      }
-    ]
-  },
-  {
-    "req_id": "REQ-COMPACT-002",
-    "req_name": "Fill-gated tool-result pruning and persistent context anchors",
-    "functions": [
-      {
-        "name": "run_loop",
-        "file": "src/core/engine.cpp",
-        "version": "2.13.0 [reviewed]"
-      },
-      {
-        "name": "run",
-        "file": "src/core/engine.cpp",
-        "version": "2.13.0 [reviewed]"
-      },
-      {
-        "name": "reinject_context_anchors",
-        "file": "src/core/engine.cpp",
-        "version": "2.13.0"
-      },
-      {
-        "name": "dir_anchor",
-        "file": "src/core/engine.cpp",
-        "version": "2.13.0"
-      }
-    ]
-  },
-  {
-    "req_id": "REQ-DELEG-001",
-    "req_name": "Delegation admission guards reject before a child loop runs",
-    "functions": [
-      {
-        "name": "push_delegation_isolation_unsafe",
-        "file": "src/core/engine.cpp",
-        "version": "2.13.0"
-      },
-      {
-        "name": "reject_delegation_if_guarded",
-        "file": "src/core/engine.cpp",
-        "version": "2.13.0"
-      },
-      {
-        "name": "reject_pipeline_if_guarded",
-        "file": "src/core/engine.cpp",
-        "version": "2.13.0"
-      },
-      {
-        "name": "execute_pending_pipeline",
-        "file": "src/core/engine.cpp",
-        "version": "2.13.0 [reviewed]"
-      }
-    ]
-  },
-  {
-    "req_id": "REQ-DELEG-002",
-    "req_name": "Delegation lifecycle from preconditions to result fold-back",
-    "functions": [
-      {
-        "name": "check_delegation_preconditions",
-        "file": "src/core/delegation.cpp",
-        "version": "2.13.0"
-      },
-      {
-        "name": "execute_delegation",
-        "file": "src/core/delegation.cpp",
-        "version": "2.13.0"
-      },
-      {
-        "name": "build_resumed_child_context",
-        "file": "src/core/delegation.cpp",
-        "version": "2.13.0 [reviewed]"
-      },
-      {
-        "name": "execute_resume_delegation",
-        "file": "src/core/delegation.cpp",
-        "version": "2.13.0"
-      },
-      {
-        "name": "build_child_context",
-        "file": "src/core/delegation.cpp",
-        "version": "2.13.0 [reviewed]"
-      },
-      {
-        "name": "dir_delegate",
-        "file": "src/core/engine.cpp",
-        "version": "2.13.0"
-      },
-      {
-        "name": "execute_pending_delegation",
-        "file": "src/core/engine.cpp",
-        "version": "2.13.0"
-      },
-      {
-        "name": "resolve_resume_delegation",
-        "file": "src/core/engine.cpp",
-        "version": "2.13.0"
-      },
-      {
-        "name": "run_pending_delegation",
-        "file": "src/core/engine.cpp",
-        "version": "2.13.0 [reviewed]"
-      },
-      {
-        "name": "ensure_sandbox_manager",
-        "file": "src/core/engine.cpp",
-        "version": "2.13.0"
-      },
-      {
-        "name": "resolve_session_root",
-        "file": "src/core/engine.cpp",
-        "version": "2.13.0"
-      }
-    ]
-  },
-  {
-    "req_id": "REQ-DELEG-004",
-    "req_name": "Sequential pipeline with forward carry and per-stage reporting",
-    "functions": [
-      {
-        "name": "execute_pipeline",
-        "file": "src/core/delegation.cpp",
-        "version": "2.13.0"
-      },
-      {
-        "name": "run_pipeline_stage",
-        "file": "src/core/delegation.cpp",
-        "version": "2.13.0"
-      },
-      {
-        "name": "dir_pipeline",
-        "file": "src/core/engine.cpp",
-        "version": "2.13.0"
-      },
-      {
-        "name": "reject_pipeline_if_guarded",
-        "file": "src/core/engine.cpp",
-        "version": "2.13.0"
-      },
-      {
-        "name": "execute_pending_pipeline",
-        "file": "src/core/engine.cpp",
-        "version": "2.13.0 [reviewed]"
+        "name": "load_layered",
+        "file": "src/config/loader.cpp",
+        "version": "2.11.1"
       }
     ]
   },
@@ -480,41 +376,6 @@
       {
         "name": "parse_delegation_config",
         "file": "src/config/loader.cpp",
-        "version": "2.13.0"
-      },
-      {
-        "name": "mint_delegation_id",
-        "file": "src/core/delegation.cpp",
-        "version": "2.13.0"
-      },
-      {
-        "name": "restore_root_for",
-        "file": "src/core/delegation.cpp",
-        "version": "2.13.0"
-      },
-      {
-        "name": "push_delegation_isolation_unsafe",
-        "file": "src/core/engine.cpp",
-        "version": "2.13.0"
-      },
-      {
-        "name": "resolve_session_root",
-        "file": "src/core/engine.cpp",
-        "version": "2.13.0"
-      },
-      {
-        "name": "sandbox_for_session",
-        "file": "src/core/engine.cpp",
-        "version": "2.13.0"
-      },
-      {
-        "name": "isolation_unsafe_tools",
-        "file": "src/core/engine.cpp",
-        "version": "2.13.0"
-      },
-      {
-        "name": "next_delegation_id",
-        "file": "src/core/sandbox.cpp",
         "version": "2.13.0"
       },
       {
@@ -544,69 +405,8 @@
     "req_name": "Explicit delegation context, required-context tiers, resume by target",
     "functions": [
       {
-        "name": "format_context_block",
-        "file": "src/core/delegation.cpp",
-        "version": "2.13.0"
-      },
-      {
-        "name": "resolve_latest_for_target",
-        "file": "src/core/engine.cpp",
-        "version": "2.13.0"
-      },
-      {
-        "name": "resolve_resume_delegation",
-        "file": "src/core/engine.cpp",
-        "version": "2.13.0"
-      },
-      {
         "name": "si_latest_delegation_for_target",
         "file": "src/facade/entropic.cpp",
-        "version": "2.13.0"
-      },
-      {
-        "name": "DelegateTool",
-        "file": "src/mcp/servers/entropic_server.cpp",
-        "version": "2.13.0"
-      },
-      {
-        "name": "execute",
-        "file": "src/mcp/servers/entropic_server.cpp",
-        "version": "2.13.0"
-      },
-      {
-        "name": "pipeline_rejection",
-        "file": "src/mcp/servers/entropic_server.cpp",
-        "version": "2.13.0"
-      },
-      {
-        "name": "execute",
-        "file": "src/mcp/servers/entropic_server.cpp",
-        "version": "2.13.0"
-      },
-      {
-        "name": "extract_context_refs",
-        "file": "src/mcp/tool_executor.cpp",
-        "version": "2.13.0"
-      },
-      {
-        "name": "latest_delegation_for_target",
-        "file": "src/storage/backend.cpp",
-        "version": "2.13.0"
-      }
-    ]
-  },
-  {
-    "req_id": "REQ-HOOK-002",
-    "req_name": "Engine fires hooks at every lifecycle boundary, including a vetoable completion",
-    "functions": [
-      {
-        "name": "handle_hook",
-        "file": "src/core/constitutional_validator.cpp",
-        "version": "2.13.0"
-      },
-      {
-        "name": "loop",
-        "file": "src/core/engine.cpp",
         "version": "2.13.0"
       }
     ]
@@ -616,11 +416,6 @@
     "req_name": "Tier resolution contract and per-tier loop overrides",
     "functions": [
       {
-        "name": "seed_system_prompt_for_tier",
-        "file": "src/core/engine.cpp",
-        "version": "2.13.0"
-      },
-      {
         "name": "entropic_run_session_as",
         "file": "src/facade/entropic.cpp",
         "version": "2.13.0"
@@ -628,50 +423,13 @@
     ]
   },
   {
-    "req_id": "REQ-INFER-002",
-    "req_name": "Teardown releases every model, context and adapter handle",
+    "req_id": "REQ-IDEN-002",
+    "req_name": "Identity lifecycle separates immutable static from dynamic identities",
     "functions": [
       {
-        "name": "do_load_active",
-        "file": "include/entropic/inference/backend.h",
-        "version": "2.13.0"
-      },
-      {
-        "name": "promote_to_active",
-        "file": "src/inference/backend.cpp",
-        "version": "2.13.0"
-      },
-      {
-        "name": "load_and_activate",
-        "file": "src/inference/backend.cpp",
-        "version": "2.13.0"
-      },
-      {
-        "name": "do_load_active",
-        "file": "src/inference/llama_cpp_backend.cpp",
-        "version": "2.13.0"
-      }
-    ]
-  },
-  {
-    "req_id": "REQ-INFER-005",
-    "req_name": "Every decode path honours cooperative cancellation within one token",
-    "functions": [
-      {
-        "name": "generate_streaming",
-        "file": "src/inference/orchestrator.cpp",
-        "version": "2.13.0"
-      }
-    ]
-  },
-  {
-    "req_id": "REQ-INFER-006",
-    "req_name": "Sampler chain construction has a fixed order and default-preserving gating",
-    "functions": [
-      {
-        "name": "create",
-        "file": "src/inference/llama_cpp_sampler.cpp",
-        "version": "2.13.0"
+        "name": "entropic_identity_count",
+        "file": "src/facade/entropic.cpp",
+        "version": "2.0.0"
       }
     ]
   },
@@ -680,152 +438,8 @@
     "req_name": "Named grammars are registered, validated, and resolved by a fixed precedence",
     "functions": [
       {
-        "name": "grammar_search_paths",
-        "file": "src/config/validate.cpp",
-        "version": "2.13.0"
-      },
-      {
-        "name": "warn_unresolved_tier_grammars",
-        "file": "src/config/validate.cpp",
-        "version": "2.13.0"
-      },
-      {
         "name": "warn_tier_grammars_step",
         "file": "src/facade/entropic.cpp",
-        "version": "2.13.0"
-      },
-      {
-        "name": "tier_grammar_unresolved",
-        "file": "src/inference/grammar_source.h",
-        "version": "2.13.0"
-      },
-      {
-        "name": "generate_streaming",
-        "file": "src/inference/orchestrator.cpp",
-        "version": "2.13.0"
-      },
-      {
-        "name": "resolve_grammar_key",
-        "file": "src/inference/orchestrator.cpp",
-        "version": "2.13.0"
-      },
-      {
-        "name": "refuse_unresolved_tier_grammar",
-        "file": "src/inference/orchestrator.cpp",
-        "version": "2.13.0"
-      },
-      {
-        "name": "refuse_unresolved_batch_grammars",
-        "file": "src/inference/orchestrator.cpp",
-        "version": "2.13.0"
-      }
-    ]
-  },
-  {
-    "req_id": "REQ-INFER-008",
-    "req_name": "Every declared grammar source reaches the sampler and exactly one wins",
-    "functions": [
-      {
-        "name": "active_tool_grammar",
-        "file": "include/entropic/inference/backend.h",
-        "version": "2.13.0"
-      },
-      {
-        "name": "resolve_grammar_source",
-        "file": "src/inference/grammar_source.h",
-        "version": "2.13.0"
-      },
-      {
-        "name": "is_request_grammar",
-        "file": "src/inference/grammar_source.h",
-        "version": "2.13.0"
-      },
-      {
-        "name": "grammar_source_name",
-        "file": "src/inference/grammar_source.h",
-        "version": "2.13.0"
-      },
-      {
-        "name": "describe_grammar",
-        "file": "src/inference/grammar_source.h",
-        "version": "2.13.0"
-      },
-      {
-        "name": "apply_grammar_source",
-        "file": "src/inference/llama_cpp_backend.cpp",
-        "version": "2.13.0"
-      },
-      {
-        "name": "active_tool_grammar",
-        "file": "src/inference/llama_cpp_backend.h",
-        "version": "2.13.0"
-      },
-      {
-        "name": "create",
-        "file": "src/inference/llama_cpp_sampler.cpp",
-        "version": "2.13.0"
-      },
-      {
-        "name": "generate_streaming",
-        "file": "src/inference/orchestrator.cpp",
-        "version": "2.13.0"
-      },
-      {
-        "name": "finish_generation",
-        "file": "src/inference/orchestrator.cpp",
-        "version": "2.13.0"
-      },
-      {
-        "name": "record_generation",
-        "file": "src/inference/orchestrator.cpp",
-        "version": "2.13.0"
-      },
-      {
-        "name": "generation_records",
-        "file": "src/inference/orchestrator.cpp",
-        "version": "2.13.0"
-      }
-    ]
-  },
-  {
-    "req_id": "REQ-INFER-009",
-    "req_name": "Tool staging drives a native render whose parse context is captured",
-    "functions": [
-      {
-        "name": "resolve_and_stage",
-        "file": "src/inference/orchestrator.cpp",
-        "version": "2.13.0"
-      }
-    ]
-  },
-  {
-    "req_id": "REQ-INFER-010",
-    "req_name": "One template-first / adapter-second rule parses every raw emission",
-    "functions": [
-      {
-        "name": "diagnose_empty_content",
-        "file": "src/inference/empty_content_diagnosis.h",
-        "version": "2.13.0"
-      },
-      {
-        "name": "explain_empty_content",
-        "file": "src/inference/empty_content_diagnosis.h",
-        "version": "2.13.0"
-      },
-      {
-        "name": "warn_if_content_vanished",
-        "file": "src/inference/orchestrator.cpp",
-        "version": "2.13.0"
-      }
-    ]
-  },
-  {
-    "req_id": "REQ-INFER-011",
-    "req_name": "Reasoning-block markers are declared once per model family",
-    "functions": [
-      {
-        "name": "generate_streaming",
-        "file": "src/inference/orchestrator.cpp",
         "version": "2.13.0"
       }
     ]
@@ -837,11 +451,6 @@
       {
         "name": "entropic_run_batch",
         "file": "src/facade/entropic.cpp",
-        "version": "2.13.0"
-      },
-      {
-        "name": "plan_batch_kv",
-        "file": "src/inference/batch_kv_util.h",
         "version": "2.13.0"
       }
     ]
@@ -856,84 +465,13 @@
         "version": "2.13.0"
       },
       {
+        "name": "entropic_set_residency_observer",
+        "file": "src/facade/entropic.cpp",
+        "version": "2.2.4"
+      },
+      {
         "name": "entropic_release_model",
         "file": "src/facade/entropic.cpp",
-        "version": "2.13.0"
-      },
-      {
-        "name": "host_memlock_limit_bytes",
-        "file": "src/inference/device_memory.cpp",
-        "version": "2.13.0"
-      },
-      {
-        "name": "activate_default_tier",
-        "file": "src/inference/orchestrator.cpp",
-        "version": "2.13.0"
-      },
-      {
-        "name": "resolve_auto_gpu_layers",
-        "file": "src/inference/orchestrator.cpp",
-        "version": "2.13.0"
-      },
-      {
-        "name": "config_admits",
-        "file": "src/inference/orchestrator.cpp",
-        "version": "2.13.0"
-      },
-      {
-        "name": "refuse_residency",
-        "file": "src/inference/orchestrator.cpp",
-        "version": "2.13.0"
-      },
-      {
-        "name": "ensure_model",
-        "file": "src/inference/orchestrator.cpp",
-        "version": "2.13.0"
-      },
-      {
-        "name": "release_models",
-        "file": "src/inference/orchestrator.cpp",
-        "version": "2.13.0"
-      },
-      {
-        "name": "release_backend",
-        "file": "src/inference/orchestrator.cpp",
-        "version": "2.13.0"
-      },
-      {
-        "name": "announce_eviction",
-        "file": "src/inference/orchestrator.cpp",
-        "version": "2.13.0"
-      },
-      {
-        "name": "mlock_refused",
-        "file": "src/inference/partial_offload.h",
-        "version": "2.13.0"
-      },
-      {
-        "name": "gpu_offload_refused",
-        "file": "src/inference/partial_offload.h",
-        "version": "2.13.0"
-      },
-      {
-        "name": "forget_session",
-        "file": "src/inference/session_residency.h",
-        "version": "2.13.0"
-      }
-    ]
-  },
-  {
-    "req_id": "REQ-INFER-020",
-    "req_name": "Tier routing, handoff rules and secondary model roles",
-    "functions": [
-      {
-        "name": "ensure_secondary_roles",
-        "file": "src/inference/orchestrator.cpp",
-        "version": "2.13.0"
-      },
-      {
-        "name": "classify_task",
-        "file": "src/inference/orchestrator.cpp",
         "version": "2.13.0"
       }
     ]
@@ -945,21 +483,6 @@
       {
         "name": "entropic_adapter_load",
         "file": "src/facade/entropic.cpp",
-        "version": "2.13.0"
-      },
-      {
-        "name": "load",
-        "file": "src/inference/adapter_manager.cpp",
-        "version": "2.13.0"
-      },
-      {
-        "name": "release_handles_for_model",
-        "file": "src/inference/adapter_manager.cpp",
-        "version": "2.13.0"
-      },
-      {
-        "name": "preload_adapters_for_model",
-        "file": "src/inference/orchestrator.cpp",
         "version": "2.13.0"
       }
     ]
@@ -988,47 +511,6 @@
         "name": "entropic_model_has_vision",
         "file": "src/facade/entropic.cpp",
         "version": "2.13.0"
-      },
-      {
-        "name": "tier_declares_vision",
-        "file": "src/inference/orchestrator.cpp",
-        "version": "2.13.0"
-      }
-    ]
-  },
-  {
-    "req_id": "REQ-INFER-026",
-    "req_name": "A prompt that cannot fit the tier context is refused, never decoded",
-    "functions": [
-      {
-        "name": "handle_terminal_finish_reasons",
-        "file": "src/core/engine.cpp",
-        "version": "2.13.0"
-      },
-      {
-        "name": "generate_batch",
-        "file": "src/core/response_generator.cpp",
-        "version": "2.13.0"
-      },
-      {
-        "name": "context_fit_overflows",
-        "file": "src/inference/context_fit.h",
-        "version": "2.13.0"
-      },
-      {
-        "name": "context_overflow_message",
-        "file": "src/inference/context_fit.h",
-        "version": "2.13.0"
-      },
-      {
-        "name": "refuse_over_context",
-        "file": "src/inference/llama_cpp_backend.cpp",
-        "version": "2.13.0"
-      },
-      {
-        "name": "prefill_error",
-        "file": "src/inference/llama_cpp_backend.cpp",
-        "version": "2.13.0"
       }
     ]
   },
@@ -1037,61 +519,14 @@
     "req_name": "Agent state machine with observable, dual-channel transitions",
     "functions": [
       {
-        "name": "run_loop",
-        "file": "src/core/engine.cpp",
-        "version": "2.13.0 [reviewed]"
-      },
-      {
-        "name": "run",
-        "file": "src/core/engine.cpp",
-        "version": "2.13.0 [reviewed]"
-      },
-      {
-        "name": "run_turn",
-        "file": "src/core/engine.cpp",
-        "version": "2.13.0"
-      },
-      {
         "name": "entropic_run_session",
         "file": "src/facade/entropic.cpp",
         "version": "2.13.0"
-      }
-    ]
-  },
-  {
-    "req_id": "REQ-LOOP-002",
-    "req_name": "Bounded loop termination with synthetic completion on cap",
-    "functions": [
-      {
-        "name": "run",
-        "file": "src/core/engine.cpp",
-        "version": "2.13.0 [reviewed]"
       },
       {
-        "name": "loop",
-        "file": "src/core/engine.cpp",
-        "version": "2.13.0"
-      }
-    ]
-  },
-  {
-    "req_id": "REQ-LOOP-003",
-    "req_name": "Fixed per-iteration pipeline with pre-generate cancellation",
-    "functions": [
-      {
-        "name": "dispatch_pending_or_halt",
-        "file": "src/core/engine.cpp",
-        "version": "2.13.0"
-      },
-      {
-        "name": "execute_pending_delegation",
-        "file": "src/core/engine.cpp",
-        "version": "2.13.0"
-      },
-      {
-        "name": "generate_batch",
-        "file": "src/core/response_generator.cpp",
-        "version": "2.13.0"
+        "name": "entropic_session_context_get",
+        "file": "src/facade/entropic.cpp",
+        "version": "2.12.0"
       }
     ]
   },
@@ -1100,125 +535,13 @@
     "req_name": "Interrupt and pause semantics across nested loops",
     "functions": [
       {
-        "name": "RunCancelScope",
-        "file": "include/entropic/types/run_scope.h",
-        "version": "2.13.0 [reviewed]"
-      },
-      {
-        "name": "run_loop",
-        "file": "src/core/engine.cpp",
-        "version": "2.13.0 [reviewed]"
-      },
-      {
-        "name": "dispatch_pending_or_halt",
-        "file": "src/core/engine.cpp",
-        "version": "2.13.0"
-      },
-      {
-        "name": "handle_terminal_finish_reasons",
-        "file": "src/core/engine.cpp",
-        "version": "2.13.0"
-      },
-      {
-        "name": "interrupt",
-        "file": "src/core/engine.cpp",
-        "version": "2.13.0"
-      },
-      {
-        "name": "reset_interrupt",
-        "file": "src/core/engine.cpp",
-        "version": "2.13.0"
-      },
-      {
-        "name": "spawn_cancel_poller",
-        "file": "src/core/response_generator.cpp",
-        "version": "2.13.0"
-      },
-      {
-        "name": "dispatch_batch_generate",
-        "file": "src/core/response_generator.cpp",
-        "version": "2.13.0"
-      },
-      {
-        "name": "handle_pause",
-        "file": "src/core/response_generator.cpp",
-        "version": "2.13.0"
+        "name": "entropic_interrupt",
+        "file": "src/facade/entropic.cpp",
+        "version": "2.0.0"
       },
       {
         "name": "entropic_interrupt_session",
         "file": "src/facade/entropic.cpp",
-        "version": "2.13.0"
-      },
-      {
-        "name": "current_run_cancel",
-        "file": "src/types/run_scope.cpp",
-        "version": "2.13.0"
-      },
-      {
-        "name": "current_run_cancelled",
-        "file": "src/types/run_scope.cpp",
-        "version": "2.13.0"
-      },
-      {
-        "name": "RunCancelScope",
-        "file": "src/types/run_scope.cpp",
-        "version": "2.13.0 [reviewed]"
-      },
-      {
-        "name": "cancel_current_run",
-        "file": "src/types/run_scope.cpp",
-        "version": "2.13.0"
-      },
-      {
-        "name": "~RunCancelScope",
-        "file": "src/types/run_scope.cpp",
-        "version": "2.13.0"
-      }
-    ]
-  },
-  {
-    "req_id": "REQ-LOOP-008",
-    "req_name": "Family-aware streaming reasoning filter with UTF-8 alignment",
-    "functions": [
-      {
-        "name": "stream_token_callback",
-        "file": "src/core/response_generator.cpp",
-        "version": "2.13.0"
-      }
-    ]
-  },
-  {
-    "req_id": "REQ-LOOP-009",
-    "req_name": "Per-session-key run concurrency, on by default, with one lock on the generation path",
-    "functions": [
-      {
-        "name": "RunSessionScope",
-        "file": "include/entropic/types/run_scope.h",
-        "version": "2.13.0"
-      },
-      {
-        "name": "plan_batch_kv",
-        "file": "src/inference/batch_kv_util.h",
-        "version": "2.13.0"
-      },
-      {
-        "name": "plan_disturbs_sessions",
-        "file": "src/inference/batch_kv_util.h",
-        "version": "2.13.0"
-      },
-      {
-        "name": "current_run_session",
-        "file": "src/types/run_scope.cpp",
-        "version": "2.13.0"
-      },
-      {
-        "name": "RunSessionScope",
-        "file": "src/types/run_scope.cpp",
-        "version": "2.13.0"
-      },
-      {
-        "name": "~RunSessionScope",
-        "file": "src/types/run_scope.cpp",
         "version": "2.13.0"
       }
     ]
@@ -1228,43 +551,8 @@
     "req_name": "Session conversations are readable, writable, and losslessly round-trippable",
     "functions": [
       {
-        "name": "forget_session_kv",
-        "file": "include/entropic/inference/backend.h",
-        "version": "2.13.0"
-      },
-      {
-        "name": "set_session_messages",
-        "file": "src/core/engine.cpp",
-        "version": "2.13.0"
-      },
-      {
         "name": "entropic_session_context_set",
         "file": "src/facade/entropic.cpp",
-        "version": "2.13.0"
-      },
-      {
-        "name": "serialize_message",
-        "file": "src/facade/json_serializers.h",
-        "version": "2.13.0"
-      },
-      {
-        "name": "serialize_messages",
-        "file": "src/facade/json_serializers.h",
-        "version": "2.13.0"
-      },
-      {
-        "name": "forget_session_kv",
-        "file": "src/inference/llama_cpp_backend.cpp",
-        "version": "2.13.0"
-      },
-      {
-        "name": "forget_session_kv",
-        "file": "src/inference/orchestrator.cpp",
-        "version": "2.13.0"
-      },
-      {
-        "name": "forget_session",
-        "file": "src/inference/session_residency.h",
         "version": "2.13.0"
       }
     ]
@@ -1282,26 +570,10 @@
         "name": "set_working_dir_all",
         "file": "src/mcp/server_manager.cpp",
         "version": "2.13.0"
-      }
-    ]
-  },
-  {
-    "req_id": "REQ-MCP-002",
-    "req_name": "Tool results always cross boundaries as a ServerResponse JSON envelope",
-    "functions": [
-      {
-        "name": "execute",
-        "file": "src/mcp/external_client.cpp",
-        "version": "2.13.0"
       },
       {
-        "name": "execute_tool",
-        "file": "src/mcp/tool_executor.cpp",
-        "version": "2.13.0"
-      },
-      {
-        "name": "build_directive",
-        "file": "src/mcp/tool_executor.cpp",
+        "name": "FilesystemServer",
+        "file": "src/mcp/servers/filesystem.cpp",
         "version": "2.13.0"
       }
     ]
@@ -1310,11 +582,6 @@
     "req_id": "REQ-MCP-007",
     "req_name": "Tool calls route by server prefix uniformly across all three server kinds",
     "functions": [
-      {
-        "name": "query_tools",
-        "file": "src/mcp/external_client.cpp",
-        "version": "2.13.0"
-      },
       {
         "name": "init_builtins",
         "file": "src/mcp/server_manager.cpp",
@@ -1333,33 +600,6 @@
     ]
   },
   {
-    "req_id": "REQ-MCP-012",
-    "req_name": "Tool calls pass an ordered precondition pipeline with typed rejection kinds",
-    "functions": [
-      {
-        "name": "process_single_call",
-        "file": "src/mcp/tool_executor.cpp",
-        "version": "2.13.0"
-      }
-    ]
-  },
-  {
-    "req_id": "REQ-MCP-013",
-    "req_name": "Tool arguments are validated against the declared JSON schema before dispatch",
-    "functions": [
-      {
-        "name": "DelegateTool",
-        "file": "src/mcp/servers/entropic_server.cpp",
-        "version": "2.13.0"
-      },
-      {
-        "name": "PipelineTool",
-        "file": "src/mcp/servers/entropic_server.cpp",
-        "version": "2.10.0"
-      }
-    ]
-  },
-  {
     "req_id": "REQ-MCP-014",
     "req_name": "A locked tier's allowed_tools list is enforced at dispatch time",
     "functions": [
@@ -1371,43 +611,121 @@
     ]
   },
   {
-    "req_id": "REQ-MCP-017",
-    "req_name": "PRE/POST_TOOL_CALL hooks fire on every exit path and POST may rewrite the result",
-    "functions": [
-      {
-        "name": "process_single_call",
-        "file": "src/mcp/tool_executor.cpp",
-        "version": "2.13.0"
-      }
-    ]
-  },
-  {
-    "req_id": "REQ-MCP-020",
-    "req_name": "A bounded, thread-safe ring buffer retains recent tool calls for introspection",
-    "functions": [
-      {
-        "name": "execute_tool",
-        "file": "src/mcp/tool_executor.cpp",
-        "version": "2.13.0"
-      }
-    ]
-  },
-  {
     "req_id": "REQ-MCP-021",
     "req_name": "Filesystem tools are root-confined, read-before-write gated, and size-bounded",
     "functions": [
       {
+        "name": "parse_outside_root_access",
+        "file": "src/config/loader.cpp",
+        "version": "2.13.0"
+      },
+      {
+        "name": "parse_outside_root_list",
+        "file": "src/config/loader.cpp",
+        "version": "2.13.0"
+      },
+      {
         "name": "confined_mcp_config",
+        "file": "src/facade/entropic_mcp.cpp",
+        "version": "2.13.0 [reviewed]"
+      },
+      {
+        "name": "outside_root_thunk",
         "file": "src/facade/entropic_mcp.cpp",
         "version": "2.13.0"
       },
       {
-        "name": "collect_glob_matches",
+        "name": "wire_outside_root_approver",
+        "file": "src/facade/entropic_mcp.cpp",
+        "version": "2.13.0"
+      },
+      {
+        "name": "entropic_set_path_approval_callback",
+        "file": "src/facade/entropic_mcp.cpp",
+        "version": "2.13.0"
+      },
+      {
+        "name": "set_outside_root_approver",
+        "file": "src/mcp/server_manager.cpp",
+        "version": "2.13.0"
+      },
+      {
+        "name": "path_within",
+        "file": "src/mcp/servers/filesystem.cpp",
+        "version": "2.13.0"
+      },
+      {
+        "name": "first_containing",
+        "file": "src/mcp/servers/filesystem.cpp",
+        "version": "2.13.0"
+      },
+      {
+        "name": "outside_root_refusal",
+        "file": "src/mcp/servers/filesystem.cpp",
+        "version": "2.13.0"
+      },
+      {
+        "name": "refuse_denied",
+        "file": "src/mcp/servers/filesystem.cpp",
+        "version": "2.13.0"
+      },
+      {
+        "name": "refuse_escape",
+        "file": "src/mcp/servers/filesystem.cpp",
+        "version": "2.13.0"
+      },
+      {
+        "name": "check_read_before_write",
+        "file": "src/mcp/servers/filesystem.cpp",
+        "version": "1.8.5"
+      },
+      {
+        "name": "execute",
         "file": "src/mcp/servers/filesystem.cpp",
         "version": "2.13.0"
       },
       {
         "name": "execute",
+        "file": "src/mcp/servers/filesystem.cpp",
+        "version": "2.13.0"
+      },
+      {
+        "name": "execute",
+        "file": "src/mcp/servers/filesystem.cpp",
+        "version": "2.13.0"
+      },
+      {
+        "name": "FilesystemServer",
+        "file": "src/mcp/servers/filesystem.cpp",
+        "version": "2.13.0"
+      },
+      {
+        "name": "set_working_dir",
+        "file": "src/mcp/servers/filesystem.cpp",
+        "version": "2.13.0"
+      },
+      {
+        "name": "resolve_path",
+        "file": "src/mcp/servers/filesystem.cpp",
+        "version": "2.13.0"
+      },
+      {
+        "name": "authorize_outside_root",
+        "file": "src/mcp/servers/filesystem.cpp",
+        "version": "2.13.0"
+      },
+      {
+        "name": "ask_outside_root_approver",
+        "file": "src/mcp/servers/filesystem.cpp",
+        "version": "2.13.0"
+      },
+      {
+        "name": "set_outside_root_approver",
+        "file": "src/mcp/servers/filesystem.cpp",
+        "version": "2.13.0"
+      },
+      {
+        "name": "log_outside_root_policy",
         "file": "src/mcp/servers/filesystem.cpp",
         "version": "2.13.0"
       }
@@ -1418,114 +736,13 @@
     "req_name": "Glob, grep, and read honour .gitignore plus .explorerignore semantics",
     "functions": [
       {
-        "name": "collect_glob_matches",
+        "name": "FilesystemServer",
         "file": "src/mcp/servers/filesystem.cpp",
         "version": "2.13.0"
       },
       {
-        "name": "grep_search",
+        "name": "set_working_dir",
         "file": "src/mcp/servers/filesystem.cpp",
-        "version": "2.13.0"
-      },
-      {
-        "name": "execute",
-        "file": "src/mcp/servers/filesystem.cpp",
-        "version": "2.13.0"
-      },
-      {
-        "name": "is_skipped_dir_name",
-        "file": "src/mcp/servers/ignore_matcher.cpp",
-        "version": "2.13.0"
-      },
-      {
-        "name": "compile_pattern",
-        "file": "src/mcp/servers/ignore_matcher.cpp",
-        "version": "2.13.0"
-      },
-      {
-        "name": "push_rule",
-        "file": "src/mcp/servers/ignore_matcher.cpp",
-        "version": "2.13.0"
-      },
-      {
-        "name": "add_pattern",
-        "file": "src/mcp/servers/ignore_matcher.cpp",
-        "version": "2.13.0"
-      },
-      {
-        "name": "load_file",
-        "file": "src/mcp/servers/ignore_matcher.cpp",
-        "version": "2.13.0"
-      },
-      {
-        "name": "load",
-        "file": "src/mcp/servers/ignore_matcher.cpp",
-        "version": "2.13.0"
-      },
-      {
-        "name": "load_nested_gitignores",
-        "file": "src/mcp/servers/ignore_matcher.cpp",
-        "version": "2.13.0"
-      },
-      {
-        "name": "visit_discovery_entry",
-        "file": "src/mcp/servers/ignore_matcher.cpp",
-        "version": "2.13.0"
-      },
-      {
-        "name": "prunes_discovery",
-        "file": "src/mcp/servers/ignore_matcher.cpp",
-        "version": "2.13.0"
-      },
-      {
-        "name": "is_ignored",
-        "file": "src/mcp/servers/ignore_matcher.cpp",
-        "version": "2.13.0"
-      }
-    ]
-  },
-  {
-    "req_id": "REQ-MCP-024",
-    "req_name": "Engine-level entropic.* tools validate their arguments and emit typed directives",
-    "functions": [
-      {
-        "name": "DelegateTool",
-        "file": "src/mcp/servers/entropic_server.cpp",
-        "version": "2.13.0"
-      },
-      {
-        "name": "execute",
-        "file": "src/mcp/servers/entropic_server.cpp",
-        "version": "2.13.0"
-      },
-      {
-        "name": "PipelineTool",
-        "file": "src/mcp/servers/entropic_server.cpp",
-        "version": "2.10.0"
-      },
-      {
-        "name": "pipeline_rejection",
-        "file": "src/mcp/servers/entropic_server.cpp",
-        "version": "2.13.0"
-      },
-      {
-        "name": "execute",
-        "file": "src/mcp/servers/entropic_server.cpp",
-        "version": "2.13.0"
-      },
-      {
-        "name": "execute",
-        "file": "src/mcp/servers/entropic_server.cpp",
-        "version": "2.13.0"
-      },
-      {
-        "name": "register_delegation_tools",
-        "file": "src/mcp/servers/entropic_server.cpp",
-        "version": "2.13.0"
-      },
-      {
-        "name": "build_directive",
-        "file": "src/mcp/tool_executor.cpp",
         "version": "2.13.0"
       }
     ]
@@ -1535,109 +752,13 @@
     "req_name": "External servers are discovered safely, directive-stripped, and health-monitored",
     "functions": [
       {
-        "name": "entropic_register_mcp_server",
-        "file": "src/facade/entropic_mcp.cpp",
-        "version": "2.13.0"
-      },
-      {
-        "name": "execute",
-        "file": "src/mcp/external_client.cpp",
-        "version": "2.13.0"
-      },
-      {
-        "name": "response_problem",
-        "file": "src/mcp/external_client.cpp",
-        "version": "2.13.0"
-      },
-      {
-        "name": "mismatched_response_envelope",
-        "file": "src/mcp/external_client.cpp",
-        "version": "2.13.0"
-      },
-      {
-        "name": "build_request",
-        "file": "src/mcp/external_client.cpp",
-        "version": "2.13.0"
-      },
-      {
-        "name": "build_request_id",
-        "file": "src/mcp/external_client.cpp",
-        "version": "2.13.0"
-      },
-      {
-        "name": "response_matches",
-        "file": "src/mcp/external_client.cpp",
-        "version": "2.13.0"
-      },
-      {
-        "name": "send_initialize",
-        "file": "src/mcp/external_client.cpp",
-        "version": "2.13.0"
-      },
-      {
-        "name": "query_tools",
-        "file": "src/mcp/external_client.cpp",
-        "version": "2.13.0"
+        "name": "connect_and_register_external",
+        "file": "src/mcp/server_manager.cpp",
+        "version": "1.8.7"
       },
       {
         "name": "make_transport",
         "file": "src/mcp/server_manager.cpp",
-        "version": "2.13.0"
-      },
-      {
-        "name": "send_request",
-        "file": "src/mcp/transport_stdio.cpp",
-        "version": "2.13.0 [reviewed]"
-      }
-    ]
-  },
-  {
-    "req_id": "REQ-MCP-026",
-    "req_name": "A JSON-RPC response is paired with the request that asked for it",
-    "functions": [
-      {
-        "name": "execute",
-        "file": "src/mcp/external_client.cpp",
-        "version": "2.13.0"
-      },
-      {
-        "name": "response_problem",
-        "file": "src/mcp/external_client.cpp",
-        "version": "2.13.0"
-      },
-      {
-        "name": "mismatched_response_envelope",
-        "file": "src/mcp/external_client.cpp",
-        "version": "2.13.0"
-      },
-      {
-        "name": "build_request_id",
-        "file": "src/mcp/external_client.cpp",
-        "version": "2.13.0"
-      },
-      {
-        "name": "response_matches",
-        "file": "src/mcp/external_client.cpp",
-        "version": "2.13.0"
-      },
-      {
-        "name": "send_initialize",
-        "file": "src/mcp/external_client.cpp",
-        "version": "2.13.0"
-      },
-      {
-        "name": "query_tools",
-        "file": "src/mcp/external_client.cpp",
-        "version": "2.13.0"
-      },
-      {
-        "name": "send_request",
-        "file": "src/mcp/transport_stdio.cpp",
-        "version": "2.13.0 [reviewed]"
-      },
-      {
-        "name": "drain_orphaned_responses",
-        "file": "src/mcp/transport_stdio.cpp",
         "version": "2.13.0"
       }
     ]
@@ -1646,11 +767,6 @@
     "req_id": "REQ-MCP-027",
     "req_name": "Named workspaces bind a session to its own tool root and servers",
     "functions": [
-      {
-        "name": "set_working_dir",
-        "file": "include/entropic/mcp/transport_stdio.h",
-        "version": "2.13.0"
-      },
       {
         "name": "workspace_for",
         "file": "src/facade/engine_handle.h",
@@ -1664,7 +780,7 @@
       {
         "name": "confined_mcp_config",
         "file": "src/facade/entropic_mcp.cpp",
-        "version": "2.13.0"
+        "version": "2.13.0 [reviewed]"
       },
       {
         "name": "build_workspace",
@@ -1677,71 +793,8 @@
         "version": "2.13.0"
       },
       {
-        "name": "entropic_workspace_create",
-        "file": "src/facade/entropic_mcp.cpp",
-        "version": "2.13.0"
-      },
-      {
         "name": "entropic_session_bind_workspace",
         "file": "src/facade/entropic_mcp.cpp",
-        "version": "2.13.0"
-      },
-      {
-        "name": "resolve_registration_target",
-        "file": "src/facade/entropic_mcp.cpp",
-        "version": "2.13.0"
-      },
-      {
-        "name": "set_server_resolver",
-        "file": "src/mcp/tool_executor.cpp",
-        "version": "2.13.0"
-      },
-      {
-        "name": "servers_for",
-        "file": "src/mcp/tool_executor.cpp",
-        "version": "2.13.0"
-      },
-      {
-        "name": "execute_tool",
-        "file": "src/mcp/tool_executor.cpp",
-        "version": "2.13.0"
-      }
-    ]
-  },
-  {
-    "req_id": "REQ-SAFE-001",
-    "req_name": "Untrusted bytes are sanitized at ingress, never at egress",
-    "functions": [
-      {
-        "name": "serialize_message",
-        "file": "src/facade/json_serializers.h",
-        "version": "2.13.0"
-      },
-      {
-        "name": "serialize_messages",
-        "file": "src/facade/json_serializers.h",
-        "version": "2.13.0"
-      }
-    ]
-  },
-  {
-    "req_id": "REQ-STOR-005",
-    "req_name": "Delegation record lifecycle with parent-conversation guard",
-    "functions": [
-      {
-        "name": "latest_delegation_for_target",
-        "file": "src/storage/backend.cpp",
-        "version": "2.13.0"
-      }
-    ]
-  },
-  {
-    "req_id": "REQ-TYPE-004",
-    "req_name": "Sentinel count members bound enum validity and force exhaustive wiring",
-    "functions": [
-      {
-        "name": "resolve_grammar_source",
-        "file": "src/inference/grammar_source.h",
         "version": "2.13.0"
       }
     ]
@@ -1766,82 +819,9 @@
         "version": "2.13.0"
       },
       {
-        "name": "classify_app_context",
-        "file": "src/prompts/manager.cpp",
-        "version": "2.13.0"
-      },
-      {
-        "name": "app_context_state_message",
-        "file": "src/prompts/manager.cpp",
-        "version": "2.13.0"
-      },
-      {
-        "name": "load_app_context",
-        "file": "src/prompts/manager.cpp",
-        "version": "2.13.0"
-      },
-      {
-        "name": "load_shared_prompt_sources",
-        "file": "src/prompts/manager.cpp",
-        "version": "2.13.0 [reviewed]"
-      },
-      {
-        "name": "validate_configured_prompts",
-        "file": "src/prompts/manager.cpp",
-        "version": "2.13.0"
-      }
-    ]
-  },
-  {
-    "req_id": "REQ-VALID-001",
-    "req_name": "Layered validation gating with cheap-path skips",
-    "functions": [
-      {
-        "name": "validate",
-        "file": "src/core/constitutional_validator.cpp",
-        "version": "2.13.0"
-      },
-      {
-        "name": "handle_hook",
-        "file": "src/core/constitutional_validator.cpp",
-        "version": "2.13.0"
-      }
-    ]
-  },
-  {
-    "req_id": "REQ-VALID-002",
-    "req_name": "Critique-and-revise loop with typed verdicts and content safety valve",
-    "functions": [
-      {
-        "name": "validate",
-        "file": "src/core/constitutional_validator.cpp",
-        "version": "2.13.0"
-      },
-      {
-        "name": "build_critique_prompt",
-        "file": "src/core/constitutional_validator.cpp",
-        "version": "2.13.0"
-      },
-      {
-        "name": "run_validation_loop",
-        "file": "src/core/constitutional_validator.cpp",
-        "version": "2.13.0"
-      }
-    ]
-  },
-  {
-    "req_id": "REQ-VALID-003",
-    "req_name": "Consumer-driven pause, resume and accept of a failing validation",
-    "functions": [
-      {
-        "name": "resume_retry",
-        "file": "src/core/constitutional_validator.cpp",
-        "version": "2.13.0"
-      },
-      {
-        "name": "run_validation_loop",
-        "file": "src/core/constitutional_validator.cpp",
-        "version": "2.13.0"
+        "name": "parse_speculative_config",
+        "file": "src/config/loader.cpp",
+        "version": "2.9.0"
       }
     ]
   }

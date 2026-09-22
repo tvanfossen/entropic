@@ -23,6 +23,7 @@
 #include <entropic/core/engine.h>
 #include <entropic/core/hook_registry.h>
 #include <entropic/core/identity_manager.h>
+#include <entropic/entropic.h>  // ent_path_approval_cb (v2.13.0)
 #include <entropic/inference/orchestrator.h>
 #include <entropic/mcp/mcp_authorization.h>
 #include <entropic/mcp/external_bridge.h>
@@ -197,6 +198,17 @@ struct entropic_engine {
     void (*critique_end_cb)(void*) = nullptr;
     /// @brief Forwarded to both callbacks.
     void* critique_cb_data = nullptr;
+
+    // ── Outside-root path approver (v2.13.0) ───────────────────
+    /// @brief Consumer's approver for filesystem access outside the root.
+    /// Stored on the handle so pre-configure registration survives server
+    /// construction; the default server set's FilesystemServer holds a
+    /// facade thunk that reads this slot per call. Workspaces never do.
+    ent_path_approval_cb path_approval_cb = nullptr;
+    void* path_approval_data = nullptr;       ///< Forwarded to the approver
+    /// @brief Guards the pair above: the thunk reads it from run threads
+    /// while the setter may write it from any thread.
+    std::mutex path_approval_mutex;
 };
 
 namespace entropic {
@@ -239,6 +251,20 @@ inline entropic::ServerManager* workspace_servers(entropic_handle_t h,
     if (ws != nullptr && ws->servers) { return ws->servers.get(); }
     return h != nullptr ? h->server_manager.get() : nullptr;
 }
+
+/**
+ * @brief Point the DEFAULT server set's filesystem server at the handle's
+ *        path-approval slot (v2.13.0).
+ *
+ * Installs a thunk, not the consumer's callback, so a later
+ * `entropic_set_path_approval_callback` takes effect without touching the
+ * server. Called once the default set exists; never for a workspace.
+ *
+ * @param h Engine handle with `server_manager` constructed.
+ * @req REQ-MCP-021
+ * @version 2.13.0
+ */
+void wire_outside_root_approver(entropic_handle_t h);
 
 /**
  * @brief gh#59 (v2.3.1): RAII guard combining api_mutex + log scope.

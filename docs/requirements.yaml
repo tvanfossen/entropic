@@ -657,7 +657,11 @@
 
     delegation start/complete callbacks, the validation attempt-boundary callback,
 
-    and the error callback. Passing NULL clears a slot.
+    the error callback, and (v2.13.0) the outside-root path approver
+
+    (`entropic_set_path_approval_callback`, read per call through a facade
+
+    thunk on the default server set). Passing NULL clears a slot.
 
 
     End-of-turn is uniform: at the end of any `entropic_run` / `entropic_run_as` /
@@ -6479,11 +6483,55 @@
 - id: REQ-MCP-021
   name: Filesystem tools are root-confined, read-before-write gated, and size-bounded
   module: MCP Servers and Tool Dispatch
-  description: 'FilesystemServer resolves every requested path against its root and throws
+  description: 'FilesystemServer resolves every requested path against its root and
 
-    (logged as "Path escape blocked") when the canonical result leaves the root,
+    canonicalises it; a path under the root is served. A path OUTSIDE the root
 
-    so no tool can traverse outside the project. Writes and edits to an existing
+    (v2.13.0) is decided by, highest precedence first: `outside_root_deny`
+
+    (always refused, `outside_root_denied`), `outside_root_allow` (served with
+
+    no prompt), then the tri-state `mcp.filesystem.allow_outside_root` —
+
+    `false` refuses with "Path escapes project root: <path>" (logged "Path
+
+    escape blocked"), `true` serves, and `optional` (THE DEFAULT, in the C++
+
+    type and in data/default_config.yaml) asks the host''s path approver
+
+    (`entropic_set_path_approval_callback`) with the canonical path, the root,
+
+    the fully-qualified tool and READ/WRITE (read_file and list_directory read;
+
+    write_file and edit_file write). An approver rejection refuses with
+
+    `outside_root_rejected`; NO approver refuses with
+
+    `outside_root_approval_required`, naming the path and how to configure
+
+    access — `optional` never fails open. List matching is by canonical
+
+    SUBTREE via lexically_relative, never string prefix (`/opt/data` does not
+
+    cover `/opt/database`, `/home/u/project` does not contain
+
+    `/home/u/projectile`); entries are absolute, `~`-expanded, and a relative
+
+    entry or an unknown `allow_outside_root` value fails the config load.
+
+    `permissions.auto_approve` does NOT approve an escape. A named
+
+    workspace''s servers are forced to `false` with an empty allow list and no
+
+    approver (REQ-MCP-027). Every refusal is thrown, so the server-base barrier
+
+    turns it into a tool error AND skips the ContextAnchor. Until v2.13.0 the
+
+    flag was a bool and the bundled default shipped `true` — unconfined read
+
+    and write of the whole filesystem for every consumer on bundled defaults.
+
+    Writes and edits to an existing
 
     file are refused with a `read_before_write` error unless a prior read is
 
@@ -6542,6 +6590,34 @@
 
     missing file, Then the error names list_directory.
 
+    Given the shipped default config, or no allow_outside_root key at all, and no
+
+    path approver, When a tool reads outside the root, Then nothing is read and
+
+    the refusal is typed outside_root_approval_required and names the path;
+
+    Given optional and an approver, Then it is asked with the canonical path and
+
+    READ or WRITE, an approval serves the call and a rejection refuses it
+
+    (outside_root_rejected) with nothing written and no ContextAnchor; Given a
+
+    path under outside_root_deny, Then it is refused even with
+
+    allow_outside_root true or an overlapping outside_root_allow; Given a path
+
+    under outside_root_allow, Then it is served with no prompt, and its
+
+    string-prefix sibling is not; Given legacy true or false, Then they mean
+
+    what they did before v2.13.0 and never consult the approver; Given
+
+    permissions.auto_approve, Then an escape is still refused without the
+
+    approver; Given a workspace, Then an allowlisted or approvable outside path
+
+    is refused and the approver is never asked.
+
     '
   verified_by: '"test_path_security_rejects_traversal", "test_write_file_requires_read",
 
@@ -6559,12 +6635,24 @@
 
     "gh#120: read_file lines are an ordered array not a keyed object",
 
-    "gh#126: glob ** pattern matches files at root and in subdirectories"
+    "gh#126: glob ** pattern matches files at root and in subdirectories",
 
-    — tests/unit/mcp/servers/filesystem_test.cpp
+    the "outside-root optional:" / "outside-root: the approver is asked ONLY
+
+    ..." cases — tests/unit/mcp/servers/filesystem_test.cpp; every
+
+    "outside-root:" scenario — tests/unit/api/path_approval_test.cpp;
+
+    "mcp.filesystem.allow_outside_root is tri-state and defaults to optional",
+
+    "mcp.filesystem outside_root_allow / outside_root_deny parse as absolute
+
+    paths" — tests/unit/config/loader_test.cpp; model:
+
+    tests/model/test_outside_root_approval.cpp
 
     '
-  version: 2.10.4
+  version: 2.13.0
 - id: REQ-MCP-022
   name: Glob, grep, and read honour .gitignore plus .explorerignore semantics
   module: MCP Servers and Tool Dispatch
@@ -7037,6 +7125,14 @@
     session that is never bound uses the handle''s default servers
 
     (`mcp.working_dir`, else cwd), so existing consumers are unaffected.
+
+    A workspace''s filesystem server is HARD-confined: forced to
+
+    `allow_outside_root: false` with an EMPTY `outside_root_allow`, and never
+
+    given the host''s path approver (v2.13.0) — outside one workspace is
+
+    inside another, so no allow entry or "just approve it" reaches a sibling.
 
     Routing uses the RUNNING SESSION''s key: explicitly through
 

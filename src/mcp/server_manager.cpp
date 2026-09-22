@@ -407,6 +407,29 @@ MCPServerBase* ServerManager::get_server(const std::string& name) const {
 }
 
 /**
+ * @brief Install the outside-root approver on the filesystem server.
+ *
+ * v2.13.0. A set with `enable_filesystem: false` has nothing to receive
+ * it, which is not an error — there is then no path-taking tool whose
+ * escapes need deciding.
+ *
+ * @param fn Approver, or nullptr to clear.
+ * @param user_data Forwarded to `fn`.
+ * @return true when a filesystem server received it.
+ * @req REQ-MCP-021
+ * @version 2.13.0
+ */
+bool ServerManager::set_outside_root_approver(OutsideRootApprover fn,
+                                              void* user_data) {
+    auto* fs_server = dynamic_cast<FilesystemServer*>(
+        get_server("filesystem"));
+    if (fs_server != nullptr) {
+        fs_server->set_outside_root_approver(fn, user_data);
+    }
+    return fs_server != nullptr;
+}
+
+/**
  * @brief List all registered server names.
  * @return Every routable prefix across all three kinds — in-process
  *         servers, then dlopen plugins, then external clients

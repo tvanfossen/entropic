@@ -188,6 +188,12 @@ class EntropicMcpAccessLevel(enum.IntEnum):
     READ = 1
     WRITE = 2
 
+class EntPathAccess(enum.IntEnum):
+    """Mirrors ``ent_path_access_t`` from the C header."""
+
+    READ = 0
+    WRITE = 1
+
 # ── Structs ───────────────────────────────────
 
 class EntDelegationRequest(ctypes.Structure):
@@ -227,12 +233,24 @@ class EntropicLogprobResult(ctypes.Structure):
         ("n_logprobs", ctypes.c_int),
     ]
 
+class EntPathApprovalRequest(ctypes.Structure):
+    """Mirrors ``ent_path_approval_request_t`` from the C header."""
+
+    _fields_ = [
+        ("path", ctypes.c_char_p),
+        ("root", ctypes.c_char_p),
+        ("tool", ctypes.c_char_p),
+        ("access", ctypes.c_int),
+        ("session_key", ctypes.c_char_p),
+    ]
+
 # ── Callback typedefs (named) ─────────────────
 
 HOOK_CB = ctypes.CFUNCTYPE(ctypes.c_int, ctypes.c_int, ctypes.c_char_p, ctypes.POINTER(ctypes.c_char_p), ctypes.c_void_p)
 RESIDENCY_OBSERVER_CB = ctypes.CFUNCTYPE(None, ctypes.c_int, ctypes.c_char_p, ctypes.c_char_p, ctypes.c_size_t, ctypes.c_void_p)
 DELEGATION_START_CB = ctypes.CFUNCTYPE(ctypes.c_int, ctypes.POINTER(EntDelegationRequest), ctypes.c_void_p)
 DELEGATION_COMPLETE_CB = ctypes.CFUNCTYPE(ctypes.c_int, ctypes.POINTER(EntDelegationResult), ctypes.c_void_p)
+PATH_APPROVAL_CB = ctypes.CFUNCTYPE(ctypes.c_int, ctypes.POINTER(EntPathApprovalRequest), ctypes.c_void_p)
 ATTEMPT_BOUNDARY_CB = ctypes.CFUNCTYPE(None, ctypes.c_int, ctypes.c_void_p)
 COMPACTOR_CB = ctypes.CFUNCTYPE(ctypes.c_int, ctypes.c_char_p, ctypes.c_char_p, ctypes.POINTER(ctypes.c_char_p), ctypes.POINTER(ctypes.c_char_p), ctypes.c_void_p)
 
@@ -300,6 +318,7 @@ entropic_state_save = _bind("entropic_state_save", ctypes.c_int, entropic_handle
 entropic_state_load = _bind("entropic_state_load", ctypes.c_int, entropic_handle_t, ctypes.c_char_p, ctypes.c_char_p)
 entropic_metrics_json = _bind("entropic_metrics_json", ctypes.c_int, entropic_handle_t, ctypes.POINTER(ctypes.c_char_p))
 entropic_set_delegation_callbacks = _bind("entropic_set_delegation_callbacks", ctypes.c_int, entropic_handle_t, DELEGATION_START_CB, DELEGATION_COMPLETE_CB, ctypes.c_void_p)
+entropic_set_path_approval_callback = _bind("entropic_set_path_approval_callback", ctypes.c_int, entropic_handle_t, PATH_APPROVAL_CB, ctypes.c_void_p)
 entropic_validation_set_auto_retry = _bind("entropic_validation_set_auto_retry", ctypes.c_int, entropic_handle_t, ctypes.c_int)
 entropic_validation_resume_retry = _bind("entropic_validation_resume_retry", ctypes.c_int, entropic_handle_t)
 entropic_validation_accept_last = _bind("entropic_validation_accept_last", ctypes.c_int, entropic_handle_t)

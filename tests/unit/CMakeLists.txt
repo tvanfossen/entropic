@@ -543,6 +543,9 @@ add_executable(entropic-api-tests
     # gh#166 (v2.13.0): named workspaces — one resident model, many
     # repositories. White-box on engine_handle.h for the routing decision.
     api/workspace_test.cpp
+    # v2.13.0: outside-root file access asks the host's path approver by
+    # default, with explicit allow/deny lists; workspaces stay confined.
+    api/path_approval_test.cpp
     # v2.0.11: External bridge tests (links facade for ENTROPIC_EXPORT symbols)
     mcp/external_bridge_test.cpp
     # gh#130 (v2.10.2): bridge final-text selection — includes the private
@@ -571,6 +574,10 @@ target_compile_definitions(entropic-api-tests PRIVATE
     # binary and exchanges bytes through a fake unix-socket server. The
     # binary lives next to the test in the build tree.
     ENTROPIC_CLI_BIN_PATH="$<TARGET_FILE:entropic>"
+    # v2.13.0: path_approval_test.cpp parses the SHIPPED
+    # data/default_config.yaml, because what it must prove is a property of
+    # the file every consumer on bundled defaults actually runs with.
+    ENTROPIC_REPO_DATA_DIR="${PROJECT_SOURCE_DIR}/data"
 )
 add_dependencies(entropic-api-tests entropic)
 

@@ -55,11 +55,11 @@ struct WsHandle {
 
 /// @brief Config of a host that permits reading outside the tool root.
 ///
-/// NOT a contrived setting: `data/default_config.yaml` ships
-/// `mcp.filesystem.allow_outside_root: true`, so this is what a handle
-/// created from the bundled default actually holds. Every workspace
-/// assertion below that is about CONTAINMENT has to hold under it, or it
-/// is only testing the struct default nobody runs with.
+/// NOT a contrived setting: until v2.13.0 `data/default_config.yaml`
+/// shipped `mcp.filesystem.allow_outside_root: true`, and every
+/// `~/.entropic/config.yaml` auto-created from it still says so. Every
+/// workspace assertion below that is about CONTAINMENT has to hold under
+/// the most permissive host setting, or it is only testing a default.
 /// @internal
 /// @version 2.13.0
 constexpr const char* kHostAllowsOutsideRoot =
@@ -103,7 +103,7 @@ fs::path make_repo(const std::string& tag) {
 
 SCENARIO("gh#166: two workspaces resolve one relative path to two roots",
          "[api][workspace][gh166][v2.13.0]") {
-    // Configured the way the SHIPPED default config configures a handle:
+    // Configured the way the pre-2.13 SHIPPED default configured a handle:
     // `mcp.filesystem.allow_outside_root: true`. The first cut of this
     // scenario used a bare `{"log_level":"WARN"}` handle, where the flag
     // falls back to its struct default of false — so the containment THEN
@@ -166,7 +166,8 @@ SCENARIO("gh#166: two workspaces resolve one relative path to two roots",
             CHECK(escape.find("MARKER-bravo") == std::string::npos);
             // ...and the DEFAULT set still honours what the host asked
             // for, so a consumer that binds no workspace sees no change.
-            CHECK(h.h->config.mcp.filesystem.allow_outside_root);
+            CHECK(h.h->config.mcp.filesystem.allow_outside_root
+                  == entropic::OutsideRootAccess::allow);
         }
 
         THEN("the delegation sandbox roots at the session's workspace") {

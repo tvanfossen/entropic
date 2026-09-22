@@ -86,7 +86,28 @@ mcp:
   enable_diagnostics: true
   enable_web: true
   filesystem:
-    allow_outside_root: true
+    # Paths OUTSIDE the project root (mcp.working_dir, else the cwd):
+    #   false    — refuse every one ("Path escapes project root: ...")
+    #   true     — serve every one, read AND write, no prompt
+    #   optional — ask the host's path approver (entropic_set_path_approval_callback)
+    #              with the resolved path and read/write; with NO approver
+    #              registered the call is REFUSED with a typed
+    #              `outside_root_approval_required` error. Never fails open.
+    # Until v2.13.0 this shipped `true`, which gave the model unconfined read
+    # and write of the whole filesystem on bundled defaults. A
+    # ~/.entropic/config.yaml auto-created from an older copy of this file
+    # still says `true`: edit it to take the new default.
+    # permissions.auto_approve does NOT approve an escape — it skips per-tool
+    # prompts, it does not widen the filesystem boundary. Named workspaces
+    # are always confined to their own root, whatever is set here.
+    allow_outside_root: optional
+    # Precedence: outside_root_deny > outside_root_allow > allow_outside_root.
+    # Absolute paths (~ expanded), matched by SUBTREE: /opt/data covers
+    # /opt/data/x but never /opt/database.
+    # outside_root_allow:     # pre-approved, never prompted
+    #   - ~/notes
+    # outside_root_deny:      # always refused, even with allow_outside_root: true
+    #   - ~/.ssh
   external:
     enabled: false
     rate_limit: 10

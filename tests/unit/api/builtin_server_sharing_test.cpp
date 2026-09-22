@@ -378,3 +378,51 @@ SCENARIO("gh#158: repeated sandbox swaps race nothing a concurrent "
         }
     }
 }
+
+SCENARIO("gh#158: two sessions writing todos through ONE entropic server "
+         "share its list safely",
+         "[api][gh158][concurrency][v2.13.0]") {
+    // entropic.todo keeps its items in the TOOL object, and the default set
+    // has one EntropicServer — so two unbound sessions append to one
+    // std::vector from two run threads at once.
+    TempDir root("todo");
+    Handle h(root.path);
+    REQUIRE(h.ok);
+
+    GIVEN("two sessions each adding their own todos") {
+        constexpr int kAdds = 30;
+        std::atomic<int> ready{0};
+        std::atomic<bool> go{false};
+        std::vector<std::string> last(2);
+
+        auto drive = [&](int t) {
+            const std::string key = "todo-s" + std::to_string(t);
+            ready.fetch_add(1);
+            while (!go.load()) { std::this_thread::yield(); }
+            for (int i = 0; i < kAdds; ++i) {
+                auto item = key + "-item-" + std::to_string(i);
+                auto res = dispatch(h.h, key, {make_call(
+                    item, "entropic.todo",
+                    {{"action", "add"}, {"content", item}})});
+                last[size_t(t)] = res.empty() ? "<no result>" : res.front();
+            }
+        };
+        std::thread t0([&] { drive(0); });
+        std::thread t1([&] { drive(1); });
+        while (ready.load() < 2) { std::this_thread::yield(); }
+        go.store(true);
+        t0.join();
+        t1.join();
+
+        THEN("each session's final list still holds every item it added") {
+            for (int t = 0; t < 2; ++t) {
+                INFO("session " << t << " final result: " << last[size_t(t)]);
+                for (int i = 0; i < kAdds; ++i) {
+                    auto item = "todo-s" + std::to_string(t) + "-item-"
+                              + std::to_string(i);
+                    CHECK(last[size_t(t)].find(item) != std::string::npos);
+                }
+            }
+        }
+    }
+}

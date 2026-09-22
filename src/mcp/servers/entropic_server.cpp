@@ -26,6 +26,7 @@
 #include <algorithm>
 #include <chrono>
 #include <cstdlib>
+#include <mutex>
 #include <string>
 #include <vector>
 
@@ -49,8 +50,14 @@ struct TodoItem {
 
 /**
  * @brief Tool for managing a persistent todo list.
+ *
+ * gh#158 (v2.13.0): the list lives on the TOOL, so it is one list per
+ * EntropicServer — shared by every session on that server set (the
+ * handle's default set serves all unbound sessions). Locked; whether it
+ * should be per session is an open design question (decision #66).
+ *
  * @dg_internal
- * @version 1.8.5
+ * @version 2.13.0
  */
 class TodoTool : public ToolBase {
 public:
@@ -96,6 +103,10 @@ private:
     void apply_todo_action(const std::string& action,
                            const nlohmann::json& args);
 
+    /// @brief gh#158: guards items_. The default server set has ONE
+    /// EntropicServer, so concurrent sessions append from several run
+    /// threads; unguarded, a racing push_back corrupted the vector.
+    std::mutex mutex_;
     std::vector<TodoItem> items_; ///< Todo list state
 
     /**
@@ -176,20 +187,33 @@ void TodoTool::apply_todo_action(const std::string& action,
 
 /**
  * @brief Execute the todo tool (add/update/remove) and emit directives.
+ *
+ * gh#158 (v2.13.0): the action and the render run under ONE hold of
+ * `mutex_`, so the list a call returns is the list its own action
+ * produced. The TSan run before this aborted with an impossible
+ * allocation size inside `items_.push_back` — heap corruption, not a
+ * stale read.
+ *
  * @param args_json JSON with "action" plus the action's own fields.
  * @return A ServerResponse whose result is the re-rendered todo list
  *         and whose directives are context_anchor + notify_presenter.
  * @req REQ-MCP-024
- * @version 2.3.7
+ * @req REQ-LOOP-009
+ * @version 2.13.0
  */
 ServerResponse TodoTool::execute(const std::string& args_json) {
     auto args = nlohmann::json::parse(args_json);
     std::string action = args.at("action").get<std::string>();
 
-    apply_todo_action(action, args);
+    std::string rendered;
+    {
+        std::lock_guard<std::mutex> lock(mutex_);
+        apply_todo_action(action, args);
+        rendered = format_list();
+    }
 
     nlohmann::json result;
-    result["todo_state"] = format_list();
+    result["todo_state"] = rendered;
     result["action"] = action;
 
     Directive anchor_d;

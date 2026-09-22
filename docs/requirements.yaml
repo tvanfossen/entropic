@@ -5230,7 +5230,9 @@
 
     serves every unbound session, so read_file and write_file reach its map
 
-    from several run threads at once), the working directory every
+    from several run threads at once), the entropic server''s todo list (its
+
+    own mutex, for the same reason), the working directory every
 
     in-process and plugin server resolves against (the ServerManager''s
 
@@ -5375,7 +5377,9 @@
 
     session''s delegation sandbox"; "gh#158: repeated sandbox swaps race nothing
 
-    a concurrent session reads" —
+    a concurrent session reads"; "gh#158: two sessions writing todos through
+
+    ONE entropic server share its list safely" —
 
     /home/tvanfossen/Projects/entropic/tests/unit/api/builtin_server_sharing_test.cpp;
 

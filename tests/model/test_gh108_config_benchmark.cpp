@@ -1727,6 +1727,32 @@ TEST_CASE("gh#153 MTP vs plain decode throughput — four arms, Gemma 4 26B-A4B 
     // fourth way this issue has gone wrong. The residency rule that judges it
     // is chosen by the engine (decision #74) and, because the experts are
     // host-side, it is the PARTIAL rule — 31 of 31 layers notwithstanding.
+    // 30, not 31: gemma4 26B-A4B has THIRTY layers. The first run of this case
+    // asked for 31 and the engine refused it — "cpu_moe_layers=31 exceeds the
+    // model's 30 layers … it is not clamped, because a count that cannot be
+    // honoured is a configuration error, not a preference" — which is the
+    // refusal working, and the count being wrong. #42(b)'s "18 of 31" prose is
+    // the same slip; the JSON it was taken from recorded 18/30.
+    //
+    // MEASURED 2026-09-22 on the 1080 Ti, sweeping cpu_moe_layers by hand
+    // (1080 Ti, gpu_layers=30, ctx 8192, max_tokens 256, 4 trials):
+    //   N=30  2767 MiB VRAM   plain 17.68  mtp 18.18   effect -0.29 % (floor 3.11 %)
+    //   N=20  6775 MiB VRAM   plain 22.62  mtp 23.76   effect +4.16 % (floor 0.83 %)
+    //   N=12  9446 MiB VRAM   — engagement assertion refused the run, see below
+    // Two things fall out. Throughput rises as experts come BACK onto the card
+    // (18.2 -> 22.6 plain), and MTP's benefit rises with it (-0.29 % -> +4.16 %),
+    // which is decision #74's resident-fraction rule showing up inside a single
+    // model. Whole-layer offload at 18/30 measured 18.7 tok/s (#42(b)), so
+    // experts-on-host at N=30 buys nothing by itself — its value is the 5 GB of
+    // VRAM it frees, which only pays once that VRAM holds experts again.
+    //
+    // N is 30 here, not the faster 20, deliberately: this case is a STABLE
+    // comparison against #42(b), and `require_expert_offload_engaged`'s bound
+    // (free - overflow) assumes most weights are host-side. At N=20 the load
+    // lands 300 MiB under that bound and at N=12 it exceeds it — not because
+    // the knob failed, but because 18 layers of experts ARE resident and the
+    // bound cannot tell "engaged and partly resident" from "never engaged".
+    // Sweeping N is gh#167/gh#180's job and needs a residency-aware bound.
     gh153::run_four_arm_bench(
-        {"a4b_experts", "gemma4_a4b_qat", "mtp_a4b", "31", 256, 4, 31});
+        {"a4b_experts", "gemma4_a4b_qat", "mtp_a4b", "30", 256, 4, 30});
 }

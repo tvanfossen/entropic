@@ -13,6 +13,7 @@
 
 #include <entropic/interfaces/i_mcp_server.h>
 #include <entropic/mcp/server_base.h>
+#include <entropic/mcp/session_scoped.h>
 
 #include <functional>
 #include <memory>
@@ -41,18 +42,26 @@ class ResumeDelegationTool;  ///< gh#32 (v2.1.6) resume
  * Single-tier configs skip delegate/pipeline registration.
  * Diagnose, inspect, and context_inspect provide read-only introspection.
  *
- * @version 2.0.6-rc16
+ * gh#158 (v2.13.0): a SessionStateOwner — the todo list is kept per
+ * session, and the facade releases a session's list with its
+ * conversation.
+ *
+ * @version 2.13.0
  */
-class EntropicServer : public MCPServerBase {
+class EntropicServer : public MCPServerBase, public SessionStateOwner {
 public:
     /**
      * @brief Construct with tier names and data dir.
      * @param tier_names Available tier names for delegate/pipeline schemas.
      * @param data_dir Path to bundled data directory.
-     * @version 1.9.12
+     * @param require_context_tiers gh#162 (v2.13.0): tiers that refuse a
+     *        delegation carrying no `context` references. Defaulted so
+     *        every existing caller keeps its behaviour exactly.
+     * @version 2.13.0
      */
     EntropicServer(const std::vector<std::string>& tier_names,
-                   const std::string& data_dir);
+                   const std::string& data_dir,
+                   const std::vector<std::string>& require_context_tiers = {});
 
     ~EntropicServer() override;
 
@@ -70,6 +79,21 @@ public:
      * @version 2.0.6-rc16
      */
     void set_state_provider(const entropic_state_provider_t& provider);
+
+    /**
+     * @brief Release `key`'s todo list (gh#158).
+     * @param key Session key.
+     * @return true when the session had a list.
+     * @version 2.13.0
+     */
+    bool release_session(const std::string& key) override;
+
+    /**
+     * @brief Sessions holding a todo list on this server (gh#158).
+     * @return Session count.
+     * @version 2.13.0
+     */
+    std::size_t session_count() const override;
 
 private:
     std::unique_ptr<TodoTool> todo_;
@@ -93,7 +117,8 @@ private:
      * @dg_internal @version 1.9.12 */
     int register_delegation_tools(
         const std::string& tools_dir,
-        const std::vector<std::string>& tier_names);
+        const std::vector<std::string>& tier_names,
+        const std::vector<std::string>& require_context_tiers = {});
 
     /** @brief Register introspection tools (diagnose, inspect, context_inspect).
      * @dg_internal @version 2.0.6-rc16 */

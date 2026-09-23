@@ -18,6 +18,8 @@
 #include <entropic/mcp/permission_manager.h>
 #include <entropic/mcp/plugin_server.h>
 #include <entropic/mcp/server_base.h>
+#include <entropic/mcp/servers/filesystem.h>
+#include <entropic/mcp/tool_root_lock.h>
 #include <entropic/types/config.h>
 
 #include <nlohmann/json_fwd.hpp>
@@ -84,11 +86,16 @@ public:
      * @param mcp_config MCP config with enable flags.
      * @param tier_names Tier names for entropic server schemas.
      * @param data_dir Bundled data directory path.
-     * @version 2.0.1
+     * @param require_context_tiers gh#162 (v2.13.0): tiers that refuse a
+     *        delegation carrying no context references. Defaulted, so
+     *        existing callers are unaffected.
+     * @version 2.13.0
      */
     void init_builtins(const MCPConfig& mcp_config,
                        const std::vector<std::string>& tier_names,
-                       const std::string& data_dir);
+                       const std::string& data_dir,
+                       const std::vector<std::string>&
+                           require_context_tiers = {});
 
     /**
      * @brief Load the dlopen plugins listed in `mcp.plugins` (gh#133).
@@ -146,6 +153,38 @@ public:
     MCPServerBase* get_server(const std::string& name) const;
 
     /**
+     * @brief Install the outside-root approver on this set's filesystem
+     *        server (v2.13.0).
+     *
+     * The facade calls this on the handle's DEFAULT set only; a named
+     * workspace's set never gets one (gh#166 hard confinement).
+     *
+     * @param fn Approver, or nullptr to clear.
+     * @param user_data Forwarded to `fn`.
+     * @return true when a filesystem server was present to receive it.
+     * @version 2.13.0
+     */
+    bool set_outside_root_approver(OutsideRootApprover fn, void* user_data);
+
+    /**
+     * @brief Release every in-process server's state for one session
+     *        (gh#158).
+     *
+     * Called by the facade when a session's conversation ends (drop,
+     * clear, restore). Each in-process server that derives
+     * SessionStateOwner — the filesystem server's read tracker, the
+     * entropic server's todo list — forgets `key`. Takes NO ToolRootLock:
+     * the state is per-session and behind its own leaf lock, and waiting
+     * on the root lock would stall an API call for the length of another
+     * session's sandboxed delegation.
+     *
+     * @param key Session key ("" = the default session).
+     * @return Number of servers that held state for `key`.
+     * @version 2.13.0
+     */
+    std::size_t release_session(const std::string& key);
+
+    /**
      * @brief List registered server names (in-process + external).
      * @return Server names.
      * @version 2.0.6
@@ -159,6 +198,89 @@ public:
      * @version 2.0.6
      */
     const std::filesystem::path& project_dir() const { return project_dir_; }
+
+    /**
+     * @brief Point every in-process and plugin server at `dir` (gh#160).
+     *
+     * The primitive under enter_working_dir() / leave_working_dir(), which
+     * the facade's `ScopedSandbox` swap calls: this is what actually moves
+     * `filesystem`, `bash`, `git` and every dlopen plugin into a delegation
+     * sandbox and back out again (`diagnostics` keeps its construction
+     * root — it has no set_working_dir). External (stdio/SSE) servers are
+     * NOT moved — they are separate processes with their own cwd, which is
+     * why a sandboxed delegation refuses to run when the child can reach a
+     * writable one (`external_tools_without_readonly_hint`).
+     *
+     * @param dir New working directory for the registry.
+     * @return Number of servers that accepted the change.
+     * @threadsafety Takes the root lock EXCLUSIVELY for its own duration
+     *        (re-entrant for a thread that already holds it), so it waits
+     *        for every in-flight in-process / plugin dispatch and no root
+     *        moves under a running tool call (gh#158).
+     * @version 2.13.0
+     */
+    size_t set_working_dir_all(const std::filesystem::path& dir);
+
+    /**
+     * @brief Re-root every in-process and plugin server for a sandboxed
+     *        delegation, and KEEP the root lock (gh#158, gh#160).
+     *
+     * Takes the root lock exclusively and holds it until the matching
+     * leave_working_dir() on the SAME thread. Meanwhile any other thread's
+     * in-process / plugin dispatch on this manager waits, then resolves
+     * against the restored root — never the sandbox. The calling thread's
+     * own dispatches pass straight through and see `dir`, which is what a
+     * sandboxed child needs. Re-entrant: a nested delegation enters again
+     * on the same thread.
+     *
+     * @param dir Sandbox directory.
+     * @return Number of servers that accepted the change.
+     * @version 2.13.0
+     */
+    size_t enter_working_dir(const std::filesystem::path& dir);
+
+    /**
+     * @brief Restore after enter_working_dir(), then release one level of
+     *        the root lock (gh#158, gh#160).
+     * @param dir Directory to restore (the parent's active root).
+     * @return Number of servers that accepted the change; 0 with nothing
+     *         moved when the calling thread does not hold the lock — which
+     *         would otherwise release a lock it never took and pull the
+     *         servers out from under another thread's sandboxed child.
+     * @version 2.13.0
+     */
+    size_t leave_working_dir(const std::filesystem::path& dir);
+
+    /**
+     * @brief External tools that do not declare `readOnlyHint: true`.
+     *
+     * MCP tool annotations ride along in `tools/list` and are already
+     * cached verbatim by `ExternalMCPClient`; this reads them back.
+     * A tool with no annotations at all counts as UNSAFE — the hint is
+     * an opt-in assertion, and absence is not a promise.
+     *
+     * @param allowed Tool allow-list to restrict the check to (empty =
+     *        every external tool the manager knows about).
+     * @return Fully-qualified names (`<server>.<tool>`) of the offenders.
+     * @version 2.13.0
+     */
+    std::vector<std::string> external_tools_without_readonly_hint(
+        const std::vector<std::string>& allowed) const;
+
+    /**
+     * @brief The `readOnlyHint` filter itself, over one descriptor list.
+     *
+     * Split out so the rule — absence of the annotation is NOT a
+     * promise — is testable without standing up a real external server.
+     *
+     * @param tools_json A `tools/list` array with prefixed names.
+     * @param allowed Allow-list to restrict the check to (empty = all).
+     * @return Names of the tools that do not assert read-only.
+     * @version 2.13.0
+     */
+    static std::vector<std::string> tools_without_readonly_hint(
+        const std::string& tools_json,
+        const std::vector<std::string>& allowed);
 
     /**
      * @brief Get the JSON Schema for a tool's input parameters.
@@ -333,6 +455,14 @@ private:
     std::filesystem::path project_dir_;                             ///< Project root
     std::map<std::string, std::unique_ptr<MCPServerBase>> servers_; ///< Name → in-process server
 
+    /// @brief gh#158: guards the working directory every in-process and
+    /// plugin server here resolves against — SHARED around each dispatch,
+    /// EXCLUSIVE while a sandboxed delegation has them re-rooted. One per
+    /// manager, so still one per workspace (gh#166). Owned through a
+    /// pointer because a lock cannot move and a ServerManager can.
+    std::unique_ptr<ToolRootLock> root_lock_ =
+        std::make_unique<ToolRootLock>();
+
     /**
      * @brief Route a tool call to a loaded plugin (gh#133).
      * @param plugin Target plugin.
@@ -411,11 +541,15 @@ private:
 
     /**
      * @brief Route a tool call to the correct server.
+     *
+     * gh#158: holds the root lock SHARED across an in-process or plugin
+     * dispatch — the servers a sandbox swap re-roots.
+     *
      * @param tool_name Fully-qualified name.
      * @param args_json JSON arguments.
      * @return ServerResponse JSON envelope.
      * @utility
-     * @version 1.8.7
+     * @version 2.13.0
      */
     std::string route_tool_call(const std::string& tool_name,
                                  const std::string& args_json);
@@ -480,8 +614,9 @@ private:
      *
      * Issue #9 (v2.1.4): consolidates the three pre-existing transport
      * construction sites (runtime API, YAML config-entry, discovery
-     * config). Future fields (timeout, working_dir, headers, ...) added
-     * to ExternalServerConfig flow through here automatically.
+     * config). gh#166 (v2.13.0): no longer static — a stdio child is
+     * spawned with cwd = the spec's `working_dir`, defaulting to THIS
+     * manager's root, so a workspace's servers start in its repository.
      *
      * @param spec Full server config.
      * @return Owned Transport (Stdio for command-set specs, SSE
@@ -489,8 +624,8 @@ private:
      * @utility
      * @version 2.1.4
      */
-    static std::unique_ptr<Transport> make_transport(
-        const ExternalServerConfig& spec);
+    std::unique_ptr<Transport> make_transport(
+        const ExternalServerConfig& spec) const;
 
     /**
      * @brief Build error response JSON for disconnected server.

@@ -8,6 +8,7 @@
 #include <entropic/mcp/servers/entropic_server.h>
 #include <entropic/mcp/server_base.h>
 #include <entropic/types/enums.h>
+#include <entropic/types/run_scope.h>
 #include <catch2/catch_test_macros.hpp>
 #include <nlohmann/json.hpp>
 
@@ -140,8 +141,8 @@ TEST_CASE("todo update and remove actions mutate the list",
 
 TEST_CASE("todo format_list returns '(empty)' on a fresh server",
           "[entropic][v2.3.10][coverage]") {
-    // Fresh server has empty items_; the empty-list branch in
-    // format_list (line 128-129) emits "(empty)".
+    // A session with no list yet renders the empty-list branch of
+    // format_todo_list, which emits "(empty)".
     EntropicServer server({"lead", "eng"}, TEST_DATA_DIR);
 
     json args;
@@ -152,6 +153,33 @@ TEST_CASE("todo format_list returns '(empty)' on a fresh server",
     auto resp = json::parse(envelope);
     REQUIRE(resp["result"].get<std::string>().find("(empty)")
             != std::string::npos);
+}
+
+TEST_CASE("gh#158: the todo list belongs to the calling session",
+          "[entropic][gh158][v2.13.0]") {
+    // The list is keyed by the session published to the dispatching
+    // thread; the ToolExecutor publishes the key it routed the call on.
+    EntropicServer server({"lead", "eng"}, TEST_DATA_DIR);
+    auto add = [&](const char* session, const char* item) {
+        RunSessionScope scope(session);
+        json args;
+        args["action"] = "add";
+        args["content"] = item;
+        auto resp = json::parse(server.execute("todo", args.dump()));
+        return resp["result"].get<std::string>();
+    };
+    add("s-a", "alpha");
+    auto b = add("s-b", "beta");
+    CHECK(b.find("beta") != std::string::npos);
+    CHECK(b.find("alpha") == std::string::npos);
+    CHECK(server.session_count() == 2U);
+
+    CHECK(server.release_session("s-a"));
+    CHECK(server.session_count() == 1U);
+    auto a = add("s-a", "alpha-again");
+    CHECK(a.find("alpha-again") != std::string::npos);
+    CHECK(a.find("0. [pending] alpha-again") != std::string::npos);
+    CHECK_FALSE(server.release_session("s-none"));
 }
 
 TEST_CASE("test_delegate_emits_stop", "[entropic]") {
@@ -300,8 +328,13 @@ TEST_CASE("test_delegate_skips_duplicate_check", "[entropic]") {
     REQUIRE(server.skip_duplicate_check("pipeline"));
 }
 
+// The constructor's `tier_names` are the delegation TARGETS, not every
+// configured tier — `collect_delegatable_tiers` (src/facade/entropic.cpp)
+// drops the source/default tier before calling here, and the v2.0.6 enum
+// SCENARIO below pins that meaning. So "single-tier config" is expressed
+// as an EMPTY target list: one tier, nobody to hand work to.
 TEST_CASE("test_single_tier_skips_delegate", "[entropic]") {
-    EntropicServer server({"lead"}, TEST_DATA_DIR);
+    EntropicServer server({}, TEST_DATA_DIR);
 
     json args;
     args["target"] = "lead";
@@ -311,6 +344,39 @@ TEST_CASE("test_single_tier_skips_delegate", "[entropic]") {
     auto result = extract_result(envelope);
 
     REQUIRE(result.find("Unknown tool") != std::string::npos);
+}
+
+// gh#160/gh#162 (v2.13.0): a lead plus ONE worker is a multi-tier config.
+// The guard here used to be `tier_names.size() <= 1`, written at v1.8.5
+// when the caller passed EVERY tier; v2.0.4 made the caller pass targets
+// only and the guard was never re-read. The result was that the canonical
+// two-tier deployment — one lead, one worker — silently shipped with no
+// entropic.delegate at all.
+TEST_CASE("test_one_delegatable_tier_registers_delegate", "[entropic]") {
+    EntropicServer server({"eng"}, TEST_DATA_DIR);
+
+    json args;
+    args["target"] = "eng";
+    args["task"] = "write hello world";
+
+    auto envelope = server.execute("delegate", args.dump());
+    auto types = extract_directive_types(envelope);
+
+    REQUIRE(has_directive(types, "delegate"));
+    REQUIRE(has_directive(types, "stop_processing"));
+}
+
+// The same off-by-one hid resume_delegation, which shares the guard.
+TEST_CASE("test_one_delegatable_tier_registers_resume", "[entropic]") {
+    EntropicServer server({"eng"}, TEST_DATA_DIR);
+
+    auto tools = json::parse(server.list_tools());
+    bool has_resume = std::any_of(
+        tools.begin(), tools.end(), [](const json& t) {
+            return t.value("name", std::string{}) == "resume_delegation";
+        });
+
+    REQUIRE(has_resume);
 }
 
 // ── v2.0.6: Delegate enum filtering ─────────────────────
@@ -470,4 +536,105 @@ TEST_CASE("Entropic tools advertise their required access levels",
         (void)lvl;
     }
     REQUIRE(true);
+}
+
+// ── gh#162 (v2.13.0): explicit context seeds + resume by target ─────────
+
+TEST_CASE("gh#162: delegate carries a structured context list",
+          "[entropic][gh162][v2.13.0]") {
+    EntropicServer server({"lead", "eng"}, TEST_DATA_DIR);
+
+    json args;
+    args["target"] = "eng";
+    args["task"] = "Explain the latency compensation math";
+    args["context"] = json::array({
+        json{{"path", "app/include/b12/control/slam/SlamConfig.hpp"},
+             {"lines", "40-95"},
+             {"note", "fusion weights live here"}},
+        json{{"path", "src/slam/FusedPoseEstimator.cpp"}},
+    });
+
+    auto envelope = server.execute("delegate", args.dump());
+    auto types = extract_directive_types(envelope);
+    REQUIRE(has_directive(types, "delegate"));
+
+    // RED before gh#162: the tool parsed only target/task/max_turns, so
+    // everything the lead already knew was dropped at the boundary.
+    auto result = json::parse(extract_result(envelope));
+    REQUIRE(result.contains("context"));
+    REQUIRE(result["context"].is_array());
+    REQUIRE(result["context"].size() == 2);
+    CHECK(result["context"][0]["path"]
+          == "app/include/b12/control/slam/SlamConfig.hpp");
+    CHECK(result["context"][0]["lines"] == "40-95");
+    CHECK(result["context"][1]["path"] == "src/slam/FusedPoseEstimator.cpp");
+}
+
+TEST_CASE("gh#162: resume_delegation accepts a target instead of an id",
+          "[entropic][gh162][v2.13.0]") {
+    EntropicServer server({"lead", "eng"}, TEST_DATA_DIR);
+
+    json args;
+    args["target"] = "eng";
+    args["task"] = "follow up on the same subsystem";
+
+    // RED before gh#162: reaching resume_delegation required a followup
+    // round trip first, because only a storage id was accepted.
+    auto envelope = server.execute("resume_delegation", args.dump());
+    auto types = extract_directive_types(envelope);
+    REQUIRE(has_directive(types, "delegate"));
+    REQUIRE(has_directive(types, "stop_processing"));
+
+    auto result = json::parse(extract_result(envelope));
+    CHECK(result["target"] == "eng");
+    CHECK(result.value("resume_by_target", false));
+}
+
+TEST_CASE("gh#162: resume_delegation still needs one of id or target",
+          "[entropic][gh162][v2.13.0]") {
+    EntropicServer server({"lead", "eng"}, TEST_DATA_DIR);
+    auto envelope = server.execute(
+        "resume_delegation", R"({"task":"go on"})");
+    auto result = extract_result(envelope);
+    CHECK(result.find("error") != std::string::npos);
+    CHECK(extract_directive_types(envelope).empty());
+}
+
+TEST_CASE("gh#162: a requires_context tier refuses a contextless delegation",
+          "[entropic][gh162][v2.13.0]") {
+    // "reader" can read a path but cannot search for one, so a task with
+    // no path is structurally unanswerable for it.
+    EntropicServer server({"lead", "eng", "reader"}, TEST_DATA_DIR,
+                          {"reader"});
+
+    json bare;
+    bare["target"] = "reader";
+    bare["task"] = "Explain the fusion math";
+    auto refused = server.execute("delegate", bare.dump());
+    CHECK(extract_directive_types(refused).empty());
+    auto msg = extract_result(refused);
+    CHECK(msg.find("requires context") != std::string::npos);
+    CHECK(msg.find("reader") != std::string::npos);
+
+    json seeded = bare;
+    seeded["context"] = json::array({json{{"path", "src/Fused.cpp"}}});
+    auto accepted = server.execute("delegate", seeded.dump());
+    CHECK(has_directive(extract_directive_types(accepted), "delegate"));
+
+    // A tier that does NOT require context is unaffected.
+    json other;
+    other["target"] = "eng";
+    other["task"] = "write a function";
+    CHECK(has_directive(
+        extract_directive_types(server.execute("delegate", other.dump())),
+        "delegate"));
+
+    // One requiring stage refuses the whole pipeline before it starts.
+    json pipe;
+    pipe["stages"] = json::array({"eng", "reader"});
+    pipe["task"] = "generate then review";
+    auto pipe_refused = server.execute("pipeline", pipe.dump());
+    CHECK(extract_directive_types(pipe_refused).empty());
+    CHECK(extract_result(pipe_refused).find("requires context")
+          != std::string::npos);
 }

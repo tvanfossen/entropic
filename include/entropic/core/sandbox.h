@@ -7,12 +7,27 @@
  * (`WorktreeManager`) which corrupted user repo state (gh#29).
  *
  * The sandbox lives at `~/.entropic/sandbox/<session-id>/`, entirely
- * outside the user's project directory. The engine NEVER touches the
- * user's repo: no `git checkout`, no branches, no commits, no merges.
- * Delegations run in isolated copies of the project tree and produce a
- * portable unified-diff patch as their final artifact. The consumer
- * (TUI/CLI/IDE plugin) is responsible for applying that patch — with
- * the user's consent and authorship — back to the project.
+ * outside the user's project directory. The engine NEVER manipulates the
+ * user's repo: no `git checkout`, no branches, no commits, no merges —
+ * that holds on every path, isolation on or off.
+ *
+ * @par Opt-in (gh#160, v2.13.0)
+ * This module runs only when `delegation.isolation: sandbox` is set.
+ * Under the default (`none`) a delegated child shares its parent's
+ * working directory and nothing here is constructed — no snapshot, no
+ * patch. That default is not a regression: from v2.1.5 to v2.12.2 the
+ * dir-swap callback had no production caller, so the snapshot was taken,
+ * never entered, and always diffed to zero bytes. gh#160 wires the swap
+ * and puts the cost behind the switch that buys it.
+ *
+ * With isolation on, delegations run in isolated copies of the project
+ * tree and produce a portable unified-diff patch as their final
+ * artifact. The consumer (TUI/CLI/IDE plugin) is responsible for
+ * applying that patch — with the user's consent and authorship — back to
+ * the project. The snapshot source is the SESSION'S TOOL ROOT
+ * (`AgentEngine::resolve_session_root`), not the engine's own repo dir:
+ * gh#160's report was a consumer whose `mcp.working_dir` pointed at one
+ * repository while the sandbox snapshotted the host process's cwd.
  *
  * @par Layout
  * @code
@@ -35,7 +50,9 @@
 
 #pragma once
 
+#include <atomic>
 #include <filesystem>
+#include <mutex>
 #include <optional>
 #include <string>
 #include <vector>
@@ -215,6 +232,26 @@ public:
      */
     const std::filesystem::path& session_base() const;
 
+    /**
+     * @brief Mint a sandbox id that no sibling delegation can collide with.
+     *
+     * gh#160 (v2.13.0): delegation ids were `d<depth>`, so two delegations
+     * issued at the same depth — the ordinary lead-fans-out-to-specialists
+     * shape — both asked for `d1`. `create_sandbox` then wiped the first
+     * sandbox's directory, and `pending/d1.patch` overwrote the first
+     * delegation's patch with the second's. Only one of the two survived,
+     * silently.
+     *
+     * The counter lives here because this manager is the engine-scoped
+     * object every delegation shares; `DelegationManager` is constructed
+     * per delegation and cannot count its own siblings.
+     *
+     * @param prefix Human-readable stem (e.g. "d1", "d1r", "pipeline").
+     * @return `<prefix>_<n>`, unique for the life of this manager.
+     * @version 2.13.0
+     */
+    std::string next_delegation_id(const std::string& prefix);
+
 private:
     /**
      * @brief Ensure the `base/` snapshot exists.
@@ -270,6 +307,15 @@ private:
     std::filesystem::path session_base_;  ///< `~/.entropic/sandbox/<session_id>/`
     std::filesystem::path base_dir_;      ///< `session_base_/base`
     bool base_ready_ = false;             ///< `base/` snapshot exists
+    /// @brief gh#158: guards `base_ready_` and the snapshot it gates.
+    ///
+    /// The manager is engine-scoped (gh#33), so two concurrent delegating
+    /// runs reach `ensure_base_snapshot()` together: both see `base_ready_`
+    /// false and both copy the whole project tree into the SAME `base_dir_`,
+    /// racing file-by-file. Serialized runs could never produce that.
+    mutable std::mutex base_mutex_;
+    /// @brief gh#160: monotonic counter behind `next_delegation_id`.
+    std::atomic<unsigned> id_seq_{0};
 };
 
 /**
@@ -287,26 +333,48 @@ public:
     /**
      * @brief Callback type for directory swapping.
      *
-     * The facade implements this to iterate registered servers and
-     * call `entropic_mcp_server_set_working_dir()` on each.
+     * The facade implements this to iterate the registered servers of
+     * the session's workspace and call
+     * `entropic_mcp_server_set_working_dir()` on each.
      *
+     * gh#160 (v2.13.0): carries the session key. The servers a swap must
+     * move are the ones the RUNNING SESSION's tools resolve against, and
+     * with `concurrent_sessions` on (gh#158) two sessions delegate at the
+     * same time — a swap that names no session is a swap that cannot be
+     * routed. gh#166 re-points the facade side of this at the session's
+     * workspace without touching the signature again.
+     *
+     * `entering` distinguishes the two calls of a scope: the facade
+     * takes its per-workspace swap lock on entry and releases it on
+     * restore, which is what keeps two concurrent sandboxed delegations
+     * from interleaving their swaps on one set of server objects.
+     *
+     * @param session_key Session the delegation belongs to ("" = default).
      * @param path New working directory.
+     * @param entering True on sandbox entry, false on restore.
      * @param user_data Opaque pointer (facade context).
-     * @version 2.1.5
+     * @version 2.13.0
      */
     using SwapDirFn = void (*)(
-        const std::filesystem::path& path, void* user_data);
+        const std::string& session_key,
+        const std::filesystem::path& path,
+        bool entering, void* user_data);
 
     /**
      * @brief Construct and swap directories.
      * @param swap_fn       Directory swap callback (may be null — no-op).
      * @param user_data     Opaque pointer for `swap_fn`.
+     * @param session_key   Session whose tool root is being swapped.
      * @param sandbox_path  Target sandbox directory.
-     * @param original_path Original directory to restore on destruction.
-     * @version 2.1.5
+     * @param original_path Directory to restore on destruction — the
+     *                      caller's ACTIVE root, which for a nested
+     *                      delegation is the parent's sandbox and not the
+     *                      project root (gh#160).
+     * @version 2.13.0
      */
     ScopedSandbox(SwapDirFn swap_fn,
                   void* user_data,
+                  std::string session_key,
                   const std::filesystem::path& sandbox_path,
                   const std::filesystem::path& original_path);
 
@@ -322,6 +390,7 @@ public:
 private:
     SwapDirFn swap_fn_;                   ///< Directory swap callback
     void* user_data_;                     ///< Opaque pointer
+    std::string session_key_;             ///< Session being swapped (gh#160)
     std::filesystem::path original_path_; ///< Path to restore
 };
 

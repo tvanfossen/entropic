@@ -657,7 +657,11 @@
 
     delegation start/complete callbacks, the validation attempt-boundary callback,
 
-    and the error callback. Passing NULL clears a slot.
+    the error callback, and (v2.13.0) the outside-root path approver
+
+    (`entropic_set_path_approval_callback`, read per call through a facade
+
+    thunk on the default server set). Passing NULL clears a slot.
 
 
     End-of-turn is uniform: at the end of any `entropic_run` / `entropic_run_as` /
@@ -1155,7 +1159,8 @@
     batch\" tool-call generation;\n  - `capabilities` — e.g. declaring `vision` for the tiers\
     \ that can serve\n    image content;\n  - the full llama.cpp runtime knob set (gpu_layers,\
     \ n_batch, n_ubatch,\n    n_threads, cache_type_k/v, flash_attn, tensor_split, split_mode,\n\
-    \    main_gpu, offload_kqv, rope_freq_base/scale, n_parallel, use_mlock),\n    which is\
+    \    main_gpu, offload_kqv, rope_freq_base/scale, n_parallel, use_mlock,\n    cpu_moe_layers\
+    \ — EXPERIMENTAL, see REQ-INFER-027),\n    which is\
     \ likewise consumer-tunable on the speculative draft model via\n    `inference.speculative.draft.<field>`.\n\
     Tier parsing is a superset of model parsing: TierConfig extends ModelConfig,\nso every\
     \ knob available to a model is available to a tier, plus the\nidentity/grammar/auto_chain/routable\
@@ -1180,7 +1185,7 @@
     SCENARIO(\"Parse config with tiers\") — tests/unit/config/loader_test.cpp\nSCENARIO(\"\
     gh#133 mcp.plugins parses into MCPConfig::plugins\") —\n  tests/unit/config/loader_test.cpp\n\
     (per-tier require_tool_call parse: none)\n"
-  version: 2.10.4
+  version: 2.13.0
 - id: REQ-CFG-006
   name: Fail-loud validation — reject bad or inert configuration at load time
   module: Configuration
@@ -1551,13 +1556,23 @@
 
     last_failed_delegation_target and consecutive_failed_delegations has
 
-    reached max_consecutive_failed_delegations (default 2, configurable).
+    reached max_consecutive_failed_delegations (default 2, configurable);
+
+    (4) gh#160 — `delegation.isolation: sandbox` is configured but the
+
+    child could reach an EXTERNAL MCP tool that does not declare
+
+    `readOnlyHint: true`, which the engine cannot move into a sandbox.
 
     Failure counting resets on success or a target switch, deliberately
 
     NOT on an intervening non-delegation tool call. Pipelines enforce
 
-    the same depth cap with a [PIPELINE REJECTED] message.
+    the same depth cap with a [PIPELINE REJECTED] message, and the same
+
+    isolation-reach check across every stage — one pipeline shares one
+
+    sandbox, so one unsafe stage breaks containment for all of them.
 
     WHY the repeat cap (gh#64): pre-fix, a lead retrying a specialist
 
@@ -1607,7 +1622,9 @@
 
     valid ChildContextInfo, the consumer start callback does not return
 
-    REJECT, and (when a sandbox manager is configured) sandbox creation
+    REJECT, and (when `delegation.isolation: sandbox` is configured and a
+
+    sandbox manager therefore exists) sandbox creation
 
     succeeds — each failing case returning a typed DelegationResult
 
@@ -1621,15 +1638,47 @@
 
     holds (gh#48), the ancestor tier chain extended with the parent''s
 
-    locked tier, the tier''s tools, and exactly two messages — the tier
+    locked tier, and exactly two messages — the tier
 
     system prompt and the task with any completion instructions
 
-    appended. The ON_DELEGATE hook may cancel; storage records are
+    appended. The child is LOCKED to its target tier before the child
+
+    loop runs, which is the key ToolExecutor::check_tier_allowed reads:
+
+    an empty locked_tier bypasses enforcement entirely, so a child that
+
+    arrived unlocked would be silently unrestricted. The child carries no
+
+    tool list of its own — v2.13.0 removed ChildContextInfo::tools and
+
+    LoopContext::all_tools, which the facade never populated and nothing
+
+    in the engine ever read. A child''s menu comes from tier config via
+
+    get_tool_prompt(tier), and its dispatch gate from the tier''s
+
+    allowed_tools. The ON_DELEGATE hook may cancel; storage records are
 
     opened and completed around the child run; todo state is saved,
 
-    replaced with a fresh list, and restored. The summary is extracted
+    replaced with a fresh list, and restored. A `max_turns` supplied by
+
+    the MODEL on entropic.delegate BOUNDS the child loop (gh#182): it is
+
+    carried on LoopContext::delegated_max_turns and resolved against the
+
+    operator''s own limit by AgentEngine::resolve_max_iterations, which
+
+    takes the STRICTER of the two — a model may lower the tier or engine
+
+    limit, never raise it, and a value < 1 means the argument was omitted
+
+    and leaves the bound exactly where it was. A child stopped that way
+
+    hits the ordinary iteration cap, so it keeps REQ-LOOP-002''s
+
+    hand-back and terminal_reason "budget_exhausted". The summary is extracted
 
     preferring the explicit completion summary, falling back to the last
 
@@ -1660,6 +1709,10 @@
 
     instructions appended when explicit_completion is set.
 
+    Given a tier that supplies a system prompt, When the child loop
+
+    runs, Then ctx.locked_tier is the delegation target, not empty.
+
     Given a child that emitted an explicit completion summary, When the
 
     summary is extracted, Then it is preferred over the last assistant
@@ -1670,8 +1723,20 @@
 
     exception is contained and treated as REJECT.
 
+    Given a delegation carrying max_turns = 2 and an operator limit of 6,
+
+    When the child loop runs, Then it stops at 2 iterations; given
+
+    max_turns above the operator limit, Then the operator limit still
+
+    governs; given max_turns omitted, Then the bound is unchanged.
+
     '
   verified_by: 'TEST_CASE "execute_delegation returns error for unknown tier";
+
+    "a delegated child is locked to its target tier — the key the
+
+    dispatch allowlist reads";
 
     "child context has correct depth"; "child context has fresh
 
@@ -1697,12 +1762,14 @@
 
     /home/tvanfossen/Projects/entropic/tests/unit/core/delegation_manager_test.cpp;
 
-    SCENARIO "resume_delegation failure paths surface typed errors" —
+    SCENARIO "resume_delegation failure paths surface typed errors";
+
+    "gh#182: a model-supplied max_turns bounds the delegated child" —
 
     /home/tvanfossen/Projects/entropic/tests/unit/core/engine_test.cpp
 
     '
-  version: 2.10.4
+  version: 2.13.0
 - id: REQ-DELEG-003
   name: Relay-single-delegate promotion with coverage-gap suppression
   module: Delegation and Pipelines
@@ -1847,6 +1914,236 @@
 
     '
   version: 2.10.4
+- id: REQ-DELEG-005
+  name: Opt-in delegation sandbox isolation, wired end to end
+  module: Delegation and Pipelines
+  description: '`delegation.isolation` selects how a delegated child''s filesystem
+
+    writes are contained: `none` (the default) shares the parent''s
+
+    working directory, `sandbox` runs the child in a copy and returns a
+
+    patch. An unrecognized mode is a config ERROR, never a silent
+
+    downgrade to `none`. Under `sandbox` the engine (1) snapshots the
+
+    SESSION''S TOOL ROOT — AgentEngine::resolve_session_root, the same
+
+    directory the MCP servers resolve against — rather than its own repo
+
+    dir; (2) points every in-process and plugin server at the sandbox for
+
+    the child''s turns via ServerManager::enter_working_dir and points
+
+    them back on the way out (leave_working_dir), restoring the PARENT''S
+
+    active root so a nested delegation does not hand the outer child the
+
+    project tree — holding that server set''s root lock for the child''s
+
+    whole run, so another session dispatching on the same set meanwhile
+
+    waits and then resolves against its own root, never the sandbox
+
+    (gh#158);
+
+    (3) mints a unique sandbox id per delegation so siblings at one depth
+
+    neither share a directory nor overwrite each other''s
+
+    pending/<id>.patch; (4) refuses the delegation when the child can
+
+    reach an external MCP tool that does not declare `readOnlyHint: true`,
+
+    since an external server is a separate process that cannot be moved.
+
+    Under `none` nothing here runs: no snapshot, no swap, no patch, and
+
+    delegation ids keep their pre-2.13.0 spelling.
+
+    WHY (gh#160): DelegationManager::set_dir_swap had NO production
+
+    caller from v2.1.5 to v2.12.2, so every ScopedSandbox took the
+
+    non-sandboxed branch — children wrote into the real repository while
+
+    the engine snapshotted the host process''s cwd and delivered 0-byte
+
+    patches.
+
+    '
+  acceptance_criteria: 'Given delegation.isolation unset, When a delegation runs, Then no
+    sandbox
+
+    manager is created and the child uses the parent''s working directory.
+
+    Given delegation.isolation: sandbox and a session root that differs
+
+    from the engine repo dir, When a delegation runs, Then the sandbox is
+
+    rooted at the session root.
+
+    Given two sibling delegations at the same depth, When both complete,
+
+    Then they produce two distinct ids and two distinct patches.
+
+    Given a delegation nested inside another, When the inner one
+
+    finishes, Then the tools are restored to the OUTER sandbox.
+
+    Given a sandboxed delegation on a server set, When another session
+
+    dispatches a tool on that set meanwhile, Then its call resolves
+
+    against its own root and not the sandbox.
+
+    Given a child-visible external tool without readOnlyHint: true, When
+
+    the delegation is dispatched, Then it is rejected with a typed
+
+    message naming the offending tool and no child loop runs.
+
+    Given an unknown delegation.isolation value, When config is parsed,
+
+    Then the load fails with an error naming the value.
+
+    '
+  verified_by: 'SCENARIO "gh#160: delegation isolation is opt-in and rooted at the
+
+    session''s tool root" —
+
+    /home/tvanfossen/Projects/entropic/tests/unit/core/engine_test.cpp;
+
+    TEST_CASE "gh#160: sibling delegations get distinct sandbox ids";
+
+    "gh#160: a nested delegation restores its parent''s sandbox" —
+
+    /home/tvanfossen/Projects/entropic/tests/unit/core/delegation_manager_test.cpp;
+
+    TEST_CASE "gh#160: next_delegation_id never repeats" —
+
+    /home/tvanfossen/Projects/entropic/tests/unit/core/sandbox_test.cpp;
+
+    SCENARIO "gh#158: a session''s tool call never resolves inside another
+
+    session''s delegation sandbox" —
+
+    /home/tvanfossen/Projects/entropic/tests/unit/api/builtin_server_sharing_test.cpp;
+
+    TEST_CASE "gh#160: set_working_dir_all moves every in-process server";
+
+    "gh#160: only an explicit readOnlyHint counts as read-only" —
+
+    /home/tvanfossen/Projects/entropic/tests/unit/mcp/server_manager_test.cpp;
+
+    SCENARIO "gh#160 delegation.isolation parses, and a bad mode is
+
+    refused" —
+
+    /home/tvanfossen/Projects/entropic/tests/unit/config/loader_test.cpp
+
+    '
+  version: 2.13.0
+- id: REQ-DELEG-006
+  name: Explicit delegation context, required-context tiers, resume by target
+  module: Delegation and Pipelines
+  description: '`delegate` and `pipeline` accept an optional `context` array of
+
+    {path, lines?, note?} entries, distinct from the prose task. Entries
+
+    without a path are dropped at the tool boundary. The surviving
+
+    references are rendered into a `[CONTEXT]` block that PRECEDES the
+
+    task in the child''s opening user message — references only, never
+
+    excerpts: the child opens the files with its own tools, and inlining
+
+    them would copy the parent''s context into the child''s, which is the
+
+    cost delegation exists to avoid. The same block is recorded with the
+
+    delegation''s storage row, so "what did this child know" is
+
+    answerable afterwards. A tier configured `requires_context: true`
+
+    refuses a delegation (or a pipeline naming it as a stage) that
+
+    carries no references, as a TOOL-ERROR result with no directives —
+
+    the lead can fix it in the same turn. `resume_delegation` accepts
+
+    `target` in place of `delegation_id`; the engine resolves the most
+
+    recent COMPLETED delegation to that tier from storage at admission,
+
+    and a tier with no prior delegation is a typed failure, never a
+
+    silent cold start. With no `context` supplied, the child''s opening
+
+    message is byte-identical to pre-2.13.0.
+
+    WHY (gh#162): a lead delegated a follow-up without the path it had
+
+    already cited; the read-only child could not search, guessed, and
+
+    answered from inference about a file that does not exist — 3.8x wall
+
+    time against the no-delegation arm and one question unanswered.
+
+    '
+  acceptance_criteria: 'Given a delegate call carrying context entries, When the child
+    context
+
+    is built, Then its opening user message names each path (with any
+
+    line range and note) ahead of the task text.
+
+    Given a delegate call with no context, When the child context is
+
+    built, Then the opening message is exactly the task.
+
+    Given a tier declaring requires_context and a delegation with no
+
+    context, When the tool executes, Then it returns an error naming the
+
+    tier and emits NO directives.
+
+    Given a resume_delegation naming a target tier, When storage holds a
+
+    completed delegation to it, Then that delegation is resumed; and when
+
+    it holds none, Then a typed [DELEGATION FAILED: resume_delegation]
+
+    message is pushed instead of a cold delegation.
+
+    '
+  verified_by: 'TEST_CASE "gh#162: delegate carries a structured context list";
+
+    "gh#162: resume_delegation accepts a target instead of an id";
+
+    "gh#162: resume_delegation still needs one of id or target";
+
+    "gh#162: a requires_context tier refuses a contextless delegation" —
+
+    /home/tvanfossen/Projects/entropic/tests/unit/mcp/servers/entropic_test.cpp;
+
+    TEST_CASE "gh#162: seeded context reaches the child''s opening
+
+    message"; "gh#162: no context means a byte-identical opening message"
+
+    —
+
+    /home/tvanfossen/Projects/entropic/tests/unit/core/delegation_manager_test.cpp;
+
+    SCENARIO "gh#162: resume by target picks that tier''s latest
+
+    delegation" —
+
+    /home/tvanfossen/Projects/entropic/tests/unit/core/engine_test.cpp
+
+    '
+  version: 2.13.0
 - id: REQ-HOOK-001
   name: Thread-safe hook dispatch with priority, chaining and isolation
   module: Hook Points
@@ -2050,7 +2347,27 @@
 
     are applied into the LoopContext at loop entry and take precedence
 
-    over LoopConfig; absent a resolver, tier_requires_explicit_completion
+    over LoopConfig. "Loop entry" means BOTH entry points (gh#183):
+
+    AgentEngine::run — a top-level turn locked to a tier — and
+
+    AgentEngine::run_loop — a delegated child — share one preamble,
+
+    AgentEngine::begin_loop_preamble, so a tier carries the same caps
+
+    whether it runs as the lead or as somebody''s delegate. The interrupt
+
+    reset and pause clear are NOT part of that preamble, because a fresh
+
+    top-level turn resets unconditionally while a child inherits
+
+    (REQ-LOOP-006). A lead whose tier is chosen by ROUTING rather than
+
+    named by the caller is locked after the preamble has run, so its
+
+    overrides do not apply — a known boundary, recorded in decision #80.
+
+    Absent a resolver, tier_requires_explicit_completion
 
     returns false so legacy tests without tier metadata behave as before.
 
@@ -2069,7 +2386,9 @@
 
     Given a per-identity max_iterations lower than LoopConfig, When the
 
-    loop runs, Then the identity value caps it.
+    loop runs, Then the identity value caps it — through run_loop as a
+
+    delegated child AND through run as a tier-locked top-level turn.
 
     Given set_tier_info for a name, Then has_tier reflects it and
 
@@ -2079,6 +2398,8 @@
   verified_by: 'SCENARIO "tier_requires_explicit_completion honours tier resolver";
 
     "max_iterations override caps loop before global limit";
+
+    "gh#183: a tier''s identity overrides reach a top-level run";
 
     "set_handoff_rules wires internal tier resolver trampolines";
 
@@ -2099,7 +2420,7 @@
     /home/tvanfossen/Projects/entropic/tests/unit/core/response_generator_test.cpp
 
     '
-  version: 2.10.4
+  version: 2.13.0
 - id: REQ-IDEN-002
   name: Identity lifecycle separates immutable static from dynamic identities
   module: Identity and Tiers
@@ -2341,6 +2662,21 @@
 
     v2.3.0 AdapterManager leak).
 
+
+    Acquisition is counted as carefully as release. A COLD tier reaches
+
+    ACTIVE in ONE whole-file read, straight into the residency its config
+
+    asks for; before v2.13.0 it read the whole GGUF once to place every
+
+    layer on the CPU and then immediately discarded that model and read the
+
+    whole file again with the configured split. A WARM tier still reloads on
+
+    promotion — llama.cpp binds offloading to the model load — and that
+
+    reload is what keep_warm pays for.
+
     '
   acceptance_criteria: 'Given two orchestrators constructed and destroyed side by side in
     one
@@ -2353,7 +2689,13 @@
 
     destroyed, Then unload_all frees every adapter handle and is safe to call
 
-    repeatedly.
+    repeatedly. Given a COLD backend, When load_and_activate runs, Then the
+
+    model file is read exactly ONCE and the backend is usable; Given a WARM
+
+    backend, When it is activated, Then the file is read again (two reads in
+
+    total), which is the documented cost of the WARM state.
 
     '
   verified_by: 'SCENARIO "Orchestrator multi-instance side-by-side construction" /
@@ -2370,12 +2712,18 @@
 
     SCENARIO "LlamaCppBackend unload after failed load is a safe no-op" —
 
-    tests/unit/inference/vocab_only_smoke_test.cpp
+    tests/unit/inference/vocab_only_smoke_test.cpp;
+
+    SCENARIO "gh#148: one cold activation reads the model file once",
+
+    "gh#148: the WARM path deliberately keeps its reload" —
+
+    tests/unit/inference/load_count_test.cpp
 
     (GPU-side VRAM reclamation across two real handles: none)
 
     '
-  version: 2.10.4
+  version: 2.13.0
 - id: REQ-INFER-004
   name: All generation shapes share one render, sample and parse path
   module: Inference Backends
@@ -2577,9 +2925,44 @@
 
     is looked up; otherwise the tier''s identity frontmatter `grammar:` field
 
-    (with .gbnf extension normalised away). An unresolvable key logs a
+    (with .gbnf extension normalised away).
 
-    warning and leaves the decode unconstrained rather than failing the turn.
+
+    A TIER stem that does not resolve fails LOUD at FIRST USE, never
+
+    silently (gh#154). Configure WARNS, naming every unresolved tier, its
+
+    stem, every directory searched and how to register it; a run that then
+
+    SELECTS such a tier returns ENTROPIC_ERROR_GRAMMAR_NOT_FOUND
+
+    (ModelOrchestrator::refuse_unresolved_tier_grammar) with nothing
+
+    decoded — the check runs before get_model, so no model swap and no
+
+    prefill happen either. Configure does not refuse, because
+
+    entropic_grammar_register / entropic_grammar_register_file both require
+
+    an orchestrator and therefore cannot be called until configure has
+
+    returned: refusing there would make the documented
+
+    configure-then-register sequence impossible to perform.
+
+    The fail-open it replaces was undetectable from outside, because
+
+    constrained and unconstrained output have the same shape whenever the
+
+    prompt also describes the shape. An unresolvable RUNTIME key
+
+    (params.grammar_key) is per-call and still logs a warning and leaves the
+
+    decode unconstrained — it may name a grammar registered later — and the
+
+    miss is reported on the result as grammar.resolved == false with the
+
+    named key carried.
 
     '
   acceptance_criteria: 'Given a registry, When grammars are registered from string/file/directory
@@ -2592,7 +2975,19 @@
 
     grammar, a grammar_key, and a tier frontmatter grammar, Then resolution
 
-    picks them in that order; an unknown key leaves the params unconstrained.
+    picks them in that order; an unknown runtime key leaves the params
+
+    unconstrained and is recorded with resolved == false. Given a tier naming
+
+    a grammar stem with no matching .gbnf in any search path, Then configure
+
+    SUCCEEDS with a warning naming the tier, the stem and every directory
+
+    searched, And a run selecting that tier returns
+
+    ENTROPIC_ERROR_GRAMMAR_NOT_FOUND with no content and no tokens, And
+
+    registering that key afterwards lets the same tier run normally.
 
     '
   verified_by: 'SCENARIO "Register grammar from in-memory string", "Duplicate key
@@ -2619,10 +3014,32 @@
 
     SCENARIO "gh#95: identity grammar: field constrains that tier''s output" —
 
-    tests/model/test_gh95_identity_grammar.cpp
+    tests/model/test_gh95_identity_grammar.cpp;
+
+    SCENARIO "gh#154 an unresolved tier grammar stem is warned about, not
+
+    refused" / "gh#154 grammar search paths mirror the runtime lookup" /
+
+    "gh#154 every bundled identity grammar stem resolves" —
+
+    tests/unit/config/validate_test.cpp;
+
+    SCENARIO "gh#154 a tier grammar that is not registered refuses the run" /
+
+    "gh#154 registering the tier''s grammar after configure opens the gate" /
+
+    "gh#154 a REQUEST-level grammar_key miss still fails open" —
+
+    tests/unit/inference/tier_grammar_gate_test.cpp;
+
+    TEST_CASE "gh#154 a tier grammar stem that cannot resolve YET still
+
+    configures" / "gh#154 a tier grammar stem that resolves still configures"
+
+    — tests/unit/api/entropic_capi_test.cpp
 
     '
-  version: 2.10.4
+  version: 2.13.0
 - id: REQ-INFER-008
   name: Every declared grammar source reaches the sampler and exactly one wins
   module: Inference Backends
@@ -2664,6 +3081,23 @@
 
     reached the sampler, and each got only a bespoke regression test.
 
+
+    gh#154 names a fourth source, `tier`: the identity frontmatter `grammar:`
+
+    stem reaches the sampler through GenerationParams::grammar exactly as a
+
+    caller-supplied grammar does, so it is APPLIED identically (application
+
+    sites ask is_request_grammar, never `== request`) and differs only in
+
+    reporting. GenerationResult::grammar carries {source, key, resolved,
+
+    conflict_winner} so a consumer can read which source won, which key was
+
+    named, and whether anything constrained the decode at all — previously
+
+    observable only as the ABSENCE of a log line.
+
     '
   acceptance_criteria: 'Given the declared source set, Then grammar_source_count() equals
     the
@@ -2674,9 +3108,17 @@
 
     Then request wins; given only a tool grammar, Then tool_call wins; given
 
-    neither, Then none. Given both, Then request wins and
+    neither, Then none; given a request-side grammar that came from the tier,
 
-    grammar_sources_collide reports true so the collision is loggable.
+    Then tier. Given both, Then request wins and grammar_sources_collide
+
+    reports true so the collision is loggable and lands in
+
+    GenerationResult::grammar.conflict_winner. Given a named key that
+
+    resolved to nothing, Then the naming source is reported with
+
+    resolved == false.
 
     '
   verified_by: 'SCENARIO "gh#134 every declared grammar source is wired to the sampler"
@@ -2689,10 +3131,18 @@
 
     MTP" / "A/B: the knob, not the model, produces the call" —
 
-    tests/model/test_gh108_mtp_stream_grammar.cpp
+    tests/model/test_gh108_mtp_stream_grammar.cpp;
+
+    SCENARIO "gh#154 the result says what constrained the decode" —
+
+    tests/unit/inference/grammar_source_invariant_test.cpp;
+
+    TEST_CASE "ModelOrchestrator real-model generate (one load, CPU)" —
+
+    tests/unit/inference/orchestrator_real_model_smoke_test.cpp
 
     '
-  version: 2.10.4
+  version: 2.13.0
 - id: REQ-INFER-009
   name: Tool staging drives a native render whose parse context is captured
   module: Inference Backends
@@ -2796,6 +3246,27 @@
 
     adapter''s hand-rolled parser. A call naming an unknown tool is left alone.
 
+
+    Because that parse MOVES tool calls out of `content`, the post-parse
+
+    empty-content diagnosis must be told whether any were found
+
+    (diagnose_empty_content, gh#159): a turn whose whole output was a tool
+
+    call — the normal shape under `tool_call_mode: sequential` — is content
+
+    empty / raw non-empty / finish "stop", which is byte-for-byte gh#137''s
+
+    failure shape. Without that input the engine reported a well-behaved turn
+
+    as an unterminated reasoning block that was "not converging", on tiers
+
+    with `enable_thinking: false`. The parameter has no default so no caller
+
+    can omit what it knows, and a parsed call is reported at INFO, never as a
+
+    fault.
+
     '
   acceptance_criteria: 'Given a reliable (dedicated-grammar) format and a complete parse,
     Then the
@@ -2808,7 +3279,13 @@
 
     parses. Given any branch, Then the adapter''s reasoning strip runs over the
 
-    resulting content.
+    resulting content. Given empty content with at least one parsed tool call,
+
+    Then the diagnosis is tool_call_only and its message names neither a
+
+    reasoning block nor max_tokens; given the same shape with zero tool calls,
+
+    Then the gh#137 reasoning-block diagnosis is unchanged.
 
     '
   verified_by: 'TEST_CASE "gh#87 diag: multi-parameter tool call — gemma4 (dedicated
@@ -2825,10 +3302,16 @@
 
     (calls_satisfy_schema / parse_model_response have no direct CPU unit
 
-    test — see GAPS)
+    test — see GAPS);
+
+    SCENARIO "gh#159 a turn whose whole output was a tool call is not a
+
+    fault" / "gh#137 an empty turn is attributed to its real cause" —
+
+    tests/unit/inference/empty_content_diagnosis_test.cpp
 
     '
-  version: 2.10.4
+  version: 2.13.0
 - id: REQ-INFER-011
   name: Reasoning-block markers are declared once per model family
   module: Inference Backends
@@ -3456,6 +3939,88 @@
     when nothing fits at any size.
 
 
+    Two explicit configurations are refused with a typed code BEFORE the
+
+    footprint is priced, rather than being discovered as an OOM kill or a
+
+    buffer-allocation abort: use_mlock on a model larger than RLIMIT_MEMLOCK
+
+    allows (MLOCK_LIMIT_EXCEEDED — pinned pages cannot be reclaimed, which is
+
+    what turns partial offload from slow into fatal), and a GPU offload
+
+    requested on a card whose free VRAM cannot hold the compute buffers alone
+
+    (TIER_MODEL_TOO_LARGE). Both are floor-gated to models above the
+
+    large-model threshold, because refusing a configuration that works is a
+
+    worse failure than missing one that does not, and neither rule can fire
+
+    on an ordinary model. Judging a SPECIFIC partial split is deliberately
+
+    not attempted: it needs a layer count the gate does not read. The engine
+
+    never silently corrects either setting; each refusal names the one to
+
+    change.
+
+
+    gpu_layers: auto is the opt-in that asks the engine to derive the split
+
+    from the model size and the free VRAM it measured, logging the number it
+
+    chose. It derives the layer split and nothing else — the model-test
+
+    harness, which used to compute the split AND flip use_mlock off behind
+
+    the operator, now goes through this same engine path.
+
+
+    A resident model can also be released ON DEMAND, without destroying the
+
+    handle: entropic_release_model unloads one named tier or every resident
+
+    model (tiers plus the router/draft roles, and any MTP head its target
+
+    owns), fires EVICTED for each affected tier, and clears the active-tier
+
+    record so the next use reloads through the gate. The handle, its config,
+
+    its MCP registrations, every session conversation AND the tier''s LoRA
+
+    adapter REGISTRATIONS survive — only the adapters'' llama handles are
+
+    freed, to be re-bound at the next activation. The call claims the handle''s
+
+    turn and refuses with ALREADY_RUNNING while one is in flight, because the
+
+    swap mutex does not serialise generation and unloading frees the context a
+
+    decode is running on. An unknown tier name is MODEL_NOT_FOUND; releasing
+
+    an already-unloaded tier is a no-op.
+
+
+    WHEN the default tier is loaded is a config choice, not a fixed
+
+    lifecycle. models.defer_load == false (the default) loads and activates it
+
+    during configure; true leaves it COLD until the first caller needs it.
+
+    BOTH paths run through the same residency-gated activation, so the budget
+
+    gate, the Loaded event and the footprint record apply to the startup load
+
+    exactly as they do to a mid-session swap — before v2.13.0 the eager path
+
+    bypassed all three. A tier''s LoRA adapters are preloaded at the
+
+    ACTIVATION of their base model rather than at engine init, which is the
+
+    only moment at which a non-default tier''s model exists.
+
+
     Every VRAM state change (Loaded, Evicted, ActivationSwap) fires a
 
     registered residency observer synchronously under the swap mutex, and the
@@ -3488,7 +4053,21 @@
 
     flat rate. Given a tier declaring an mmproj, Then the projector''s bytes are
 
-    included when the weights are offloaded and excluded when they are not. Given a residency
+    included when the weights are offloaded and excluded when they are not.
+
+    Given use_mlock true on a model larger than RLIMIT_MEMLOCK and not fully
+
+    offloaded, Then the tier is refused with MLOCK_LIMIT_EXCEEDED; given the
+
+    same on an ordinary-sized model, Then it is admitted. Given a positive
+
+    gpu_layers and free VRAM at or below the compute reserve on a large
+
+    model, Then the tier is refused; given free VRAM above it, Then the split
+
+    is admitted. Given gpu_layers: auto in YAML, Then the tier records the
+
+    opt-in and no layer count is invented at parse time. Given a residency
 
     observer, Then it can be registered and cleared and the event enum matches
 
@@ -3497,6 +4076,32 @@
     residency_snapshot_json is well-formed and reports the configured budget.
 
     Given an unknown profile name, Then "balanced" is returned with a warning.
+
+    Given models.defer_load true, When the orchestrator initializes, Then no
+
+    model is loaded and no residency event fires; When the first caller asks
+
+    for the tier, Then it loads and fires exactly one Loaded event, and a
+
+    second ask reuses the resident model without a second event. Given
+
+    defer_load false, When the orchestrator initializes, Then the default tier
+
+    is loaded at init.
+
+    Given a resident tier, When it is released, Then EVICTED fires for it, it
+
+    is no longer in the residency set, the active-tier record is cleared, and
+
+    the next use reloads it; When it is released twice, Then the second is a
+
+    no-op. Given an unknown tier name, Then release returns MODEL_NOT_FOUND.
+
+    Given a turn in flight, Then release returns ALREADY_RUNNING. Given a
+
+    released model whose adapters were registered, Then the registrations
+
+    survive the release and are re-bound at the next activation.
 
     '
   verified_by: 'TEST_CASE "Residency snapshot on a default-constructed orchestrator",
@@ -3531,10 +4136,52 @@
 
     balanced", "load_bundled is idempotent", "Concurrent register and get are
 
-    thread-safe" — tests/unit/inference/profile_registry_test.cpp
+    thread-safe" — tests/unit/inference/profile_registry_test.cpp;
+
+    SCENARIO "gh#157: defer_load decides whether init touches the model at
+
+    all", "gh#157: a deferred tier answers vision from config while unloaded",
+
+    "gh#157: the first use loads exactly once, through the gate" —
+
+    tests/unit/inference/deferred_load_test.cpp;
+
+    SCENARIO "gh#164: releasing an unknown tier is refused, not silently
+
+    ignored", "gh#164: release evicts the model and the next use brings it
+
+    back" — tests/unit/inference/release_model_test.cpp;
+
+    SCENARIO "gh#148: use_mlock on an oversized model is refused, not
+
+    flipped", "gh#148: an offload with no room for compute buffers is
+
+    refused" — tests/unit/inference/partial_offload_test.cpp;
+
+    SCENARIO "gh#148: gpu_layers accepts a count or the word auto" —
+
+    tests/unit/config/loader_test.cpp;
+
+    TEST_CASE "gh#164 entropic_release_model rejects a NULL handle", "gh#164
+
+    entropic_release_model needs a configured engine", "gh#164
+
+    entropic_release_model names an unknown tier", "gh#164
+
+    entropic_release_model refuses to unload mid-turn" —
+
+    tests/unit/api/entropic_capi_test.cpp;
+
+    TEST_CASE "gh#164: release then reload decodes correctly on gemma4 (plain
+
+    KV)", "gh#164: release then reload decodes correctly on a hybrid arch",
+
+    "gh#164: entropic_release_model frees VRAM through the C ABI" —
+
+    tests/model/test_gh164_release_reload.cpp
 
     '
-  version: 2.11.0
+  version: 2.13.0
 - id: REQ-INFER-020
   name: Tier routing, handoff rules and secondary model roles
   module: Inference Backends
@@ -3711,6 +4358,27 @@
 
     safe under concurrent access.
 
+
+    Adapters are preloaded at the ACTIVATION of their base model, not at
+
+    engine init — the init-time preload required a loaded model, which is true
+
+    of one tier only, so every other tier''s adapter silently never loaded.
+
+    Two ways of losing a model are therefore distinguished: a tier being
+
+    REPLACED erases its adapter entries (unload_all_for_model), while a tier
+
+    being RELEASED for later reuse (gh#164) frees only the llama handles and
+
+    keeps the name → path/scale registration, COLD, to be re-bound at the next
+
+    activation. Loading a name whose registration was released re-initialises
+
+    it in place; loading a name that still holds a handle is still a duplicate
+
+    and still fails.
+
     '
   acceptance_criteria: 'Given the documented transitions, Then load/activate/deactivate/unload
     and
@@ -3748,10 +4416,16 @@
 
     SCENARIO "LoRA adapter load failure is handled gracefully" —
 
-    tests/model/test_adapter_lifecycle.cpp
+    tests/model/test_adapter_lifecycle.cpp;
+
+    SCENARIO "gh#164: releasing a model''s handles keeps its registrations",
+
+    "gh#164: a WARM duplicate is still refused" —
+
+    tests/unit/inference/adapter_manager_test.cpp
 
     '
-  version: 2.10.4
+  version: 2.13.0
 - id: REQ-INFER-024
   name: Backends declare capabilities and expose state and log-probability introspection
   module: Inference Backends
@@ -3853,6 +4527,19 @@
     gracefully rather than fault.
 
 
+    Whether a NAMED tier is vision-capable is answered from CONFIG — the
+
+    declared capability or a configured mmproj path — not from the backend.
+
+    The backend only knows once its mmproj context has been built during
+
+    activation, so asking it returned a confident 0 for a tier that simply was
+
+    not loaded yet, and models.defer_load (REQ-INFER-019) makes not-loaded the
+
+    normal state.
+
+
     Images are preprocessed before reaching the vision encoder: format
 
     validated, file size bounded (20 MB default), dimensions bounded (1280x1280
@@ -3876,7 +4563,11 @@
     '
   acceptance_criteria: 'Given a config with no vision-capable tier, Then has_vision_capable_tier
 
-    is false and select_vision_tier is empty. Given a text-only model and
+    is false and select_vision_tier is empty. Given a tier that declares
+
+    "vision" and has never been loaded, Then entropic_model_has_vision reports
+
+    it as vision-capable. Given a text-only model and
 
     multimodal input, Then the turn completes gracefully. Given a non-existent
 
@@ -3911,10 +4602,103 @@
 
     SCENARIO "Text-only model handles multimodal input gracefully" —
 
-    tests/model/test_multimodal_fallback.cpp
+    tests/model/test_multimodal_fallback.cpp;
+
+    SCENARIO "gh#157: a deferred tier answers vision from config while
+
+    unloaded" — tests/unit/inference/deferred_load_test.cpp
 
     '
-  version: 2.10.4
+  version: 2.13.0
+- id: REQ-INFER-026
+  name: A prompt that cannot fit the tier context is refused, never decoded
+  module: Inference Backends
+  description: 'Before any decode, the backend compares the rendered, tokenized prompt
+
+    for the turn against the tier''s context_length. A prompt at or beyond
+
+    that window leaves the model zero positions to emit into, so the turn is
+
+    refused with ENTROPIC_ERROR_EVAL_CONTEXT_FULL and llama_decode is never
+
+    called. The check lives in run_prefill_cached — the single point every
+
+    text decode path reaches immediately after tokenizing its render, and the
+
+    last point before a token is decoded.
+
+
+    The prompt measured here is IRREDUCIBLE: the engine''s compaction and
+
+    tool-result pruning have already run, and the staged tool block is rebuilt
+
+    from tier config on every render, so compaction provably cannot shrink it.
+
+
+    The error message names the token count, the tier''s context_length, the
+
+    overshoot, the largest contributor (staged tool block vs system prompt vs
+
+    message history) and the per-part breakdown, because those three have
+
+    different fixes and an operator told only the total has to guess. Nothing
+
+    is trimmed, truncated or auto-raised: the two knobs named in the message
+
+    (context_length, allowed_tools) are the caller''s to turn.
+
+
+    The refusal is terminal for the agent loop. It surfaces as finish_reason
+
+    "context_overflow" rather than "error" because "error" falls through to
+
+    the empty-turn ladder, which appends a correction message — making a
+
+    prompt that already did not fit larger — and after three such turns
+
+    reports zero_tool_calls_with_explicit_completion, which is not what
+
+    happened.
+
+
+    Recorded against the v2.13.0 release gate, where a handle staged 27 tools
+
+    (18,594 bytes) into a tier configured context_length 2048, rendered 5,026
+
+    tokens, and failed the chunked decode on every turn while forty test
+
+    assertions passed. Same fail-open class as gh#95 and gh#154.
+
+    '
+  acceptance_criteria: 'Given a prompt at or beyond context_length, When a turn is generated,
+
+    Then the result carries ENTROPIC_ERROR_EVAL_CONTEXT_FULL, zero prefill
+
+    tokens are decoded and no KV cache is cleared. Given a prompt one token
+
+    short of the window, Then it is admitted. Given context_length unset (0),
+
+    Then nothing is refused. Given the refusal reaches the agent loop, Then
+
+    the run ends in AgentState::ERROR after exactly one generate call.
+
+    '
+  verified_by: 'SCENARIO "context_fit_overflows refuses only what genuinely cannot fit",
+
+    "the refusal names every number an operator needs", "the largest
+
+    contributor is attributed to the right part", "a tier whose staged tools
+
+    overflow its context refuses the turn before any decode", "a prompt that
+
+    fits is not refused" — tests/unit/inference/context_fit_test.cpp;
+
+    SCENARIO "a context-overflow refusal fails the turn instead of retrying
+
+    it" — tests/unit/core/engine_test.cpp
+
+    '
+  version: 2.13.0
 - id: REQ-LOOP-001
   name: Agent state machine with observable, dual-channel transitions
   module: Agent Loop
@@ -3981,31 +4765,64 @@
     '
   version: 2.10.4
 - id: REQ-LOOP-002
-  name: Bounded loop termination with synthetic completion on cap
+  name: Bounded loop termination with synthetic completion that carries the run's
+    last real output
   module: Agent Loop
   description: 'The agentic loop must always terminate. It stops when the context
 
     reaches a terminal state, when iterations reach the effective
 
-    max_iterations (per-identity override, else LoopConfig), or when
+    max_iterations (per-identity override, else LoopConfig; tightened
+
+    further for a delegated child by the max_turns the model supplied on
+
+    entropic.delegate, gh#182 — the stricter of the two always wins and
+
+    the model can only lower the operator''s limit), or when
 
     consecutive duplicate tool-call attempts reach 3. If the loop exits
 
     on the iteration cap without a terminal state, the engine appends a
 
-    synthetic assistant message ("[iteration cap reached after N
-
-    iterations ...]"), records metadata["terminal_reason"] =
+    synthetic assistant message, records metadata["terminal_reason"] =
 
     "budget_exhausted", and forces COMPLETE.
 
-    WHY the synthetic completion: consumers and parent delegation
+    The synthetic message CARRIES the run''s last substantive assistant
 
-    frames read the last assistant message and the terminal_reason;
+    content and ANNOTATES it with "[iteration cap reached after N
 
-    without it a capped child returns no result and the lead cannot
+    iterations — the text above is the agent''s last substantive output;
 
-    distinguish "did not finish" from "answered nothing".
+    it did not signal completion]". A run that produced no substantive
+
+    output instead yields "[iteration cap reached after N iterations — no
+
+    substantive output was produced before the cap]", and
+
+    metadata["cap_carried_content"] carries the same distinction as a
+
+    typed "true"/"false" so a consumer need not match prose.
+
+    WHY the carry: consumers and parent delegation frames read the LAST
+
+    assistant message — DelegationManager::extract_summary takes it as
+
+    DelegationResult::summary — so before v2.13.0 the placeholder
+
+    REPLACED the child''s work on every capped delegation, and a lead
+
+    relayed "returning current state" where the finished answer belonged
+
+    (gh#169). terminal_reason is unchanged and still the sole signal that
+
+    the child did not complete naturally: DelegationResult::success stays
+
+    false, the parent-tier relay still tags "[partial — budget_exhausted]"
+
+    and ON_DELEGATE_COMPLETE still reports success=false with
+
+    result_kind="delegation_failed".
 
     '
   acceptance_criteria: 'Given max_iterations = N and a model that never completes, When
@@ -4015,6 +4832,28 @@
     metadata["terminal_reason"] == "budget_exhausted", and a synthetic
 
     assistant message is the last message.
+
+    Given a run whose turns produced real content, When the cap is hit,
+
+    Then the last assistant message contains that content AND the cap
+
+    annotation, and metadata["cap_carried_content"] == "true".
+
+    Given a run whose every turn was empty, When the cap is hit, Then the
+
+    last assistant message says no substantive output was produced and
+
+    metadata["cap_carried_content"] == "false".
+
+    Given a relay-tier lead whose single delegate is capped, When the
+
+    child loop ends, Then the relayed summary is tagged "[partial" AND
+
+    contains the child''s own output, and the ON_DELEGATE_COMPLETE
+
+    payload still reports success=false, the target tier, and
+
+    result_kind="delegation_failed".
 
     Given a per-identity max_iterations override lower than the global
 
@@ -4031,12 +4870,20 @@
 
     forced complete sets terminal_reason metadata"; SCENARIO "gh#84
 
-    combined: should_stop halts the loop when the duplicate ..." —
+    combined: should_stop halts the loop when the duplicate ..."; SCENARIO
+
+    "gh#169: a capped loop carries its last real content, annotated";
+
+    SCENARIO "gh#169: a capped loop that produced nothing stays
+
+    distinguishable"; SCENARIO "gh#169: the parent relay receives the
+
+    capped child''s real work" —
 
     /home/tvanfossen/Projects/entropic/tests/unit/core/engine_test.cpp
 
     '
-  version: 2.10.4
+  version: 2.13.0
 - id: REQ-LOOP-003
   name: Fixed per-iteration pipeline with pre-generate cancellation
   module: Agent Loop
@@ -4172,7 +5019,8 @@
     '
   version: 2.10.4
 - id: REQ-LOOP-005
-  name: Opt-in thinking-budget gating with nudge then hard cut
+  name: Opt-in thinking-budget gating with nudge then a hard cut that carries the
+    run's real output
   module: Agent Loop
   description: 'When budget_mode is tokens or wall_clock and budget_limit > 0, the
 
@@ -4194,6 +5042,44 @@
 
     defaults to off, preserving pre-v2.5.0 behavior exactly.
 
+    The hard-cut message CARRIES the run''s last substantive assistant
+
+    content and ANNOTATES it — "<the agent''s own output>\n\n[thinking
+
+    budget exhausted after the completion nudge went unheeded; no tool
+
+    call was emitted — the text above is the agent''s last substantive
+
+    output; it did not signal completion]" — instead of replacing it. A
+
+    run that produced nothing substantive instead yields "[thinking
+
+    budget exhausted ... — no substantive output was produced before the
+
+    cut]", and metadata["cap_carried_content"] carries the same
+
+    distinction as a typed "true"/"false" so a consumer need not match
+
+    prose.
+
+    WHY the carry (gh#181): DelegationManager::extract_summary takes the
+
+    last assistant message as DelegationResult::summary, so before
+
+    v2.13.0 the placeholder REPLACED a hard-cut child''s work in the
+
+    parent-tier relay and in the ON_DELEGATE_COMPLETE payload — the
+
+    sibling of gh#169 on the other budget path. This stop and the
+
+    iteration cap (REQ-LOOP-002) share ONE implementation,
+
+    AgentEngine::finish_with_carried_output, and differ only in reason
+
+    text and in terminal_reason, which keeps its distinct value
+
+    "budget_exhausted_thinking".
+
     The window resets only on genuine progress — a tool result whose
 
     result_kind is ok or ok_empty (gh#84). Rejected duplicates,
@@ -4213,6 +5099,28 @@
 
     hard cut with terminal_reason "budget_exhausted_thinking" follows.
 
+    Given a run whose turns produced real content, When the hard cut
+
+    fires, Then the last assistant message contains that content AND the
+
+    cut annotation, and metadata["cap_carried_content"] == "true".
+
+    Given a run whose every turn was whitespace, When the hard cut fires,
+
+    Then the last assistant message says no substantive output was
+
+    produced and metadata["cap_carried_content"] == "false".
+
+    Given a relay-tier lead whose single delegate is hard-cut by the
+
+    thinking budget, When the child loop ends, Then the relayed summary
+
+    is tagged "[partial" AND contains the child''s own output, and the
+
+    ON_DELEGATE_COMPLETE payload still reports success=false, the target
+
+    tier, and result_kind="delegation_failed".
+
     Given a successful tool call, When the budget is charged, Then the
 
     counters and the nudge latch reset.
@@ -4230,7 +5138,13 @@
 
     rejected-duplicate tool calls do NOT reset the budget"; "gh#84: a
 
-    successful tool call DOES reset the budget" —
+    successful tool call DOES reset the budget"; "gh#181: a
+
+    thinking-budget hard cut carries the run''s real content"; "gh#181: a
+
+    hard cut with nothing substantive stays distinguishable"; "gh#181:
+
+    the parent relay receives the hard-cut child''s real work" —
 
     /home/tvanfossen/Projects/entropic/tests/unit/core/engine_test.cpp
 
@@ -4449,6 +5363,339 @@
 
     '
   version: 2.10.4
+- id: REQ-LOOP-009
+  name: Per-session-key run concurrency, on by default, with one lock on the generation path
+  module: Agent Loop
+  description: 'The run guard is scoped to a SESSION KEY, not to the handle. A second
+
+    run on the SAME key is always ENTROPIC_ERROR_ALREADY_RUNNING — the two
+
+    would share one conversation. A run on a DIFFERENT key proceeds
+
+    concurrently by default; `concurrent_sessions: false` is a KILL SWITCH
+
+    that refuses any second run and reproduces v2.12.0 semantics exactly.
+
+
+    The default is on because the audit it waited for is complete: every
+
+    piece of per-handle mutable state a turn touches is per-run or locked.
+
+    Per-run: the interrupt token, the session binding, the loop context, the
+
+    cancel token published to the run''s own thread, and the validator''s
+
+    per-turn context (tier, tool manifest, tool evidence, identity system
+
+    prompt — thread-local, because a mutex would have left session A''s
+
+    critique prompt built from session B''s evidence). Locked:
+
+    `conversations_` (its own mutex), the run registry (`runs_mutex_`, held
+
+    for O(1) map operations and NEVER across a decode, which is what keeps
+
+    gh#109''s property true), `per_tier_metrics_` + `last_metrics_`
+
+    (`metrics_mutex_`), `context_anchors_` (`anchors_mutex_`),
+
+    `system_prompt_` (`prompt_mutex_`), the lazily-built sandbox manager and
+
+    repo-dir cache as one unit (`sandbox_mutex_`), the base project snapshot
+
+    the sandbox manager materializes (`base_mutex_`), the external MCP
+
+    client''s JSON-RPC id counter (atomic, REQ-MCP-026), the filesystem
+
+    server''s read-before-write tracker and the entropic server''s todo list
+
+    (one FilesystemServer / EntropicServer serves every unbound session, so
+
+    both were first locked and are now PER SESSION: keyed by the session the
+
+    ToolExecutor routed the call on — published to its thread for the
+
+    dispatch — and released through `ServerManager::release_session` when
+
+    the session is dropped, cleared or restored, so neither grows by one
+
+    entry per session a host ever served), the working directory every
+
+    in-process and plugin server resolves against (the ServerManager''s
+
+    ToolRootLock: SHARED around each dispatch, EXCLUSIVE while a sandboxed
+
+    delegation has the set re-rooted, so another session''s call waits and
+
+    then resolves against its own root — never the sandbox), and the whole
+
+    generation path.
+
+    Deleted rather than locked: the TokenCounter memo, an
+
+    address-keyed map written from a const method, which was both a data
+
+    race and a correctness bug (a Message address is not an identity).
+
+
+    A per-session interrupt must stop the DECODE, not only the loop and the
+
+    tool call: the per-token poll and the batch cancel poller consult this
+
+    run''s token as well as the handle-wide flag, and the batch poller —
+
+    which runs on its own thread, where the thread-local is not installed —
+
+    captures the token pointer on the run thread before spawning. The pause
+
+    prompt''s "no injection" path cancels THIS run rather than the handle.
+
+
+    `pause_flag_` stays handle-wide by design: `pause()` is raised from a
+
+    thread that owns no run and names no key, so there is nothing to route
+
+    it by. What is scoped is the CLEAR — a fresh turn no longer un-pauses a
+
+    run already in flight.
+
+
+    ONE lock serializes generation: `ModelOrchestrator::generation_mutex_`,
+
+    recursive, taken at the five generate entry points and nowhere else.
+
+    Order: ToolRootLock (exclusive across a sandboxed child''s run) ->
+
+    generation_mutex_ -> swap_mutex_ / records_mutex_ -> the backend''s
+
+    transition_mutex_ / mtp_mutex_. It cannot be inverted because no holder of
+
+    an inner lock calls a generate entry point; `get_model` releases
+
+    `swap_mutex_` before returning; and ToolRootLock''s shared side is taken
+
+    only at tool dispatch, where a run thread holds none of the others.
+
+
+    `entropic_interrupt` means every run; `entropic_interrupt_session` means
+
+    one, and deliberately does not trip the handle-wide external-transport
+
+    latch — that would abort another session''s in-flight MCP call (gh#150''s
+
+    failure mode). The interrupted run''s own tool call still aborts, because
+
+    the run publishes its cancel token to its own thread (`RunCancelScope`)
+
+    and the transport polls it per request.
+
+
+    A same-prefix batch owns only its own temporary sequences and clears only
+
+    those: it may not clear the whole KV cache, and no arm may land on a
+
+    sequence a session holds. Delegated children inherit the parent''s session
+
+    key.'
+  acceptance_criteria: 'Given the shipped default and a run in flight on key A,
+
+    When a second run claims A, Then it is refused; When a run claims B,
+
+    Then it proceeds and both are counted active.
+
+    Given `concurrent_sessions: false`, When a run is in flight on any key,
+
+    Then a run on any other key is refused.
+
+    Given two concurrent runs, When one counts tokens while the other
+
+    compacts, Then every count agrees and nothing is corrupted; When both
+
+    finish while a third thread reads the metrics, Then the reader sees a
+
+    consistent per-tier map and an untorn last-run snapshot.
+
+    Given two concurrent runs, When one session is interrupted by key, Then
+
+    only that run carries the interrupt; When the handle-wide interrupt
+
+    fires, Then both do.
+
+    Given a session pool, When a same-prefix batch is planned, Then no arm
+
+    uses a sequence below the session range and the plan does not clear the
+
+    whole cache.'
+  verified_by: 'SCENARIO "gh#158: the run guard is scoped to the session key";
+
+    "gh#158: the kill switch restores handle-wide serialization";
+
+    "gh#158: concurrent sessions are ON by default";
+
+    "gh#158: eight threads racing two keys yield exactly two winners";
+
+    "gh#158: interrupt_session stops exactly one run";
+
+    "gh#158: token counting is safe from two concurrent runs";
+
+    "gh#158: two concurrent runs accumulate metrics safely" —
+
+    /home/tvanfossen/Projects/entropic/tests/concurrency/test_thread_safety.cpp;
+
+    SCENARIO "gh#158: a batch never writes a sequence a session owns";
+
+    "gh#158: a batch never clears the whole KV cache";
+
+    "gh#158: the single-session default is unchanged" —
+
+    /home/tvanfossen/Projects/entropic/tests/unit/inference/batch_kv_util_test.cpp;
+
+    TEST_CASE "gh#158 entropic_interrupt_session targets exactly one run" —
+
+    /home/tvanfossen/Projects/entropic/tests/unit/api/entropic_capi_test.cpp;
+
+    SCENARIO "gh#158: two sessions reading and writing through ONE filesystem
+
+    server share its read tracker safely" —
+
+    /home/tvanfossen/Projects/entropic/tests/unit/api/builtin_server_sharing_test.cpp;
+
+    SCENARIO "gh#158: a session''s tool call never resolves inside another
+
+    session''s delegation sandbox"; "gh#158: repeated sandbox swaps race nothing
+
+    a concurrent session reads"; "gh#158: two sessions writing todos through
+
+    ONE entropic server share its list safely"; "gh#158: read-before-write is
+
+    judged per session — another session''s read unlocks nothing"; "gh#158: a
+
+    delegated child''s read satisfies its parent''s write — the child runs under
+
+    the parent''s session"; "gh#158: each session''s todo list is its own";
+
+    "gh#158: ending a session''s conversation releases its read tracker and
+
+    todo list — and only its own" —
+
+    /home/tvanfossen/Projects/entropic/tests/unit/api/builtin_server_sharing_test.cpp;
+
+    TEST_CASE "gh#158: the root lock''s owner re-enters and passes through its
+
+    own shared side"; "gh#158: another thread''s dispatch waits while the root
+
+    lock is held exclusively"; "gh#158: re-rooting waits for an in-flight
+
+    dispatch"; "gh#158: leave_working_dir refuses a thread that never entered" —
+
+    /home/tvanfossen/Projects/entropic/tests/unit/mcp/tool_root_lock_test.cpp;
+
+    SCENARIO "gh#158: two concurrent sessions do not bleed into each other" —
+
+    /home/tvanfossen/Projects/entropic/tests/model/test_gh158_concurrent_sessions.cpp
+
+    '
+  version: 2.13.0
+- id: REQ-LOOP-010
+  name: Session conversations are readable, writable, and losslessly round-trippable
+  module: Agent Loop
+  description: '`entropic_session_context_set(handle, session_key, messages_json)`
+
+    replaces one session''s conversation, runs NO turn and touches no model. It
+
+    accepts exactly what `entropic_session_context_get` emits, so a host can
+
+    snapshot on shutdown and restore on start — which is what gives weights
+
+    and conversations independent lifetimes alongside
+
+    `entropic_release_model` (gh#164). The only prior way to get messages in
+
+    was `entropic_run_session`, which appends and then RUNS, re-executing the
+
+    agentic loop per message including tool calls.
+
+
+    The read must therefore be LOSSLESS. `serialize_messages` emitted only
+
+    role + content, dropping `metadata` (every `tool_name` that
+
+    context_manager, compaction and the engine''s tool-result folding key
+
+    off, and every `is_context_anchor`) and `content_parts` including image
+
+    geometry. The emission is now total and ADDITIVE: the new keys appear
+
+    only when there is something to carry, and `content` stays a STRING on
+
+    every message, so a consumer reading role/content sees byte-identical
+
+    output for every message it has ever seen. Parts ride in their own
+
+    `content_parts` key rather than turning `content` into an array.
+
+
+    Replacement is refused with ENTROPIC_ERROR_ALREADY_RUNNING for the
+
+    session that is CURRENTLY RUNNING, and only that one — what must not move
+
+    under a turn is the conversation it appends to, not the handle. Readers
+
+    copy under `conversations_mutex_`; mutators hold it.
+
+
+    A restore INVALIDATES what was derived from the conversation it replaced:
+
+    the session''s resident KV tokens and its sequence slot are dropped, so
+
+    the restored history cannot decode against a prefix that history never
+
+    produced. Its next turn costs a cold prefill, which is what an
+
+    LRU-evicted session already costs.'
+  acceptance_criteria: 'Given a conversation carrying metadata and content_parts, When it is
+
+    serialized, parsed back and re-serialized, Then the two serializations
+
+    are byte-identical and metadata, image path, url, width and height all
+
+    survived.
+
+    Given a message with no metadata and no content parts, When serialized,
+
+    Then the object is exactly role + content.
+
+    Given a run in flight on session A, When A''s conversation is replaced,
+
+    Then it is refused; When a different session''s is replaced, Then it
+
+    succeeds.
+
+    Given a NULL messages_json or unparseable JSON, When set is called, Then
+
+    ENTROPIC_ERROR_INVALID_ARGUMENT and the conversation is untouched.'
+  verified_by: 'SCENARIO "gh#165: get -> set -> get is byte-identical, metadata included";
+
+    "gh#165: the addition is additive — plain messages are unchanged" —
+
+    /home/tvanfossen/Projects/entropic/tests/unit/api/json_serializers_test.cpp;
+
+    SCENARIO "gh#165: a conversation can be replaced wholesale";
+
+    "gh#165: the RUNNING session refuses replacement, others do not" —
+
+    /home/tvanfossen/Projects/entropic/tests/unit/core/session_conversation_test.cpp;
+
+    TEST_CASE "gh#165 entropic_session_context_set round-trips through the C ABI";
+
+    "gh#165 entropic_session_context_set guards its preconditions";
+
+    "gh#165 entropic_session_context_set refuses the running session" —
+
+    /home/tvanfossen/Projects/entropic/tests/unit/api/entropic_capi_test.cpp
+
+    '
+  version: 2.13.0
 - id: REQ-MCP-001
   name: MCPServerBase holds the shared logic; concrete servers override only deltas
   module: MCP Servers and Tool Dispatch
@@ -5339,11 +6586,44 @@
     '
   version: 2.10.4
 - id: REQ-MCP-017
-  name: PRE/POST_TOOL_CALL hooks fire on every exit path and POST may rewrite the result
+  name: PRE/POST_TOOL_CALL hooks fire on every exit path, PRE may rewrite the args
+    and POST the result
   module: MCP Servers and Tool Dispatch
   description: 'PRE_TOOL_CALL fires with tool name, args, tier, and iteration before
 
-    dispatch; a non-zero return cancels the call. POST_TOOL_CALL fires for
+    dispatch; a non-zero return cancels the call. A PRE hook that proceeds
+
+    (returns 0) and writes `*modified_json` REWRITES THE ARGUMENTS of the call
+
+    before dispatch: the payload is an object of the same shape the hook
+
+    received and only its `args` object is read, replacing both
+
+    ToolCall::arguments_json and ToolCall::arguments so schema validation, the
+
+    duplicate key, permission patterns and the POST context all observe one
+
+    consistent call. Only the arguments may change — a payload that is not
+
+    valid JSON, is not an object, carries no `args` object, or names a
+
+    different `tool_name` is REFUSED IN FULL: the engine logs at ERROR with the
+
+    reason and the verbatim payload and dispatches the model''s original
+
+    arguments, never half-applying and never converting the refusal into a
+
+    cancellation (cancellation keeps exactly one channel, a non-zero return),
+
+    because a hook may enrich a call but must not re-route it past per-tier
+
+    allowed_tools. The payload crosses a plugin .so, so it is sanitized to
+
+    valid UTF-8 BEFORE parsing. Before v2.13.0 the engine freed
+
+    `*modified_json` on this path without applying it, so no PRE_TOOL_CALL hook
+
+    could change any call on any tool (gh#168). POST_TOOL_CALL fires for
 
     EVERY outcome — executed, pre-hook cancel, and each precondition rejection —
 
@@ -5375,7 +6655,19 @@
 
     the modified string on the success, duplicate-rejection, and
 
-    schema-rejection paths alike.
+    schema-rejection paths alike; When a PRE hook returns 0 and writes an
+
+    `args` object, Then the dispatched tool receives those arguments and the
+
+    POST context reports them; When that payload names a different tool, is
+
+    not JSON, is not an object, carries no `args`, or carries a non-object
+
+    `args`, Then the call dispatches with the model''s own arguments; When a
+
+    PRE hook writes a payload AND returns non-zero, Then the call is still
+
+    cancelled and the payload is not applied.
 
     '
   verified_by: '"PRE/POST_TOOL_CALL fire for successful calls", "PRE_TOOL_CALL cancel
@@ -5388,12 +6680,24 @@
 
     schema-rejection content", "POST_TOOL_CALL with *modified_json == NULL
 
-    leaves content untouched", "Chained POST_TOOL_CALL hooks: last write wins"
+    leaves content untouched", "Chained POST_TOOL_CALL hooks: last write wins",
+
+    "gh#168: a PRE_TOOL_CALL hook''s modified args reach the tool", "gh#168:
+
+    the rewrite is visible to the dup cache and POST hook", "gh#168: a
+
+    modification that renames the tool is refused", "gh#168: a malformed
+
+    modification is refused, not half-applied", "gh#168: a rewritten payload
+
+    carrying bad UTF-8 is sanitized, not rejected", "gh#168: a non-zero return
+
+    still cancels, modification or not"
 
     — tests/unit/mcp/tool_executor_test.cpp
 
     '
-  version: 2.10.4
+  version: 2.13.0
 - id: REQ-MCP-019
   name: Tool results are size-capped with a marker and classified into typed kinds
   module: MCP Servers and Tool Dispatch
@@ -5501,25 +6805,79 @@
 - id: REQ-MCP-021
   name: Filesystem tools are root-confined, read-before-write gated, and size-bounded
   module: MCP Servers and Tool Dispatch
-  description: 'FilesystemServer resolves every requested path against its root and throws
+  description: 'FilesystemServer resolves every requested path against its root and
 
-    (logged as "Path escape blocked") when the canonical result leaves the root,
+    canonicalises it; a path under the root is served. A path OUTSIDE the root
 
-    so no tool can traverse outside the project. Writes and edits to an existing
+    (v2.13.0) is decided by, highest precedence first: `outside_root_deny`
 
-    file are refused with a `read_before_write` error unless a prior read is
+    (always refused, `outside_root_denied`), `outside_root_allow` (served with
 
-    recorded in the FileAccessTracker. NOT IMPLEMENTED as of v2.10.4: the
+    no prompt), then the tri-state `mcp.filesystem.allow_outside_root` —
 
-    external-modification gate. FileAccessTracker::was_read_unchanged compares
+    `false` refuses with "Path escapes project root: <path>" (logged "Path
 
-    the tracked hash, but check_read_before_write calls only was_read() — the
+    escape blocked"), `true` serves, and `optional` (THE DEFAULT, in the C++
 
-    hash is never compared on the write path, and was_read_unchanged has no
+    type and in data/default_config.yaml) asks the host''s path approver
 
-    production caller (its only call site is a unit test that asserts on the
+    (`entropic_set_path_approval_callback`) with the canonical path, the root,
 
-    tracker directly, so it passes without a write ever being refused). Reads
+    the fully-qualified tool and READ/WRITE (read_file and list_directory read;
+
+    write_file and edit_file write). An approver rejection refuses with
+
+    `outside_root_rejected`; NO approver refuses with
+
+    `outside_root_approval_required`, naming the path and how to configure
+
+    access — `optional` never fails open. List matching is by canonical
+
+    SUBTREE via lexically_relative, never string prefix (`/opt/data` does not
+
+    cover `/opt/database`, `/home/u/project` does not contain
+
+    `/home/u/projectile`); entries are absolute, `~`-expanded, and a relative
+
+    entry or an unknown `allow_outside_root` value fails the config load.
+
+    `permissions.auto_approve` does NOT approve an escape. A named
+
+    workspace''s servers are forced to `false` with an empty allow list and no
+
+    approver (REQ-MCP-027). Every refusal is thrown, so the server-base barrier
+
+    turns it into a tool error AND skips the ContextAnchor. Until v2.13.0 the
+
+    flag was a bool and the bundled default shipped `true` — unconfined read
+
+    and write of the whole filesystem for every consumer on bundled defaults.
+
+    Writes and edits to an existing
+
+    file are refused with a `read_before_write` error unless THE CALLING
+
+    SESSION has a prior read recorded in the FileAccessTracker (gh#158,
+
+    v2.13.0): reads are kept per session key — the key the ToolExecutor
+
+    routed the call on, which a delegated child inherits from its parent —
+
+    so another session''s read of the same file unlocks nothing, and a
+
+    session''s reads are released when its conversation ends
+
+    (entropic_session_drop, entropic_session_context_clear,
+
+    entropic_session_context_set, entropic_context_clear). NOT IMPLEMENTED:
+
+    the external-modification gate — the tracked hash is never compared on
+
+    the write path, so a file changed on disk after the read is still
+
+    writable (was_read_unchanged, which compared it, had no production
+
+    caller and was removed in v2.11.0). Reads
 
     are gated by a size
 
@@ -5552,9 +6910,21 @@
 
     tool resolves it, Then the call is refused; Given an existing unread file,
 
-    When write_file runs, Then a read_before_write error is returned; Given a
+    When write_file runs, Then a read_before_write error is returned; Given
 
-    file changed on disk after being read, Then the write is refused; Given a
+    session A read a file and session B did not, When B writes or edits it,
+
+    Then B is refused read_before_write and the file is untouched; Given a
+
+    delegated child read it, Then its parent may write it; Given a session''s
+
+    conversation is dropped, cleared or restored, Then its reads are released
+
+    and a write must read again, while other sessions keep theirs; Given a
+
+    file changed on disk after being read, Then the write is still allowed
+
+    (no external-modification gate); Given a
 
     file exceeding the size gate, Then size_exceeded is returned; Given
 
@@ -5564,10 +6934,44 @@
 
     missing file, Then the error names list_directory.
 
+    Given the shipped default config, or no allow_outside_root key at all, and no
+
+    path approver, When a tool reads outside the root, Then nothing is read and
+
+    the refusal is typed outside_root_approval_required and names the path;
+
+    Given optional and an approver, Then it is asked with the canonical path and
+
+    READ or WRITE, an approval serves the call and a rejection refuses it
+
+    (outside_root_rejected) with nothing written and no ContextAnchor; Given a
+
+    path under outside_root_deny, Then it is refused even with
+
+    allow_outside_root true or an overlapping outside_root_allow; Given a path
+
+    under outside_root_allow, Then it is served with no prompt, and its
+
+    string-prefix sibling is not; Given legacy true or false, Then they mean
+
+    what they did before v2.13.0 and never consult the approver; Given
+
+    permissions.auto_approve, Then an escape is still refused without the
+
+    approver; Given a workspace, Then an allowlisted or approvable outside path
+
+    is refused and the approver is never asked.
+
     '
   verified_by: '"test_path_security_rejects_traversal", "test_write_file_requires_read",
 
-    "test_write_file_detects_external_change", "test_read_file_size_gate",
+    "test_write_file_allows_write_after_read_even_if_changed",
+
+    "gh#158: the read tracker is per session, and a lookup never grows it",
+
+    "gh#158: write_file consults the CALLING session''s reads",
+
+    "test_read_file_size_gate",
 
     "test_read_file_not_found", "test_read_file_refuses_ignored_path",
 
@@ -5581,12 +6985,38 @@
 
     "gh#120: read_file lines are an ordered array not a keyed object",
 
-    "gh#126: glob ** pattern matches files at root and in subdirectories"
+    "gh#126: glob ** pattern matches files at root and in subdirectories",
 
-    — tests/unit/mcp/servers/filesystem_test.cpp
+    the "outside-root optional:" / "outside-root: the approver is asked ONLY
+
+    ..." cases — tests/unit/mcp/servers/filesystem_test.cpp; every
+
+    "outside-root:" scenario — tests/unit/api/path_approval_test.cpp;
+
+    SCENARIOs "gh#158: read-before-write is judged per session — another
+
+    session''s read unlocks nothing", "gh#158: a delegated child''s read
+
+    satisfies its parent''s write — the child runs under the parent''s
+
+    session", "gh#158: ending a session''s conversation releases its read
+
+    tracker and todo list — and only its own", "gh#158: clearing the default
+
+    conversation releases the default session''s read tracker" —
+
+    tests/unit/api/builtin_server_sharing_test.cpp;
+
+    "mcp.filesystem.allow_outside_root is tri-state and defaults to optional",
+
+    "mcp.filesystem outside_root_allow / outside_root_deny parse as absolute
+
+    paths" — tests/unit/config/loader_test.cpp; model:
+
+    tests/model/test_outside_root_approval.cpp
 
     '
-  version: 2.10.4
+  version: 2.13.0
 - id: REQ-MCP-022
   name: Glob, grep, and read honour .gitignore plus .explorerignore semantics
   module: MCP Servers and Tool Dispatch
@@ -5614,7 +7044,19 @@
 
     let build artifacts, generated XML, and vendor blobs drown real grep/glob
 
-    matches in the model''s context.
+    matches in the model''s context. Since v2.13.0 (gh#161) the work is bounded
+
+    as well as correct: discovery prunes the skip-list directories and any
+
+    directory the rules loaded so far exclude, a query consults only the rules
+
+    anchored on the path''s own ancestry and stops at the first match walking
+
+    that subset backwards, and the glob/grep walk itself is capped by
+
+    `filesystem.max_walk_entries` with an explicit truncation notice appended
+
+    to the tool result when the cap fires.
 
     '
   acceptance_criteria: 'Given a rule set, When paths are tested, Then filename globs match
@@ -5628,7 +7070,21 @@
 
     sensitive, comments and blanks are skipped, and re-loading clears prior
 
-    rules; a malformed character class does not throw.
+    rules; a malformed character class does not throw. Given a deep tree of
+
+    nested `.gitignore` files, When a path is tested, Then the number of regex
+
+    evaluations is bounded by the rules on that path''s own ancestry, a
+
+    `.gitignore` inside `.git`/`node_modules`/`__pycache__`/`.venv` or inside an
+
+    already-excluded directory is never loaded, and a later rule at a shallower
+
+    base still overrides an earlier one at a deeper base; Given a walk that
+
+    exceeds `filesystem.max_walk_entries`, Then glob and grep both append a
+
+    truncation notice naming the entry count to the tool result.
 
     '
   verified_by: 'All TEST_CASEs in tests/unit/mcp/servers/ignore_matcher_test.cpp,
@@ -5647,14 +7103,28 @@
 
     "test_glob_respects_explorerignore_supplementary",
 
-    "test_explorerignore_negation_re_includes_path"
+    "test_explorerignore_negation_re_includes_path",
 
-    — tests/unit/mcp/servers/filesystem_test.cpp
+    "test_glob_announces_a_truncated_walk",
+
+    "test_grep_announces_a_truncated_walk",
+
+    "test_glob_and_grep_are_silent_when_the_walk_completes"
+
+    — tests/unit/mcp/servers/filesystem_test.cpp; plus the gh#161 trio
+
+    "IgnoreMatcher evaluates only the rules on a path''s own ancestry",
+
+    "IgnoreMatcher discovery prunes skip-list and ignored directories",
+
+    "IgnoreMatcher preserves last-match-wins ACROSS anchor bases"
+
+    — tests/unit/mcp/servers/ignore_matcher_test.cpp
 
     '
-  version: 2.10.4
+  version: 2.13.0
 - id: REQ-MCP-023
-  name: Bash and git servers gate on operator approval, not command pattern matching
+  name: Bash and git servers gate on operator approval, not command pattern matching; bash enforces a timeout on the whole process group
   module: MCP Servers and Tool Dispatch
   description: '`bash.execute` deliberately has no command allowlist or denylist: the
 
@@ -5686,6 +7156,40 @@
 
     branch/checkout/reset against its repo root.
 
+    Since v2.13.0 bash ENFORCES its timeout (`mcp.bash.timeout_seconds`,
+
+    default 30, >= 1 or the config load fails): each command runs as
+
+    `/bin/sh -c` leading its OWN process group, with stdout and stderr on one
+
+    pipe and stdin on /dev/null. When the wall-clock limit passes, the whole
+
+    group is SIGKILLed, the shell is reaped, and the result is a typed
+
+    `{"error":"timeout","message","timeout_seconds","elapsed_ms","output"}`
+
+    — the message names the limit and the elapsed time, and `output` keeps
+
+    what the command printed before the kill. When a command finishes inside
+
+    the limit, anything it left running in its group (background jobs) is
+
+    killed before the call returns, so no process outlives the tool call and
+
+    no zombie is left; a background child holding the output pipe no longer
+
+    holds the call open. A process that deliberately leaves the group
+
+    (setsid) escapes; its output is abandoned after a 2 s grace. A command
+
+    killed by signal N reports exit code 128+N. Until v2.13.0 the timeout
+
+    was stored and never read, and bash.h claimed the server "blocks
+
+    dangerous commands" — it never did; command gating is the permission
+
+    layer and tool approval.
+
     '
   acceptance_criteria: 'Given a command writing to stdout or stderr, Then both are captured
     with
@@ -5702,8 +7206,44 @@
 
     the repo root.
 
+    Given a command that outlives the timeout, Then it returns a timeout error
+
+    well before it would have finished, naming the limit, and afterwards the
+
+    shell is reaped and no live process remains in its group; Given a command
+
+    that starts a background child, Then the child is dead once the call
+
+    returns, and a child holding the output pipe does not hold the call open;
+
+    Given a command inside its limit, Then its own exit code and both output
+
+    streams are returned; Given mcp.bash.timeout_seconds, Then the dispatched
+
+    server uses it (absent: 30), and 0 or a negative value fails the load.
+
     '
-  verified_by: '"Execute captures stdout output", "Execute captures stderr output",
+  verified_by: '"bash: a command that outlives the timeout is killed with its whole
+
+    process group, and the model is told why", "bash: a background child is not
+
+    left running after the command returns", "bash: a background child holding
+
+    the output pipe does not hang the call", "bash: a command inside its limit
+
+    still reports its own exit code and output" —
+
+    tests/unit/mcp/servers/bash_test.cpp; SCENARIO "mcp.bash.timeout_seconds
+
+    reaches the dispatched bash server" —
+
+    tests/unit/api/bash_timeout_config_test.cpp; SCENARIO
+
+    "mcp.bash.timeout_seconds parses, defaults to 30, and refuses a
+
+    non-positive value" — tests/unit/config/loader_test.cpp;
+
+    "Execute captures stdout output", "Execute captures stderr output",
 
     "Execute respects working directory", "Execute nonexistent command returns
 
@@ -5724,7 +7264,7 @@
     NOTE: the working_dir metacharacter gate itself has no test.
 
     '
-  version: 2.10.4
+  version: 2.13.0
 - id: REQ-MCP-024
   name: Engine-level entropic.* tools validate their arguments and emit typed directives
   module: MCP Servers and Tool Dispatch
@@ -5748,7 +7288,15 @@
 
     stage naming a tier not in tier_names, quoting the offending stage and the
 
-    valid options (gh#129); complete with `coverage_gap=true` requires a
+    valid options (gh#129); the todo list is kept PER SESSION (gh#158,
+
+    v2.13.0) — keyed by the session the call routed on, shared with that
+
+    session''s delegated children, never with another session, and released
+
+    when the session''s conversation is dropped, cleared or restored;
+
+    complete with `coverage_gap=true` requires a
 
     non-empty gap_description; followup rejects non-object args, malformed JSON,
 
@@ -5782,8 +7330,16 @@
 
     directive types appear in the envelope and introspection calls carry none.
 
+    Given session A added a todo, When session B adds one, Then B''s list holds
+
+    only B''s items and A''s only A''s; Given A''s conversation ends, Then A''s
+
+    next list starts empty and B''s is untouched.
+
     '
-  verified_by: '"test_pipeline_requires_two_stages", "gh#129: pipeline rejects stage names
+  verified_by: '"gh#158: the todo list belongs to the calling session",
+
+    "test_pipeline_requires_two_stages", "gh#129: pipeline rejects stage names
 
     not in tier_names", "gh#129: pipeline emits directives for all-valid stages",
 
@@ -5811,10 +7367,14 @@
 
     "context_inspect without provider returns error", "context_inspect returns
 
-    no directives" — tests/unit/mcp/servers/context_inspect_test.cpp
+    no directives" — tests/unit/mcp/servers/context_inspect_test.cpp;
+
+    SCENARIO "gh#158: each session''s todo list is its own" —
+
+    tests/unit/api/builtin_server_sharing_test.cpp
 
     '
-  version: 2.10.4
+  version: 2.13.0
 - id: REQ-MCP-025
   name: External servers are discovered safely, directive-stripped, and health-monitored
   module: MCP Servers and Tool Dispatch
@@ -5922,6 +7482,181 @@
 
     '
   version: 2.10.4
+- id: REQ-MCP-026
+  name: A JSON-RPC response is paired with the request that asked for it
+  module: MCP Servers and Tool Dispatch
+  description: 'Every request ExternalMCPClient sends carries a unique JSON-RPC id
+
+    from an ATOMIC counter, and every response is checked against the id of the
+
+    request that was sent. A response whose id does not match is discarded and
+
+    reported as a typed is_error envelope naming the mismatch, never returned as
+
+    that call''s result.
+
+
+    The pairing exists because a request can be ABANDONED — a read timeout, or a
+
+    per-session interrupt tripping `request_cancelled()` mid-poll — while the
+
+    server still answers. `StdioTransport::send_request` holds `io_mutex_`
+
+    across write-then-read so bytes never interleave, but it cannot un-send an
+
+    abandoned request: the late answer sits in the pipe and would be read as the
+
+    result of the NEXT request. With one run per handle that was a stale answer
+
+    to yourself; with per-session runs (gh#158) it is a CROSS-SESSION leak of
+
+    real content, which is the gh#150 failure mode arriving through another
+
+    door. The transport therefore marks the pipe desynced on an abandoned read
+
+    and drains orphaned lines before the next write; the id check is what
+
+    catches whatever the drain missed, rather than trusting it.
+
+
+    The id counter is atomic because ServerManager shares one client per server
+
+    across every run, and the HealthMonitor''s reconnect thread has issued
+
+    initialize/tools/list through the same counter since v1.8.7 — two requests
+
+    sharing an id is exactly what would defeat the check.'
+  acceptance_criteria: 'Given a transport whose reply carries a different id, When a tool is
+
+    executed, Then the other request''s payload is not returned and the envelope
+
+    is is_error.
+
+    Given many threads executing tools through one client, When every request is
+
+    sent, Then no two requests share an id and no call is answered by another''s
+
+    response.
+
+    Given an abandoned request, When the next request is sent, Then the orphaned
+
+    reply is drained before the write rather than read as the new result.'
+  verified_by: 'SCENARIO "gh#158: a response that answers another request is refused";
+
+    "gh#158: concurrent tool calls on one client get distinct ids" —
+
+    /home/tvanfossen/Projects/entropic/tests/concurrency/test_thread_safety.cpp;
+
+    TEST_CASE "gh#158: an abandoned request''s late reply is drained, not
+
+    returned" —
+
+    /home/tvanfossen/Projects/entropic/tests/unit/mcp/stdio_transport_test.cpp
+
+    '
+  version: 2.13.0
+- id: REQ-MCP-027
+  name: Named workspaces bind a session to its own tool root and servers
+  module: MCP Servers and Tool Dispatch
+  description: '`entropic_workspace_create(handle, name, dir)` creates a named
+
+    workspace owning its OWN built-in and plugin MCP server instances
+
+    rooted at `dir`, its own external servers, and its own delegation
+
+    sandbox and swap lock — a server holds ONE working directory, so two
+
+    repositories cannot share one set. `entropic_session_bind_workspace`
+
+    binds a session to it; every tool call that session makes, and every
+
+    delegation sandbox it opens, then resolves against that root. A
+
+    session that already holds messages is REFUSED a rebind, because its
+
+    conversation cites paths relative to the root it was built in. A
+
+    session that is never bound uses the handle''s default servers
+
+    (`mcp.working_dir`, else cwd), so existing consumers are unaffected.
+
+    A workspace''s filesystem server is HARD-confined: forced to
+
+    `allow_outside_root: false` with an EMPTY `outside_root_allow`, and never
+
+    given the host''s path approver (v2.13.0) — outside one workspace is
+
+    inside another, so no allow entry or "just approve it" reaches a sibling.
+
+    Routing uses the RUNNING SESSION''s key: explicitly through
+
+    `LoopContext::session_key` for tool dispatch, and through the
+
+    thread-local `current_run_session()` for the tool-prompt callback,
+
+    whose signature lives in an interface header. Weights, tiers and
+
+    identity stay handle-wide — the point is that opening a second
+
+    repository costs no model reload. An external server registered with
+
+    a `"workspace"` field is spawned with cwd = that workspace''s root.
+
+    WHY (gh#166): `mcp.working_dir` was fixed at configure time, so a
+
+    second repository meant a second handle and a second copy of a
+
+    13.27 GiB model — impossible on a 16 GB card, and unnecessary,
+
+    because the model has no reason to care which repository a session
+
+    is about.
+
+    '
+  acceptance_criteria: 'Given two workspaces rooted at different directories, When
+    each of two
+
+    bound sessions reads the same relative path, Then each reads its own
+
+    workspace''s file and neither sees the other''s.
+
+    Given a session bound to a workspace, When the delegation sandbox root
+
+    is resolved for it, Then it is that workspace''s root.
+
+    Given a session holding messages, When it is rebound, Then
+
+    ENTROPIC_ERROR_INVALID_STATE is returned and the existing binding is
+
+    left in place.
+
+    Given a session that was never bound, When its servers are resolved,
+
+    Then they are the handle''s default set.
+
+    Given an unknown workspace name or a dir that is not a directory,
+
+    When the API is called, Then ENTROPIC_ERROR_INVALID_ARGUMENT is
+
+    returned.
+
+    '
+  verified_by: 'SCENARIO "gh#166: two workspaces resolve one relative path to two
+
+    roots"; "gh#166: rebinding a session that already has messages is
+
+    refused"; "gh#166: workspace API guards are typed" —
+
+    /home/tvanfossen/Projects/entropic/tests/unit/api/workspace_test.cpp;
+
+    SCENARIO "gh#166: two workspaces on one handle do not read each
+
+    other''s files, concurrently" —
+
+    /home/tvanfossen/Projects/entropic/tests/model/test_gh166_workspaces.cpp
+
+    '
+  version: 2.13.0
 - id: REQ-PROD-001
   name: Single `entropic` command with a closed, stable subcommand surface
   module: CLI and Distribution
@@ -6813,7 +8548,7 @@
     \ a\n  hook at ENTROPIC_HOOK_COUNT_ THEN ENTROPIC_ERROR_INVALID_CONFIG is\n  returned\
     \ and no callback is stored.\n- GIVEN the BackendCapability enum THEN _COUNT == 13 and\
     \ the last real\n  capability (AUDIO) sits at _COUNT - 1.\n- GIVEN the declared set of\
-    \ grammar sources THEN grammar_source_count()\n  == 3 AND every non-`none` source is producible\
+    \ grammar sources THEN grammar_source_count()\n  == 4 AND every non-`none` source is producible\
     \ from\n  resolve_grammar_source — an enum value no input can yield is a source\n  declared\
     \ but not wired.\n"
   verified_by: "SCENARIO(\"Hook count sentinel value\") / SCENARIO(\"Invalid hook point\n\
@@ -7173,3 +8908,124 @@
 
     '
   version: 2.10.4
+- id: REQ-INFER-027
+  name: Expert-tensor offload places routed experts on the host while attention and
+    KV stay resident (EXPERIMENTAL)
+  module: Inference Backends
+  description: 'models.<tier>.cpu_moe_layers: N places the ROUTED-EXPERT FFN tensors
+
+    of the first N layers on the host through llama.cpp''s
+
+    llama_model_params::tensor_buft_overrides, the mechanism behind
+
+    --n-cpu-moe / -ncmoe. Everything else — attention and its KV, the
+
+    router, the shared/dense FFN, norms and embeddings — is untouched and
+
+    still follows gpu_layers. The pattern tail is copied verbatim from the
+
+    vendored LLM_FFN_EXPS_REGEX and matched with the same std::regex_search
+
+    llama.cpp uses, so the selected set is upstream''s, not an invention.
+
+
+    The override array is OWNED for the duration of the load: llama.cpp
+
+    copies neither the array nor its const char* patterns, so
+
+    ExpertOffloadOverrides fills its strings once, appends the null
+
+    terminator the loader''s walk requires, and forbids copy and move.
+
+
+    N = 0 (the default, and the value an absent key leaves) builds no array
+
+    at all; tensor_buft_overrides stays the nullptr
+
+    llama_model_default_params() already carries, so an unconfigured tier
+
+    loads byte-identically to v2.12.2.
+
+
+    Four combinations are REFUSED, never clamped. At configure time, by
+
+    name and with the tier named: a negative N (there is no "all layers"
+
+    sentinel), N > 0 with gpu_layers: 0 (nothing is on the card to move
+
+    off), and N > 0 with gpu_layers: auto (the admission gate prices whole
+
+    layers and does not model expert placement, so its derived split would
+
+    not describe this load). At load time, against GGUF metadata the config
+
+    layer cannot read: a model declaring no experts, and N beyond the
+
+    model''s layer count. A load-time refusal frees the model and fails the
+
+    activation with last_error_ set.
+
+
+    EXPERIMENTAL and default off, pending measurement. The residency and
+
+    admission footprint math (REQ-INFER-019) is deliberately unchanged and
+
+    still prices a layer as a whole layer.
+
+    '
+  acceptance_criteria: 'Given cpu_moe_layers = N and a layer count, When the override list
+    is
+
+    built, Then it holds exactly the expert-tensor patterns for layers
+
+    0..N-1 in order, is null-terminated, and every pattern points into
+
+    storage the list owns for its whole life. Given a gemma4 MoE layer''s
+
+    tensor names, Then the pattern for that layer matches every
+
+    ffn_{gate,up,down,gate_up}_exps weight and scale and matches no
+
+    attention, router, dense/shared-FFN, norm or embedding tensor, and the
+
+    pattern for layer 1 does not match blk.10. Given the key is omitted,
+
+    Then cpu_moe_layers == 0, no patterns are built and the override
+
+    pointer is null. Given a negative N, gpu_layers: 0, or gpu_layers:
+
+    auto, Then config validation fails with a reason naming the offending
+
+    key. Given a model with no experts or fewer layers than N, Then the
+
+    load is refused rather than clamped.
+
+    '
+  verified_by: 'SCENARIO "v2.13.0: the expert pattern is llama.cpp''s, not our invention";
+
+    "v2.13.0: the patterns select gemma4 expert tensors and nothing else";
+
+    "v2.13.0: the override array is a valid, owning C contract";
+
+    "v2.13.0: an absent cpu_moe_layers installs no overrides at all";
+
+    "v2.13.0: impossible expert-offload combinations are refused loudly";
+
+    "v2.13.0: the load-time refusals need the model, and say so" —
+
+    tests/unit/inference/expert_offload_test.cpp
+
+    SCENARIO "gh#153 #42(iii): cpu_moe_layers is refused at configure time
+
+    when it cannot mean what it says" — tests/unit/config/validate_test.cpp
+
+    SCENARIO "gh#153 #42(iii): cpu_moe_layers parses, and is absent by
+
+    default" — tests/unit/config/loader_test.cpp
+
+    (LlamaCppBackend::expert_offload_admits load-time refusal: none — it
+
+    needs a real MoE GGUF, which no CPU unit test loads)
+
+    '
+  version: 2.13.0

@@ -4,6 +4,12 @@
 # Two-tier chess engine: thinker analyzes, executor acts.
 # Loaded as consumer defaults before global/project configs.
 
+# gh#154 (v2.13.0): an unresolvable tier `grammar:` stem now fails configure.
+# config_dir names the root searched for `grammars/`, so the two chess
+# grammars under data/grammars/ are registered during configure rather than
+# by a post-configure entropic_grammar_register_file() call.
+config_dir: data
+
 constitution: prompts/constitution.md
 
 models:

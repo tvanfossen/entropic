@@ -34,6 +34,9 @@
 
 #include "../../src/inference/tool_call_serialize.h"  // gh#93: shared (typed) serialization
 
+// gh#149: the reason a skip happened, carried from where it was decided.
+#include "model_skip_reason.h"
+
 #include <catch2/catch_test_macros.hpp>
 #include <catch2/catch_test_case_info.hpp>
 #include <catch2/reporters/catch_reporter_event_listener.hpp>
@@ -71,12 +74,39 @@ struct ModelTestContext {
     std::string model_path;                          ///< Resolved model path
     std::string default_tier;                        ///< Default tier name
     bool initialized = false;                        ///< Init success flag
+    /// @brief gh#149: why setup did not complete, set where it was decided.
+    ///
+    /// `initialized` is a bool and setup declines for five distinct reasons,
+    /// so every SCENARIO used to re-derive one and print the same literal —
+    /// "GGUF not present" — including for the three causes where the file was
+    /// right there on disk. Empty means either success or a path that has not
+    /// been taught to record itself; the accessor falls back in that case, so
+    /// nothing regresses.
+    std::string skip_reason;
 };
 
 /// @brief Global test context singleton.
 /// @internal
 /// @version 1.10.2
 inline ModelTestContext g_ctx;
+
+/**
+ * @brief The recorded skip reason, or the historical text when there is none.
+ *
+ * gh#149: the ONE accessor every `if (!g_ctx.initialized) SKIP(...)` site
+ * calls. Preferring the recorded reason means the audit record states the rule
+ * that actually fired; falling back to the original literal means a load path
+ * that has not been taught to record a reason behaves exactly as before.
+ *
+ * @param key Registry key the calling test loads (used only by the fallback).
+ * @return Reason text suitable for SKIP().
+ * @utility
+ * @version 2.13.0
+ */
+inline std::string skip_reason_or_default(const std::string& key) {
+    if (!g_ctx.skip_reason.empty()) { return g_ctx.skip_reason; }
+    return key + " GGUF not present — run `entropic download " + key + "`";
+}
 
 // ── Test parameters ─────────────────────────────────────────
 
@@ -172,6 +202,40 @@ inline bool load_test_config(const config::BundledModels& registry,
 /// @version 2.8.0
 inline fs::path routing_config_path() {
     return fs::path(MODEL_PATH) / "tests" / "model" / "routing_config.yaml";
+}
+
+/**
+ * @brief Load the registry then the config, recording WHICH step failed.
+ *
+ * gh#149: both listeners used `ok = a() && b()`, which collapses two distinct
+ * setup failures into one bool that the SCENARIOs then reported as a missing
+ * model file. Splitting them costs nothing and names the step that failed.
+ *
+ * @param ctx Test context to populate.
+ * @param key Registry key the run is for (for the message only).
+ * @return true when both loads succeeded.
+ * @utility
+ * @version 2.13.0
+ */
+inline bool load_harness_inputs(ModelTestContext& ctx,
+                                const std::string& key) {
+    entropic::test::SkipFacts facts;
+    facts.key = key;
+    if (!load_registry(ctx.registry)) {
+        facts.detail = "data/bundled_models.yaml did not load";
+        ctx.skip_reason = entropic::test::skip_reason_text(
+            entropic::test::SkipCause::kHarnessSetupFailed, facts);
+        return false;
+    }
+    if (!load_test_config(ctx.registry, ctx.config)) {
+        facts.detail = "layered config resolution failed "
+                       "(~/.entropic/config.yaml + "
+                       ".entropic/config.local.yaml)";
+        ctx.skip_reason = entropic::test::skip_reason_text(
+            entropic::test::SkipCause::kHarnessSetupFailed, facts);
+        return false;
+    }
+    return true;
 }
 
 /**
@@ -319,6 +383,16 @@ inline bool init_orchestrator(ModelTestContext& ctx) {
     ctx.orchestrator = std::make_unique<ModelOrchestrator>();
     if (!ctx.orchestrator->initialize(ctx.config)) {
         spdlog::error("Orchestrator init failed");
+        // gh#149: the GGUF was already proven present by every caller that
+        // reaches here, so "not present" is exactly the wrong thing to
+        // report. Say load failure and name the file. A family caller
+        // overwrites this with its registry key, which it knows and this
+        // does not.
+        entropic::test::SkipFacts facts;
+        facts.key = ctx.config.models.default_tier;
+        facts.path = ctx.model_path;
+        ctx.skip_reason = entropic::test::skip_reason_text(
+            entropic::test::SkipCause::kOrchestratorInitFailed, facts);
         return false;
     }
     // gh#89: mirror the facade's grammar fallback (entropic.cpp
@@ -335,6 +409,7 @@ inline bool init_orchestrator(ModelTestContext& ctx) {
     }
     ctx.default_tier = ctx.config.models.default_tier;
     ctx.initialized = true;
+    ctx.skip_reason.clear();  // gh#149: success leaves no reason behind.
     return true;
 }
 
@@ -914,15 +989,17 @@ public:
     void testRunStarting(Catch::TestRunInfo const& /*info*/) override {
         spdlog::info("Loading model for model tests...");
         fs::create_directories(LOG_DIR);
-        bool ok = load_registry(g_ctx.registry);
-        ok = ok && load_test_config(g_ctx.registry, g_ctx.config);
+        // gh#149: load_harness_inputs records WHICH setup step failed
+        // instead of collapsing both into one bool.
+        bool ok = load_harness_inputs(g_ctx, "the generic test model");
         // gh#87: generic engine-logic tests use a small model (footprint /
         // OOM safety). Family tests use init_orchestrator_for_v219_* and keep
         // their large models — they do NOT go through this listener.
         if (ok) { use_small_default_model(g_ctx); }
         ok = ok && init_orchestrator(g_ctx);
         if (!ok) {
-            spdlog::error("Model test init failed — tests will skip");
+            spdlog::error("Model test init failed — tests will skip: {}",
+                          g_ctx.skip_reason);
         }
     }
 

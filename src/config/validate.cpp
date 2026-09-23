@@ -10,6 +10,9 @@
 
 // gh#144 (v2.12.0): pure session-pool geometry + conflict rules.
 #include "../inference/session_pool_util.h"
+// gh#153 #42(iii) (v2.13.0): pure expert-offload conflict rules. Vendor-free
+// on purpose — entropic-config links no llama.cpp.
+#include "../inference/expert_offload.h"
 
 static auto s_log = entropic::log::get("config");
 
@@ -38,7 +41,8 @@ std::string validate_allowed_tools(const std::vector<std::string>& tools)
  * @param config Model config to validate.
  * @return Empty string on success, error message on failure.
  * @req REQ-CFG-006
- * @version 2.12.0
+ * @req REQ-INFER-027
+ * @version 2.13.0
  */
 std::string validate(const ModelConfig& config)
 {
@@ -63,6 +67,13 @@ std::string validate(const ModelConfig& config)
     // asserting at decode).
     if (err.empty()) {
         err = session_pool_conflict_reason(config);
+    }
+
+    // gh#153 #42(iii) (v2.13.0): expert offload is EXPERIMENTAL and its
+    // impossible combinations are refused by name here rather than
+    // discovered as "the knob did nothing" after a multi-second load.
+    if (err.empty()) {
+        err = expert_offload_conflict_reason(config);
     }
 
     return err;
@@ -325,6 +336,139 @@ static std::string validate_model_tiers(const ModelsConfig& models)
     }
 
     return err;
+}
+
+/**
+ * @brief Whether a directory holds at least one .gbnf file.
+ * @param dir Directory to scan.
+ * @return true when the directory exists and contains a .gbnf.
+ * @dg_internal
+ * @version 2.13.0
+ */
+static bool holds_grammars(const std::filesystem::path& dir)
+{
+    std::error_code ec;
+    if (!std::filesystem::is_directory(dir, ec)) { return false; }
+    bool found = false;
+    for (const auto& entry : std::filesystem::directory_iterator(dir, ec)) {
+        if (entry.path().extension() == ".gbnf") {
+            found = true;
+            break;
+        }
+    }
+    return found;
+}
+
+/**
+ * @brief The directories a bare grammar stem is looked up in (gh#154).
+ * @param config Parsed engine config (supplies config_dir).
+ * @param data_dir Resolved bundled data directory.
+ * @return Search directories, most specific first.
+ * @req REQ-INFER-007
+ * @version 2.13.0
+ */
+std::vector<std::filesystem::path> grammar_search_paths(
+    const ParsedConfig& config,
+    const std::filesystem::path& data_dir)
+{
+    std::vector<std::filesystem::path> dirs;
+    if (!config.config_dir.empty()) {
+        dirs.push_back(config.config_dir / "grammars");
+    }
+    // The facade's data_dir fallback runs only when the config_dir load
+    // registered nothing, so include it on exactly that condition —
+    // otherwise this would accept a stem the registry will not hold.
+    if (!data_dir.empty() && (dirs.empty() || !holds_grammars(dirs.front()))) {
+        dirs.push_back(data_dir / "grammars");
+    }
+    return dirs;
+}
+
+/**
+ * @brief Whether `<stem>.gbnf` exists in any search directory.
+ * @param stem Normalized grammar stem.
+ * @param search_dirs Directories to look in.
+ * @return true when the file is present in at least one.
+ * @dg_internal
+ * @version 2.13.0
+ */
+static bool grammar_stem_resolves(
+    const std::string& stem,
+    const std::vector<std::filesystem::path>& search_dirs)
+{
+    bool found = false;
+    for (const auto& dir : search_dirs) {
+        std::error_code ec;
+        if (std::filesystem::exists(dir / (stem + ".gbnf"), ec)) {
+            found = true;
+            break;
+        }
+    }
+    return found;
+}
+
+/**
+ * @brief Render the search-path list for an error message.
+ * @param search_dirs Directories searched.
+ * @return Comma-separated list, or a note that none were searched.
+ * @dg_internal
+ * @version 2.13.0
+ */
+static std::string describe_search_dirs(
+    const std::vector<std::filesystem::path>& search_dirs)
+{
+    if (search_dirs.empty()) {
+        return "no grammar search path is configured "
+               "(set config_dir, or install the bundled data directory)";
+    }
+    std::string list;
+    for (const auto& dir : search_dirs) {
+        if (!list.empty()) { list += ", "; }
+        list += dir.string();
+    }
+    return list;
+}
+
+/**
+ * @brief Warn about every tier whose `grammar:` stem resolves to no .gbnf
+ *        (gh#154).
+ * @param config Parsed engine config.
+ * @param search_dirs Directories from grammar_search_paths().
+ * @return Empty string when every stem resolves, else one message naming
+ *         each unresolved tier and stem.
+ * @req REQ-INFER-007
+ * @req REQ-CFG-006
+ * @version 2.13.0
+ */
+std::string warn_unresolved_tier_grammars(
+    const ParsedConfig& config,
+    const std::vector<std::filesystem::path>& search_dirs)
+{
+    std::vector<std::string> unresolved;
+    for (const auto& [name, tier] : config.models.tiers) {
+        if (!tier.grammar.has_value()) { continue; }
+        // The registry keys on the file stem: "compactor.gbnf" and
+        // "compactor" name the same grammar (normalize_grammar_key).
+        const auto stem = tier.grammar->stem().string();
+        if (stem.empty() || grammar_stem_resolves(stem, search_dirs)) {
+            continue;
+        }
+        unresolved.push_back("models." + name + " -> '" + stem + "'");
+    }
+    if (unresolved.empty()) { return ""; }
+
+    std::string list;
+    for (const auto& entry : unresolved) {
+        if (!list.empty()) { list += ", "; }
+        list += entry;
+    }
+    return "grammar not resolvable yet for " + list
+         + " — searched " + describe_search_dirs(search_dirs)
+         + ". Register each key with entropic_grammar_register_file() or "
+           "entropic_grammar_register() before the first run on that tier, "
+           "or place <stem>.gbnf in a grammar search path. A run on such a "
+           "tier before then fails with ENTROPIC_ERROR_GRAMMAR_NOT_FOUND "
+           "rather than decoding unconstrained (gh#154).";
 }
 
 /**

@@ -13,6 +13,7 @@
 #include "engine_handle.h"
 
 #include <entropic/config/loader.h>
+#include <entropic/config/validate.h>  // gh#154: configure-time grammar check
 #include <entropic/mcp/servers/entropic_server.h>
 #include <entropic/entropic.h>
 #include <entropic/prompts/manager.h>
@@ -207,25 +208,37 @@ static entropic_error_t check_identity(entropic_handle_t h) {
 /* find_tier_by_model_path moved to ModelsConfig::find_tier_by_path() — v2.0.1 */
 
 /**
- * @brief Resolve tier name to an ACTIVE backend, or throw.
+ * @brief Resolve a tier name to a resident backend, loading it if needed.
+ *
+ * gh#157 (v2.13.0): was `require_active_backend`, which threw
+ * "model not active" whenever the tier's model was not already in VRAM.
+ * That was survivable while the default tier always loaded at configure;
+ * with `models.defer_load` it made the state and evaluation APIs
+ * unreachable until some OTHER call happened to trigger a load. They now
+ * take the same residency-gated path a generation does.
+ *
+ * The caller holds the handle's turn claim, so this cannot race a run.
+ *
  * @param h Engine handle (must have orchestrator).
  * @param tier_name Tier name string.
  * @return Non-null backend pointer in ACTIVE state.
- * @throws std::runtime_error if tier not found or not active.
+ * @throws std::runtime_error if the tier is unknown, or its model cannot
+ *         be made resident (refused by the VRAM gate, or load failure).
  * @dg_internal
- * @version 2.0.0
+ * @req REQ-INFER-019
+ * @version 2.13.0
  */
-static entropic::InferenceBackend* require_active_backend(
+static entropic::InferenceBackend* require_ready_backend(
     entropic_handle_t h, const char* tier_name)
 {
-    auto* backend = h->orchestrator->get_backend(tier_name);
-    if (!backend) {
-        throw std::runtime_error(
-            "no backend for tier: " + std::string(tier_name));
+    const std::string tier(tier_name);
+    if (h->orchestrator->get_backend(tier) == nullptr) {
+        throw std::runtime_error("no backend for tier: " + tier);
     }
-    if (!backend->is_active()) {
+    auto* backend = h->orchestrator->ensure_model(tier);
+    if (backend == nullptr || !backend->is_active()) {
         throw std::runtime_error(
-            "model not active: " + std::string(tier_name));
+            "model could not be made resident for tier: " + tier);
     }
     return backend;
 }
@@ -355,6 +368,23 @@ static std::vector<std::string> filter_tools(
 }
 
 /**
+ * @brief Re-parse filtered tool defs into one JSON array string.
+ * @param tool_jsons Per-tool JSON definition strings.
+ * @return JSON array text; unparseable entries are dropped.
+ * @utility
+ * @version 2.13.0
+ */
+static std::string tool_defs_array(
+    const std::vector<std::string>& tool_jsons) {
+    nlohmann::json arr = nlohmann::json::array();
+    for (const auto& tj : tool_jsons) {
+        auto obj = nlohmann::json::parse(tj, nullptr, false);
+        if (!obj.is_discarded()) { arr.push_back(std::move(obj)); }
+    }
+    return arr.dump();
+}
+
+/**
  * @brief Build formatted tool prompt for a tier.
  *
  * gh#87 (v2.7.0): returns the per-tier-filtered tool defs as a structured
@@ -370,31 +400,30 @@ static std::vector<std::string> filter_tools(
  * @param user_data Engine handle.
  * @return 0 on success, non-zero if no tools available.
  * @callback
- * @version 2.7.0
+ * @version 2.13.0
  */
 static int facade_get_tool_prompt(const char* tier, char** result,
                                   void* user_data) {
     auto* h = static_cast<entropic_engine*>(user_data);
     *result = nullptr;
-    if (!h || !h->server_manager) { return 1; }
-
-    std::string tier_name = tier ? tier : "";
-    auto all_json = h->server_manager->list_tools();
-    auto all_tools = nlohmann::json::parse(all_json, nullptr, false);
-    auto allowed = resolve_allowed_tools(h, tier_name);
-    auto tool_jsons = filter_tools(all_tools, allowed);
+    // gh#166: the tools a turn sees belong to the SESSION's workspace. The
+    // key arrives through `entropic::current_run_session()` because this
+    // callback's signature lives in an interface header.
+    auto* servers = (h != nullptr && h->server_manager)
+        ? entropic::workspace_servers(h, entropic::current_run_session())
+        : nullptr;
+    if (servers == nullptr) { return 1; }
+    auto all_tools = nlohmann::json::parse(servers->list_tools(),
+                                           nullptr, false);
+    auto tool_jsons = filter_tools(
+        all_tools, resolve_allowed_tools(h, tier ? tier : ""));
     if (!all_tools.is_array() || all_tools.empty() || tool_jsons.empty()) {
         return 1;
     }
-
-    nlohmann::json arr = nlohmann::json::array();
-    for (const auto& tj : tool_jsons) {
-        auto obj = nlohmann::json::parse(tj, nullptr, false);
-        if (!obj.is_discarded()) { arr.push_back(std::move(obj)); }
-    }
-    *result = strdup(arr.dump().c_str());
+    *result = strdup(tool_defs_array(tool_jsons).c_str());
     return 0;
 }
+
 
 /**
  * @brief Wire engine interrupt propagation into MCP transports (P1-10).
@@ -666,12 +695,34 @@ static bool si_save_snapshot(
 }
 
 /**
+ * @brief StorageInterface bridge: latest_delegation_for_target (gh#162).
+ * @param target_tier Tier to search for.
+ * @param[out] delegation_id Resolved id on success.
+ * @param user_data SqliteStorageBackend pointer.
+ * @return true when a completed delegation to that tier exists.
+ * @callback
+ * @req REQ-DELEG-006
+ * @version 2.13.0
+ */
+static bool si_latest_delegation_for_target(
+        const char* target_tier, std::string& delegation_id,
+        void* user_data) {
+    auto* sb = static_cast<entropic::SqliteStorageBackend*>(user_data);
+    if (sb == nullptr || target_tier == nullptr) { return false; }
+    return sb->latest_delegation_for_target(target_tier, delegation_id);
+}
+
+/**
  * @brief StorageInterface bridge: load_delegation_with_messages.
  *
  * Resolves delegation id → child_conversation_id → conversation messages,
  * then returns the composed JSON with `target_tier` and `messages` at
  * the top level. Used by `entropic.resume_delegation` (gh#32, v2.1.6).
  *
+ * @param delegation_id Delegation id to load.
+ * @param[out] result_json Composed conversation JSON.
+ * @param user_data SqliteStorageBackend pointer.
+ * @return true when the delegation and its conversation were found.
  * @callback
  * @version 2.1.6
  */
@@ -719,7 +770,7 @@ static bool si_load_delegation_with_messages(
  * @param sb Storage backend (non-owning).
  * @return StorageInterface ready to pass to `AgentEngine::set_storage`.
  * @dg_internal
- * @version 2.1.12
+ * @version 2.13.0
  */
 static entropic::StorageInterface build_storage_iface(
         entropic::SqliteStorageBackend* sb) {
@@ -730,6 +781,7 @@ static entropic::StorageInterface build_storage_iface(
     si.save_conversation = si_save_conversation;
     si.save_snapshot = si_save_snapshot;
     si.load_delegation_with_messages = si_load_delegation_with_messages;
+    si.latest_delegation_for_target = si_latest_delegation_for_target;
     si.user_data = sb;
     return si;
 }
@@ -794,10 +846,14 @@ static std::vector<std::string> collect_delegatable_tiers(
 
 /**
  * @brief Initialize MCP servers with resolved working directory.
+ *
+ * v2.13.0: also wires the default set's filesystem server to the handle's
+ * outside-root path-approval slot.
+ *
  * @param h Engine handle with config loaded.
  * @param data_dir Bundled data directory path.
  * @dg_internal
- * @version 2.10.1
+ * @version 2.13.0 [reviewed]
  */
 static void init_mcp_servers(entropic_handle_t h,
                              const std::filesystem::path& data_dir) {
@@ -807,8 +863,18 @@ static void init_mcp_servers(entropic_handle_t h,
     h->server_manager = std::make_unique<entropic::ServerManager>(
         h->config.permissions, root);
     auto tier_names = collect_delegatable_tiers(h->config);
+    // gh#162 (v2.13.0): tiers that refuse a contextless delegation, so the
+    // delegate/pipeline tools can say no at the boundary.
+    std::vector<std::string> require_context;
+    for (const auto& [name, tier] : h->config.models.tiers) {
+        if (tier.requires_context) { require_context.push_back(name); }
+    }
     h->server_manager->init_builtins(
-        h->config.mcp, tier_names, data_dir.string());
+        h->config.mcp, tier_names, data_dir.string(), require_context);
+    // v2.13.0: under `allow_outside_root: optional` the DEFAULT set asks
+    // the host's path approver. Workspaces are built elsewhere and never
+    // reach this line — they stay hard-confined (gh#166).
+    entropic::wire_outside_root_approver(h);
 
     // gh#133 (v2.10.1): load dlopen plugins after the builtins so a plugin
     // colliding with a built-in server name is rejected rather than shadowing
@@ -824,18 +890,15 @@ static void init_mcp_servers(entropic_handle_t h,
  * @param data_dir Bundled data directory.
  * @return Concatenated prefix string.
  * @utility
- * @version 2.11.0
+ * @version 2.13.0
  */
 static std::string build_shared_prompt_prefix(
     entropic_handle_t h,
     const std::filesystem::path& data_dir) {
     std::string constitution, app_ctx;
-    entropic::prompts::load_constitution(
-        h->config.constitution, h->config.constitution_disabled,
-        data_dir, constitution);
-    entropic::prompts::load_app_context(
-        h->config.app_context, h->config.app_context_content,
-        h->config.app_context_disabled, data_dir, app_ctx);
+    // gh#156: was two discarded error strings; the shared loader logs them.
+    entropic::prompts::load_shared_prompt_sources(
+        h->config, data_dir, constitution, app_ctx);
     std::string prefix;
     if (!constitution.empty()) { prefix += constitution + "\n\n"; }
     if (!app_ctx.empty()) { prefix += app_ctx + "\n\n"; }
@@ -1032,7 +1095,7 @@ static char* tool_history_json_thunk(size_t count, void* ud) {
  * @param h Engine handle with engine + server_manager constructed.
  * @req REQ-API-013
  * @req REQ-MCP-014
- * @version 2.0.6-rc16
+ * @version 2.13.0
  */
 static void wire_tool_executor(entropic_handle_t h) {
     h->tool_executor = std::make_unique<entropic::ToolExecutor>(
@@ -1050,6 +1113,14 @@ static void wire_tool_executor(entropic_handle_t h) {
     tei.user_data = h->tool_executor.get();
     tei.history_json = tool_history_json_thunk;  // P1-11
     tei.free_fn = [](char* p) { std::free(p); };
+    // gh#166 (v2.13.0): a bound session's tool calls run against its
+    // workspace's own server instances, not the handle's default set.
+    h->tool_executor->set_server_resolver(
+        +[](const std::string& key, void* ud)
+            -> entropic::ServerManager* {
+            return entropic::workspace_servers(
+                static_cast<entropic_handle_t>(ud), key);
+        }, h);
     h->engine->set_tool_executor(tei);
 }
 
@@ -1210,18 +1281,15 @@ static char* sp_get_config(void* ud) {
  * ResponseGenerator::inject_engine_state_reminder.
  *
  * @utility
- * @version 2.11.0
+ * @version 2.13.0
  */
 static std::string build_assembled_prompt_for_tier(
     entropic_engine* h, const std::string& tier_name) {
     auto data_dir = entropic::config::resolve_data_dir(h->config);
     std::string constitution, app_ctx;
-    entropic::prompts::load_constitution(
-        h->config.constitution, h->config.constitution_disabled,
-        data_dir, constitution);
-    entropic::prompts::load_app_context(
-        h->config.app_context, h->config.app_context_content,
-        h->config.app_context_disabled, data_dir, app_ctx);
+    // gh#156: was two discarded error strings; the shared loader logs them.
+    entropic::prompts::load_shared_prompt_sources(
+        h->config, data_dir, constitution, app_ctx);
     std::string identity_body;
     auto it = h->config.models.tiers.find(tier_name);
     if (it != h->config.models.tiers.end()) {
@@ -1372,6 +1440,43 @@ static char* sp_get_state(void* ud) {
 }
 
 /**
+ * @brief Serialize the orchestrator's per-generation records (gh#154).
+ *
+ * One object per generation, oldest first. Until v2.13.0 NO
+ * `GenerationResult` field reached any consumer: `prefill_tokens` was
+ * serialized nowhere, `tok/s` and the speculative draft/accept counts
+ * went to the log and died there, and whether a grammar constrained the
+ * decode was observable only as a MISSING log line. Three days of
+ * measurements were published against that and withdrawn.
+ *
+ * @param h Engine handle (orchestrator may be null before configure).
+ * @return JSON array; `[]` when nothing has generated yet.
+ * @utility
+ * @version 2.13.0
+ */
+static nlohmann::json generations_json(entropic_engine* h) {
+    nlohmann::json arr = nlohmann::json::array();
+    if (h == nullptr || !h->orchestrator) { return arr; }
+    for (const auto& rec : h->orchestrator->generation_records()) {
+        arr.push_back({
+            {"finish_reason",    rec.finish_reason},
+            {"token_count",      rec.token_count},
+            {"prefill_tokens",   rec.prefill_tokens},
+            {"throughput_tok_s", rec.throughput_tok_s},
+            {"n_drafted",        rec.n_drafted},
+            {"n_accepted",       rec.n_accepted},
+            {"grammar", {
+                {"source",          rec.grammar.source},
+                {"key",             rec.grammar.key},
+                {"resolved",        rec.grammar.resolved},
+                {"conflict_winner", rec.grammar.conflict_winner},
+            }},
+        });
+    }
+    return arr;
+}
+
+/**
  * @brief State provider: get_metrics.
  *
  * Returns LoopMetrics from the most recent run plus a per-tier
@@ -1380,14 +1485,20 @@ static char* sp_get_state(void* ud) {
  * The `per_tier` object maps tier name → metrics since engine start.
  * (P2-15 + follow-up)
  *
+ * gh#154 (v2.13.0): `generations` carries one record per generation —
+ * the only route by which a GenerationResult field has ever crossed the
+ * C ABI. Always present, even before a run, so a consumer never has to
+ * guess whether the key appears.
+ *
  * @callback
- * @version 2.0.6-rc16.2
+ * @version 2.13.0
  */
 static char* sp_get_metrics(void* ud) {
     auto* h = static_cast<entropic_engine*>(ud);
     if (!h || !h->engine) { return strdup("{}"); }
     auto m = h->engine->last_loop_metrics();
     nlohmann::json j;
+    j["generations"] = generations_json(h);
     j["iterations"]  = m.iterations;
     j["tool_calls"]  = m.tool_calls;
     j["tokens_used"] = m.tokens_used;
@@ -1512,12 +1623,74 @@ static void wire_tier_validation_rules(entropic_handle_t h) {
     }
 }
 
+// ── gh#160: delegation isolation wiring ────────────────────
+
+/**
+ * @brief Root a session's MCP tools resolve against (gh#160).
+ *
+ * An unbound session uses the handle's ServerManager root —
+ * `mcp.working_dir` else the process cwd — which is the value gh#160 says
+ * the sandbox should have been using all along instead of the engine's
+ * own `repo_dir`. gh#166 re-points THIS one function at the session's
+ * named workspace; nothing else in the delegation path moved.
+ *
+ * @param session_key Caller-scoped session key.
+ * @param ud Engine handle.
+ * @return The session's tool root.
+ * @req REQ-DELEG-005
+ * @callback
+ * @version 2.13.0
+ */
+static std::filesystem::path facade_session_root(
+    const std::string& session_key, void* ud) {
+    auto* h = static_cast<entropic_handle_t>(ud);
+    auto* servers = entropic::workspace_servers(h, session_key);
+    if (servers == nullptr) { return {}; }
+    return servers->project_dir();
+}
+
+/**
+ * @brief External tools a sandboxed child could write through (gh#160).
+ * @param session_key Session the delegation runs under (gh#166 routes on it).
+ * @param allowed Child's tool allow-list (empty = everything).
+ * @param ud Engine handle.
+ * @return Fully-qualified names lacking `readOnlyHint: true`.
+ * @callback
+ * @version 2.13.0
+ */
+static std::vector<std::string> facade_unsafe_external_tools(
+    const std::string& session_key,
+    const std::vector<std::string>& allowed, void* ud) {
+    auto* h = static_cast<entropic_handle_t>(ud);
+    auto* servers = entropic::workspace_servers(h, session_key);
+    if (servers == nullptr) { return {}; }
+    // gh#166: a workspace's external servers connect when the workspace is
+    // created, so their annotations are already cached by the time a
+    // delegation is admitted — no lazy spawn is needed at the gate.
+    return servers->external_tools_without_readonly_hint(allowed);
+}
+
+/**
+ * @brief Install the gh#160 session-root + dir-swap seams on the engine.
+ * @param h Engine handle with engine + server_manager constructed.
+ * @dg_internal
+ * @version 2.13.0 [reviewed]
+ */
+static void wire_session_roots(entropic_handle_t h) {
+    entropic::SessionRootInterface iface;
+    iface.resolve_root = facade_session_root;
+    iface.unsafe_external_tools = facade_unsafe_external_tools;
+    iface.user_data = h;
+    h->engine->set_session_root_interface(iface);
+    h->engine->set_dir_swap(entropic::swap_session_tool_dir, h);
+}
+
 /**
  * @brief Build LoopConfig from parsed config.
  * @param h Engine handle with config populated.
  * @return Populated LoopConfig.
  * @utility
- * @version 2.9.6
+ * @version 2.13.0
  */
 static entropic::LoopConfig build_loop_config(entropic_handle_t h) {
     entropic::LoopConfig lc;
@@ -1526,6 +1699,12 @@ static entropic::LoopConfig build_loop_config(entropic_handle_t h) {
     // rejects a bound on_token callback — see mtp_envelope.h).
     lc.stream_output = h->config.generation.stream_output;
     lc.speculative_enabled = h->config.inference.speculative.enabled;
+    // gh#160 (v2.13.0): opt-in delegation sandboxing. OFF means no
+    // snapshot is taken at all — the wasted copy the issue reported
+    // disappears with the feature it was never serving.
+    lc.delegation_isolation =
+        h->config.delegation.isolation
+        == entropic::DelegationIsolation::sandbox;
     lc.auto_approve_tools = h->config.permissions.auto_approve;
     auto it = h->config.models.tiers.find(h->config.models.default_tier);
     if (it != h->config.models.tiers.end()) {
@@ -1654,7 +1833,7 @@ static entropic_error_t init_orchestrator(
  * @param h Engine handle.
  * @param data_dir Resolved data directory.
  * @dg_internal
- * @version 2.3.8
+ * @version 2.13.0 [reviewed]
  */
 static void init_engine_and_interfaces(
     entropic_handle_t h, const std::filesystem::path& data_dir) {
@@ -1691,6 +1870,9 @@ static void init_engine_and_interfaces(
             h->engine->compaction_manager());
     rewire_observers(h);  // gh#40 + fallout (v2.1.10)
     wire_external_interrupt(h);  // P1-10
+    // gh#158 (v2.13.0): opt-in per-session-key run concurrency, default off.
+    h->engine->set_concurrent_sessions(h->config.concurrent_sessions);
+    wire_session_roots(h);  // gh#160
     wire_tool_executor(h);
 }
 
@@ -1725,14 +1907,85 @@ static void wire_prompts_and_persistence(
 }
 
 /**
+ * @brief Reject a configured prompt path that cannot be loaded (gh#156).
+ *
+ * Runs between `resolve_data_dir` and `init_orchestrator` on purpose:
+ * the diagnosis costs a stat and a parse, and the step it precedes
+ * loads a multi-gigabyte model. Failing after that would make the
+ * consumer pay for the load before being told the prompt they
+ * configured is not in it.
+ *
+ * @param h Engine handle carrying the parsed config.
+ * @param data_dir Resolved data directory.
+ * @return ENTROPIC_OK, or ENTROPIC_ERROR_INVALID_CONFIG with
+ *        `last_error` set to an actionable message.
+ * @req REQ-API-004
+ * @dg_internal
+ * @version 2.13.0
+ */
+static entropic_error_t validate_prompt_sources(
+    entropic_handle_t h, const std::filesystem::path& data_dir) {
+    auto err = entropic::prompts::validate_configured_prompts(
+        h->config, data_dir);
+    entropic_error_t rc = ENTROPIC_OK;
+    if (!err.empty()) {
+        h->last_error = err;
+        s_log->error("configure: {}", err);
+        rc = ENTROPIC_ERROR_INVALID_CONFIG;
+    }
+    return rc;
+}
+
+/**
+ * @brief Warn about a tier grammar stem that resolves to nothing (gh#154).
+ *
+ * Runs AFTER thread_frontmatter_samplers — the common spelling of a tier
+ * grammar is an identity frontmatter `grammar:` key, which is not on the
+ * TierConfig until that step threads it.
+ *
+ * A WARNING, not a refusal. `entropic_grammar_register` and
+ * `entropic_grammar_register_file` both go through `check_orchestrator`,
+ * so they cannot be called until configure has returned — meaning
+ * "configure, then register this tier's grammar" is the ONLY sequence
+ * available to a consumer whose grammar lives in memory or at a path the
+ * engine cannot discover. gh#154 shipped this as
+ * ENTROPIC_ERROR_INVALID_CONFIG and locked that sequence out;
+ * `tests/model/test_gh95_identity_grammar.cpp` is a copy of it. The
+ * refusal now happens at FIRST USE
+ * (`ModelOrchestrator::refuse_unresolved_tier_grammar`), where the tier
+ * being selected proves nobody is going to register it.
+ *
+ * @param h Engine handle carrying the parsed config.
+ * @param data_dir Resolved data directory.
+ * @req REQ-INFER-007
+ * @dg_internal
+ * @version 2.13.0
+ */
+static void warn_tier_grammars_step(
+    entropic_handle_t h, const std::filesystem::path& data_dir) {
+    auto warning = entropic::config::warn_unresolved_tier_grammars(
+        h->config,
+        entropic::config::grammar_search_paths(h->config, data_dir));
+    if (!warning.empty()) {
+        s_log->warn("configure: {}", warning);
+    }
+}
+
+/**
  * @brief Shared body of all entropic_configure* entry points.
+ *
+ * gh#154 (v2.13.0): an unresolved tier grammar is WARNED about here and
+ * refused at first use instead — the calls that register one need the
+ * orchestrator this function is about to build.
+ *
  * @return ENTROPIC_OK on success, else the first failing step's
  *        error code.
  * @req REQ-API-004
- * @version 2.7.3
+ * @version 2.13.0
  */
 static entropic_error_t configure_common(entropic_handle_t h) {
-    if (auto rc = reject_if_configured(h); rc != ENTROPIC_OK) { return rc; }
+    auto rc = reject_if_configured(h);
+    if (rc != ENTROPIC_OK) { return rc; }
     // gh#59 follow-up (v2.3.7): honor console_logging before any init
     // logging fires. When false, strip the stderr console sink so the
     // file sink (already installed by setup_session) is the only route
@@ -1740,13 +1993,27 @@ static entropic_error_t configure_common(entropic_handle_t h) {
     // there. Default (true) is a no-op; operators keep stderr logs.
     entropic::log::set_console_enabled(h->config.console_logging);
     auto data_dir = entropic::config::resolve_data_dir(h->config);
-    // gh#94 (v2.7.3): thread per-tier frontmatter samplers into the config
-    // BEFORE the orchestrator snapshots it by value. The engine-bound
-    // frontmatter wiring stays in wire_prompts_and_persistence (post-engine).
-    thread_frontmatter_samplers(h, data_dir);
-    if (auto rc = init_orchestrator(h, data_dir); rc != ENTROPIC_OK) {
-        return rc;
+    // gh#156 (v2.13.0): a configured constitution / app_context path that
+    // cannot be loaded is a config error, and it is raised HERE — before
+    // init_orchestrator loads the model.
+    rc = validate_prompt_sources(h, data_dir);
+    if (rc == ENTROPIC_OK) {
+        // gh#94 (v2.7.3): thread per-tier frontmatter samplers into the
+        // config BEFORE the orchestrator snapshots it by value. The
+        // engine-bound frontmatter wiring stays in
+        // wire_prompts_and_persistence (post-engine).
+        thread_frontmatter_samplers(h, data_dir);
+        // gh#154 (v2.13.0): name a tier grammar stem that does not resolve
+        // YET. Not a refusal — entropic_grammar_register* needs the
+        // orchestrator this call is about to build, so a consumer's only
+        // legal order is configure-then-register. The run that selects the
+        // tier is what fails, loudly and typed, if nobody ever did.
+        warn_tier_grammars_step(h, data_dir);
     }
+    if (rc == ENTROPIC_OK) {
+        rc = init_orchestrator(h, data_dir);
+    }
+    if (rc != ENTROPIC_OK) { return rc; }
 
     init_engine_and_interfaces(h, data_dir);
     wire_prompts_and_persistence(h, data_dir);
@@ -1938,7 +2205,7 @@ entropic_error_t entropic_configure_dir(
  * @req REQ-API-002
  * @req REQ-API-003
  * @req REQ-ABI-001
- * @version 2.0.8
+ * @version 2.13.0
  */
 void entropic_destroy(entropic_handle_t handle) {
     if (handle == nullptr) {
@@ -1959,6 +2226,19 @@ void entropic_destroy(entropic_handle_t handle) {
     // orchestrator pointer used by the iface callbacks.
     entropic::destroy_orchestrator_interface(handle->inference_iface_ctx);
     handle->inference_iface_ctx = nullptr;
+
+    // gh#166 (v2.13.0): named workspaces own server instances with live
+    // child processes. Shut them down explicitly, before the engine that
+    // may still hold a resolver pointing at them goes away — teardown
+    // order is the recurring gh#58 failure shape, not left to chance.
+    {
+        std::lock_guard<std::mutex> guard(handle->workspace_mutex);
+        for (auto& [name, ws] : handle->workspaces) {
+            if (ws && ws->servers) { ws->servers->shutdown(); }
+        }
+        handle->workspaces.clear();
+        handle->session_workspace.clear();
+    }
 
     // gh#59 (v2.3.1): release the per-handle session.log file sink so
     // a subsequent handle that happens to reuse the same log_id can
@@ -2261,7 +2541,7 @@ static std::vector<std::vector<entropic::Message>> build_batch_messages(
  * @req REQ-API-008
  * @req REQ-API-005
  * @req REQ-ABI-002
- * @version 2.12.0
+ * @version 2.13.0
  */
 entropic_error_t entropic_run_batch(
     entropic_handle_t handle,
@@ -2289,7 +2569,13 @@ entropic_error_t entropic_run_batch(
         std::vector<std::string> tiers_vec;
         auto msgs = build_batch_messages(handle, tiers, prompts, n, tiers_vec);
         std::vector<entropic::GenerationParams> params(n);
-        std::atomic<bool> cancel{false};
+        // gh#158 (v2.13.0): this was a LOCAL `std::atomic<bool> cancel{false}`
+        // that nothing in the tree could ever set, so a batch was
+        // uninterruptible — `entropic_interrupt()` returned OK and the batch
+        // ran to completion. The run's own cancel token is the flag the
+        // handle-wide interrupt and `entropic_interrupt_session` both set,
+        // and `run_batch_gen_loop` already polls its argument per step.
+        std::atomic<bool>& cancel = handle->engine->run_cancel_flag();
         auto results = handle->orchestrator->generate_batch(
             msgs, params, tiers_vec, cancel);
         *result_json = alloc_cstr(serialize_batch_results(results));
@@ -2770,6 +3056,31 @@ entropic_error_t entropic_interrupt(entropic_handle_t handle) {
     return ENTROPIC_OK;
 }
 
+/**
+ * @brief Interrupt one session's run — see entropic.h (gh#158, v2.13.0).
+ *
+ * No `api_mutex`: gh#109's property applies here for the same reason it
+ * applies to `entropic_interrupt` — a cancellation must not queue behind the
+ * turn it is cancelling. The engine's `runs_mutex_` is held for one map
+ * lookup.
+ *
+ * @param handle Engine handle.
+ * @param session_key Session whose run to interrupt; NULL = default.
+ * @return ENTROPIC_OK, or NOT_RUNNING when that session has no run.
+ * @req REQ-API-009
+ * @req REQ-LOOP-006
+ * @version 2.13.0
+ */
+entropic_error_t entropic_interrupt_session(
+    entropic_handle_t handle,
+    const char* session_key) {
+    if (!handle) { return ENTROPIC_ERROR_INVALID_HANDLE; }
+    if (!handle->engine) { return ENTROPIC_ERROR_INVALID_STATE; }
+    const bool found = handle->engine->interrupt_session(
+        session_key != nullptr ? session_key : "");
+    return found ? ENTROPIC_OK : ENTROPIC_ERROR_NOT_RUNNING;
+}
+
 // ── Mid-generation user-message queue (gh#40, v2.1.10) ────────
 
 /**
@@ -2870,16 +3181,24 @@ entropic_error_t entropic_set_queue_observer(
 
 /**
  * @brief Clear conversation history.
+ *
+ * gh#158 (v2.13.0): also releases the cleared session's per-session tool
+ * state (read-before-write reads, todo list) — the model no longer holds
+ * what it read, so a later write must read again.
+ *
  * @param handle Engine handle returned by entropic_create.
  * @return ENTROPIC_OK on success.
  * @req REQ-API-005
  * @req REQ-ABI-001
- * @version 2.0.1
+ * @req REQ-LOOP-009
+ * @version 2.13.0
  */
 entropic_error_t entropic_context_clear(entropic_handle_t handle) {
     if (!handle || !handle->engine) { return ENTROPIC_ERROR_INVALID_HANDLE; }
     entropic::HandleApiLock lock(handle);  // gh#59 v2.3.1: mutex + log scope
+    const auto key = handle->engine->active_session_key();
     handle->engine->clear_conversation();
+    entropic::release_session_tool_state(handle, key);
     return ENTROPIC_OK;
 }
 
@@ -2938,14 +3257,14 @@ entropic_error_t entropic_context_get(
  *         already in flight on this handle.
  * @req REQ-API-009
  * @req REQ-LOOP-001
- * @version 2.12.0
+ * @version 2.13.0
  */
 entropic_error_t entropic_run_session(
     entropic_handle_t handle,
     const char* session_key,
     const char* input,
     char** result_json) {
-    entropic::HandleTurnGuard turn(handle);
+    entropic::HandleTurnGuard turn(handle, session_key);
     auto rc = check_orchestrator(handle);
     if (rc != ENTROPIC_OK || !input || !result_json || !handle->engine
         || !turn.claim()) {
@@ -2982,7 +3301,7 @@ entropic_error_t entropic_run_session(
  *         tier, or ENTROPIC_ERROR_ALREADY_RUNNING.
  * @req REQ-API-009
  * @req REQ-IDEN-001
- * @version 2.12.0
+ * @version 2.13.0
  */
 entropic_error_t entropic_run_session_as(
     entropic_handle_t handle,
@@ -2990,7 +3309,7 @@ entropic_error_t entropic_run_session_as(
     const char* tier_or_identity,
     const char* input,
     char** result_json) {
-    entropic::HandleTurnGuard turn(handle);
+    entropic::HandleTurnGuard turn(handle, session_key);
     auto rc = check_orchestrator(handle);
     if (rc != ENTROPIC_OK || !tier_or_identity || !input || !result_json
         || !handle->engine || !turn.claim()) {
@@ -3019,7 +3338,7 @@ entropic_error_t entropic_run_session_as(
  * @param cancel_flag Optional cancel flag.
  * @return ENTROPIC_OK or ENTROPIC_ERROR_ALREADY_RUNNING.
  * @req REQ-API-009
- * @version 2.12.0
+ * @version 2.13.0
  */
 entropic_error_t entropic_run_session_streaming(
     entropic_handle_t handle,
@@ -3028,7 +3347,7 @@ entropic_error_t entropic_run_session_streaming(
     void (*on_token)(const char* token, size_t len, void* user_data),
     void* user_data,
     int* cancel_flag) {
-    entropic::HandleTurnGuard turn(handle);
+    entropic::HandleTurnGuard turn(handle, session_key);
     auto rc = check_orchestrator(handle);
     if (rc != ENTROPIC_OK || !input || !on_token || !handle->engine
         || !turn.claim()) {
@@ -3077,6 +3396,108 @@ entropic_error_t entropic_session_context_get(
 }
 
 /**
+ * @brief Parse a restore payload into messages (gh#165, v2.13.0).
+ *
+ * Split out so `entropic_session_context_set` stays inside the knots
+ * returns gate, and so the parse failure has exactly one spelling.
+ *
+ * @param handle Engine handle (for last_error).
+ * @param messages_json Payload in the shape session_context_get emits.
+ * @param[out] out Parsed messages.
+ * @return true on success; false with handle->last_error set.
+ * @utility
+ * @version 2.13.0
+ */
+static bool parse_restore_payload(entropic_handle_t handle,
+                                  const char* messages_json,
+                                  std::vector<entropic::Message>& out) {
+    try {
+        out = entropic::parse_messages_json(messages_json);
+        return true;
+    } catch (const std::exception& e) {
+        handle->last_error =
+            std::string("session_context_set: malformed messages JSON: ")
+            + e.what();
+        s_log->error("{}", handle->last_error);
+        return false;
+    }
+}
+
+/**
+ * @brief Parse, replace and invalidate for entropic_session_context_set.
+ *
+ * Runs no turn and touches no model. Refuses only the session that is
+ * RUNNING; every other session stays mutable mid-run, because what must not
+ * move under a turn is the conversation it appends to, not the handle.
+ *
+ * On success the session's resident KV is dropped, so the restored history
+ * cannot decode against a prefix the conversation it replaced left behind,
+ * and its per-session tool state (gh#158: read-before-write reads, todo
+ * list) is released for the same reason.
+ *
+ * @param handle Engine handle (validated by the caller).
+ * @param key Session to replace; "" = default.
+ * @param messages_json JSON array of message objects.
+ * @return ENTROPIC_OK, INVALID_ARGUMENT, or ALREADY_RUNNING.
+ * @utility
+ * @version 2.13.0 [reviewed]
+ */
+static entropic_error_t session_context_set_inner(
+    entropic_handle_t handle,
+    const std::string& key,
+    const char* messages_json) {
+    std::vector<entropic::Message> msgs;
+    if (!parse_restore_payload(handle, messages_json, msgs)) {
+        return ENTROPIC_ERROR_INVALID_ARGUMENT;
+    }
+    if (!handle->engine->set_session_messages(key, std::move(msgs))) {
+        handle->last_error =
+            "session_context_set: a run on session '" + key
+            + "' is in flight";
+        return ENTROPIC_ERROR_ALREADY_RUNNING;
+    }
+    // Whatever the old conversation left resident is now a prefix of a
+    // history that no longer exists. Warm-keep would still be correct (it
+    // matches TOKENS, and re-decodes the divergent tail), but the gate is
+    // token equality rather than conversation identity — so the restore is
+    // made correct by construction instead of by that argument.
+    if (handle->orchestrator) {
+        handle->orchestrator->forget_session_kv(key);
+    }
+    // gh#158: the reads and todos that described the replaced history
+    // describe nothing now.
+    entropic::release_session_tool_state(handle, key);
+    return ENTROPIC_OK;
+}
+
+/**
+ * @brief Replace one session's conversation — see entropic.h (gh#165).
+ *
+ * Front validation only; the work is in session_context_set_inner, split
+ * out for the knots returns gate.
+ *
+ * @param handle Engine handle.
+ * @param session_key Session to replace; NULL = default.
+ * @param messages_json JSON array of message objects.
+ * @return ENTROPIC_OK, INVALID_ARGUMENT, or ALREADY_RUNNING.
+ * @req REQ-LOOP-010
+ * @version 2.13.0
+ */
+entropic_error_t entropic_session_context_set(
+    entropic_handle_t handle,
+    const char* session_key,
+    const char* messages_json) {
+    if (!handle || !handle->engine || !messages_json) {
+        return (handle != nullptr && handle->engine != nullptr)
+            ? ENTROPIC_ERROR_INVALID_ARGUMENT
+            : ENTROPIC_ERROR_INVALID_HANDLE;
+    }
+    entropic::HandleApiLock lock(handle);
+    return session_context_set_inner(
+        handle, session_key != nullptr ? session_key : "", messages_json);
+}
+
+/**
  * @brief Message count for one session (gh#144, v2.12.0).
  * @param handle Engine handle.
  * @param session_key Session to count; NULL or "" = default session.
@@ -3107,11 +3528,15 @@ entropic_error_t entropic_session_context_count(
  * why the issue observed it "is not isolation" — with two callers active
  * there was no ordering in which it was correct.
  *
+ * gh#158 (v2.13.0): also releases that session's per-session tool state
+ * (read-before-write reads, todo list), and only that session's.
+ *
  * @param handle Engine handle.
  * @param session_key Session to clear; NULL or "" = default session.
  * @return ENTROPIC_OK on success.
  * @req REQ-LOOP-001
- * @version 2.12.0
+ * @req REQ-LOOP-009
+ * @version 2.13.0
  */
 entropic_error_t entropic_session_context_clear(
     entropic_handle_t handle,
@@ -3120,17 +3545,25 @@ entropic_error_t entropic_session_context_clear(
         return ENTROPIC_ERROR_INVALID_HANDLE;
     }
     entropic::HandleApiLock lock(handle);
-    handle->engine->clear_conversation_for(session_key ? session_key : "");
+    const std::string key = session_key ? session_key : "";
+    handle->engine->clear_conversation_for(key);
+    entropic::release_session_tool_state(handle, key);
     return ENTROPIC_OK;
 }
 
 /**
  * @brief Forget a session entirely (gh#144, v2.12.0).
+ *
+ * gh#158 (v2.13.0): also releases that session's per-session tool state
+ * (read-before-write reads, todo list), so dropped sessions leave nothing
+ * behind on the servers.
+ *
  * @param handle Engine handle.
  * @param session_key Session to drop; "" is cleared rather than erased.
  * @return ENTROPIC_OK on success.
  * @req REQ-LOOP-001
- * @version 2.12.0
+ * @req REQ-LOOP-009
+ * @version 2.13.0
  */
 entropic_error_t entropic_session_drop(
     entropic_handle_t handle,
@@ -3139,7 +3572,9 @@ entropic_error_t entropic_session_drop(
         return ENTROPIC_ERROR_INVALID_HANDLE;
     }
     entropic::HandleApiLock lock(handle);
-    handle->engine->drop_session(session_key ? session_key : "");
+    const std::string key = session_key ? session_key : "";
+    handle->engine->drop_session(key);
+    entropic::release_session_tool_state(handle, key);
     return ENTROPIC_OK;
 }
 
@@ -3228,12 +3663,12 @@ entropic_error_t entropic_context_usage(
 /**
  * @brief Save tier's KV cache to file body (gh#23 v2.3.25).
  * @dg_internal
- * @version 2.3.25
+ * @version 2.13.0
  */
 static entropic_error_t do_state_save(
     entropic_handle_t handle, const char* tier_name, const char* path) {
     if (!handle->orchestrator) { return ENTROPIC_ERROR_INVALID_STATE; }
-    auto* backend = require_active_backend(handle, tier_name);
+    auto* backend = require_ready_backend(handle, tier_name);
     std::vector<uint8_t> buf;
     if (!backend->save_state(0, buf)) { return ENTROPIC_ERROR_INTERNAL; }
     std::ofstream out(path, std::ios::binary | std::ios::trunc);
@@ -3249,15 +3684,20 @@ static entropic_error_t do_state_save(
  * @req REQ-API-005
  * @req REQ-ABI-001
  * @req REQ-ABI-002
- * @version 2.3.25
+ * @version 2.13.0
  */
 entropic_error_t entropic_state_save(
     entropic_handle_t handle,
     const char* tier_name,
     const char* path) {
-    if (!handle || !tier_name || !path) {
+    // gh#157: this may now LOAD the tier's model. Claim the turn so the
+    // load cannot land in the middle of a generation on another thread.
+    entropic::HandleTurnGuard turn(handle);
+    if (!handle || !tier_name || !path
+        || (handle->engine != nullptr && !turn.claim())) {
         return !handle ? ENTROPIC_ERROR_INVALID_HANDLE
-                       : ENTROPIC_ERROR_INVALID_ARGUMENT;
+            : (!tier_name || !path) ? ENTROPIC_ERROR_INVALID_ARGUMENT
+            : ENTROPIC_ERROR_ALREADY_RUNNING;
     }
     entropic::HandleApiLock lock(handle);
     return c_api_try(handle,
@@ -3289,12 +3729,12 @@ static bool read_state_file(const char* path, std::vector<uint8_t>& out_buf) {
 /**
  * @brief Load tier's KV cache from file body (gh#23 v2.3.25).
  * @dg_internal
- * @version 2.3.25
+ * @version 2.13.0
  */
 static entropic_error_t do_state_load(
     entropic_handle_t handle, const char* tier_name, const char* path) {
     if (!handle->orchestrator) { return ENTROPIC_ERROR_INVALID_STATE; }
-    auto* backend = require_active_backend(handle, tier_name);
+    auto* backend = require_ready_backend(handle, tier_name);
     std::vector<uint8_t> buf;
     if (!read_state_file(path, buf)) { return ENTROPIC_ERROR_IO; }
     return backend->restore_state(0, buf)
@@ -3307,15 +3747,19 @@ static entropic_error_t do_state_load(
  * @req REQ-API-005
  * @req REQ-ABI-001
  * @req REQ-ABI-002
- * @version 2.3.25
+ * @version 2.13.0
  */
 entropic_error_t entropic_state_load(
     entropic_handle_t handle,
     const char* tier_name,
     const char* path) {
-    if (!handle || !tier_name || !path) {
+    // gh#157: may load the tier's model — see entropic_state_save.
+    entropic::HandleTurnGuard turn(handle);
+    if (!handle || !tier_name || !path
+        || (handle->engine != nullptr && !turn.claim())) {
         return !handle ? ENTROPIC_ERROR_INVALID_HANDLE
-                       : ENTROPIC_ERROR_INVALID_ARGUMENT;
+            : (!tier_name || !path) ? ENTROPIC_ERROR_INVALID_ARGUMENT
+            : ENTROPIC_ERROR_ALREADY_RUNNING;
     }
     entropic::HandleApiLock lock(handle);
     return c_api_try(handle,
@@ -3347,18 +3791,62 @@ entropic_error_t entropic_metrics_json(
 // ── LoRA Adapter APIs (v1.9.2 → v2.0.0) ────────────────────
 
 /**
+ * @brief Body of entropic_adapter_load — resolve the tier, make its model
+ *        resident, load the adapter against it (gh#157).
+ * @param handle Engine handle (configured, orchestrator present).
+ * @param adapter_name Unique adapter identifier.
+ * @param adapter_path Path to the adapter GGUF.
+ * @param base_model_path Model path identifying the owning tier.
+ * @param scale LoRA scale.
+ * @return ENTROPIC_OK, or ENTROPIC_ERROR_ADAPTER_LOAD_FAILED.
+ * @throws std::runtime_error when the path names no tier, or its model
+ *         cannot be made resident.
+ * @dg_internal
+ * @version 2.13.0
+ */
+static entropic_error_t do_adapter_load(
+    entropic_handle_t handle, const char* adapter_name,
+    const char* adapter_path, const char* base_model_path, float scale)
+{
+    auto tier = handle->config.models.find_tier_by_path(base_model_path);
+    if (tier.empty()) {
+        throw std::runtime_error("no tier for model: "
+            + std::string(base_model_path));
+    }
+    // gh#157: load the base model if it is not resident, rather than
+    // returning INTERNAL "backend not ready" — which is what a deferred
+    // (or released, gh#164) tier looks like.
+    auto* base = handle->orchestrator->ensure_model(tier);
+    auto* llama = dynamic_cast<entropic::LlamaCppBackend*>(base);
+    if (!llama || !llama->llama_model_ptr()) {
+        throw std::runtime_error("backend not ready for tier: " + tier);
+    }
+    bool ok = handle->orchestrator->adapter_manager().load(
+        adapter_name, adapter_path, llama->llama_model_ptr(), scale);
+    return ok ? ENTROPIC_OK : ENTROPIC_ERROR_ADAPTER_LOAD_FAILED;
+}
+
+/**
  * @brief Load a LoRA adapter into RAM.
  *
  * Requires a configured engine. The adapter_manager needs llama_model*
- * pointers that are only available from a loaded backend, so this
- * delegates through the orchestrator's backend for the given tier.
- * base_model_path is resolved to a tier via model path matching.
+ * pointers that are only available from a loaded backend, so this resolves
+ * `base_model_path` to a tier and — since gh#157 (v2.13.0) — LOADS that
+ * tier's model if it is not resident, instead of failing with
+ * "backend not ready". Claims the handle's turn, so the load cannot land
+ * mid-generation.
  *
- * @return ENTROPIC_OK on success, error code on failure.
+ * @param handle Engine handle.
+ * @param adapter_name Unique adapter identifier.
+ * @param adapter_path Path to the adapter GGUF.
+ * @param base_model_path Model path identifying the owning tier.
+ * @param scale LoRA scale.
+ * @return ENTROPIC_OK on success, ENTROPIC_ERROR_ALREADY_RUNNING when a
+ *         turn is in flight, else an error code.
  * @req REQ-INFER-023
  * @req REQ-API-005
  * @req REQ-ABI-002
- * @version 2.0.2
+ * @version 2.13.0
  */
 entropic_error_t entropic_adapter_load(
     entropic_handle_t handle,
@@ -3368,28 +3856,21 @@ entropic_error_t entropic_adapter_load(
     float scale)
 {
     auto rc = check_orchestrator(handle);
-    if (rc != ENTROPIC_OK || !adapter_name || !adapter_path || !base_model_path) {
-        return rc != ENTROPIC_OK ? rc : ENTROPIC_ERROR_INVALID_ARGUMENT;
+    // gh#157: may load the base model — claim the turn first.
+    entropic::HandleTurnGuard turn(handle);
+    if (rc != ENTROPIC_OK || !adapter_name || !adapter_path
+        || !base_model_path
+        || (handle->engine != nullptr && !turn.claim())) {
+        return rc != ENTROPIC_OK ? rc
+            : (!adapter_name || !adapter_path || !base_model_path)
+                ? ENTROPIC_ERROR_INVALID_ARGUMENT
+                : ENTROPIC_ERROR_ALREADY_RUNNING;
     }
-    try {
-        entropic::HandleApiLock lock(handle);  // gh#59 v2.3.1: mutex + log scope
-        auto tier = handle->config.models.find_tier_by_path(base_model_path);
-        if (tier.empty()) {
-            throw std::runtime_error("no tier for model: "
-                + std::string(base_model_path));
-        }
-        auto* base = handle->orchestrator->get_backend(tier);
-        auto* llama = dynamic_cast<entropic::LlamaCppBackend*>(base);
-        if (!llama || !llama->llama_model_ptr()) {
-            throw std::runtime_error("backend not ready for tier: " + tier);
-        }
-        bool ok = handle->orchestrator->adapter_manager().load(
-            adapter_name, adapter_path, llama->llama_model_ptr(), scale);
-        return ok ? ENTROPIC_OK : ENTROPIC_ERROR_ADAPTER_LOAD_FAILED;
-    } catch (const std::exception& e) {
-        handle->last_error = e.what();
-        return ENTROPIC_ERROR_INTERNAL;
-    }
+    entropic::HandleApiLock lock(handle);  // gh#59 v2.3.1: mutex + log scope
+    return c_api_try(handle, [&]() {
+        return do_adapter_load(handle, adapter_name, adapter_path,
+                               base_model_path, scale);
+    });
 }
 
 /**
@@ -4296,6 +4777,32 @@ entropic_error_t entropic_identity_count(
 // ── Log-Probability Evaluation APIs (v1.9.10 → v2.0.0) ──────
 
 /**
+ * @brief Copy a LogprobResult into the caller's C struct.
+ *
+ * Extracted in v2.13.0 so `entropic_get_logprobs` stays under the ABC gate
+ * once the gh#157 lazy-load precondition landed. Arrays are malloc'd here
+ * and freed by `entropic_free_logprob_result`.
+ *
+ * @param lr Engine-side result.
+ * @param[out] result Caller-owned struct; its array members are allocated.
+ * @dg_internal
+ * @version 2.13.0
+ */
+static void fill_logprob_result(const entropic::LogprobResult& lr,
+                                entropic_logprob_result_t* result) {
+    result->n_tokens = lr.n_tokens;
+    result->n_logprobs = lr.n_logprobs;
+    result->perplexity = lr.perplexity;
+    result->total_logprob = lr.total_logprob;
+    result->logprobs = static_cast<float*>(
+        malloc(sizeof(float) * lr.logprobs.size()));
+    std::copy(lr.logprobs.begin(), lr.logprobs.end(), result->logprobs);
+    result->tokens = static_cast<int32_t*>(
+        malloc(sizeof(int32_t) * lr.tokens.size()));
+    std::copy(lr.tokens.begin(), lr.tokens.end(), result->tokens);
+}
+
+/**
  * @brief Evaluate per-token log-probabilities for a token sequence.
  *
  * Resolves model_id as a tier name, retrieves the backend, and
@@ -4307,7 +4814,7 @@ entropic_error_t entropic_identity_count(
  * @req REQ-API-008
  * @req REQ-API-005
  * @req REQ-ABI-002
- * @version 2.0.0
+ * @version 2.13.0
  */
 entropic_error_t entropic_get_logprobs(
     entropic_handle_t handle,
@@ -4317,25 +4824,20 @@ entropic_error_t entropic_get_logprobs(
     entropic_logprob_result_t* result)
 {
     auto rc = check_orchestrator(handle);
-    if (rc != ENTROPIC_OK || !model_id || !tokens || !result || n_tokens < 2) {
-        return rc != ENTROPIC_OK ? rc : ENTROPIC_ERROR_INVALID_ARGUMENT;
+    // gh#157: may load the tier's model — claim the turn first.
+    entropic::HandleTurnGuard turn(handle);
+    if (rc != ENTROPIC_OK || !model_id || !tokens || !result || n_tokens < 2
+        || (handle->engine != nullptr && !turn.claim())) {
+        return rc != ENTROPIC_OK ? rc
+            : (!model_id || !tokens || !result || n_tokens < 2)
+                ? ENTROPIC_ERROR_INVALID_ARGUMENT
+                : ENTROPIC_ERROR_ALREADY_RUNNING;
     }
     try {
         entropic::HandleApiLock lock(handle);  // gh#59 v2.3.1: mutex + log scope
-        auto* backend = require_active_backend(handle, model_id);
-        auto lr = backend->evaluate_logprobs(tokens, n_tokens);
-        result->n_tokens = lr.n_tokens;
-        result->n_logprobs = lr.n_logprobs;
-        result->perplexity = lr.perplexity;
-        result->total_logprob = lr.total_logprob;
-        result->logprobs = static_cast<float*>(
-            malloc(sizeof(float) * lr.logprobs.size()));
-        std::copy(lr.logprobs.begin(), lr.logprobs.end(),
-                  result->logprobs);
-        result->tokens = static_cast<int32_t*>(
-            malloc(sizeof(int32_t) * lr.tokens.size()));
-        std::copy(lr.tokens.begin(), lr.tokens.end(),
-                  result->tokens);
+        auto* backend = require_ready_backend(handle, model_id);
+        fill_logprob_result(backend->evaluate_logprobs(tokens, n_tokens),
+                            result);
         return ENTROPIC_OK;
     } catch (const std::exception& e) {
         handle->last_error = e.what();
@@ -4354,7 +4856,7 @@ entropic_error_t entropic_get_logprobs(
  * @req REQ-INFER-024
  * @req REQ-API-005
  * @req REQ-ABI-002
- * @version 2.0.0
+ * @version 2.13.0
  */
 entropic_error_t entropic_compute_perplexity(
     entropic_handle_t handle,
@@ -4364,12 +4866,18 @@ entropic_error_t entropic_compute_perplexity(
     float* perplexity)
 {
     auto rc = check_orchestrator(handle);
-    if (rc != ENTROPIC_OK || !model_id || !tokens || !perplexity || n_tokens < 2) {
-        return rc != ENTROPIC_OK ? rc : ENTROPIC_ERROR_INVALID_ARGUMENT;
+    // gh#157: may load the tier's model — claim the turn first.
+    entropic::HandleTurnGuard turn(handle);
+    if (rc != ENTROPIC_OK || !model_id || !tokens || !perplexity
+        || n_tokens < 2 || (handle->engine != nullptr && !turn.claim())) {
+        return rc != ENTROPIC_OK ? rc
+            : (!model_id || !tokens || !perplexity || n_tokens < 2)
+                ? ENTROPIC_ERROR_INVALID_ARGUMENT
+                : ENTROPIC_ERROR_ALREADY_RUNNING;
     }
     try {
         entropic::HandleApiLock lock(handle);  // gh#59 v2.3.1: mutex + log scope
-        auto* backend = require_active_backend(handle, model_id);
+        auto* backend = require_ready_backend(handle, model_id);
         *perplexity = backend->compute_perplexity(tokens, n_tokens);
         return ENTROPIC_OK;
     } catch (const std::exception& e) {
@@ -4413,7 +4921,7 @@ void entropic_free_logprob_result(entropic_logprob_result_t* result)
  * @req REQ-INFER-025
  * @req REQ-API-005
  * @req REQ-ABI-002
- * @version 2.0.0
+ * @version 2.13.0
  */
 int entropic_model_has_vision(
     entropic_handle_t handle,
@@ -4424,9 +4932,11 @@ int entropic_model_has_vision(
         return 0;
     }
     try {
-        auto* backend = handle->orchestrator->get_backend(model_id);
-        return (backend && backend->supports(
-            entropic::BackendCapability::VISION)) ? 1 : 0;
+        // gh#157: answer from CONFIG, not from the backend. The backend's
+        // has_vision_ is set while the mmproj context is built during
+        // ACTIVATION, so an unloaded tier answered 0 — wrong, not unknown —
+        // and with models.defer_load unloaded is the normal state.
+        return handle->orchestrator->tier_declares_vision(model_id) ? 1 : 0;
     } catch (const std::exception& e) {
         handle->last_error = e.what();
         s_log->error("model_has_vision: {}", handle->last_error);
@@ -4631,6 +5141,38 @@ entropic_error_t entropic_set_residency_observer(
         handle->orchestrator->set_residency_observer(std::move(fn));
     }
     return ENTROPIC_OK;
+}
+
+/**
+ * @brief Release a resident model, keeping conversations and registrations.
+ *
+ * Schema and contract are documented on the declaration in entropic.h.
+ * Claims the handle's turn first: unloading frees the llama context a
+ * decode would be running on, and `swap_mutex_` does not serialize
+ * generation, so "refuse while running" is the only safe answer.
+ *
+ * @param handle Engine handle.
+ * @param tier_name Tier to release, or NULL/"" for every resident model.
+ * @return ENTROPIC_OK, INVALID_HANDLE, INVALID_STATE, MODEL_NOT_FOUND or
+ *         ALREADY_RUNNING.
+ * @req REQ-INFER-019
+ * @req REQ-API-005
+ * @version 2.13.0
+ */
+entropic_error_t entropic_release_model(
+    entropic_handle_t handle,
+    const char* tier_name) {
+    auto rc = check_orchestrator(handle);
+    entropic::HandleTurnGuard turn(handle);
+    if (rc != ENTROPIC_OK
+        || (handle->engine != nullptr && !turn.claim())) {
+        return rc != ENTROPIC_OK ? rc : ENTROPIC_ERROR_ALREADY_RUNNING;
+    }
+    entropic::HandleApiLock lock(handle);
+    return c_api_try(handle, [&]() {
+        return handle->orchestrator->release_models(
+            tier_name != nullptr ? tier_name : "");
+    });
 }
 
 /**

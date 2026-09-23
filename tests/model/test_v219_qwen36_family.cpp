@@ -26,12 +26,7 @@ SCENARIO("Qwen 3.6 family GGUF loads and generates first token",
          "[model][v219][qwen36][smoke]")
 {
     if (!g_ctx.initialized) {
-        SKIP("qwen3_6_a3b unavailable: either the GGUF is not downloaded "
-             "(`entropic download qwen3_6_a3b`) or the host lacks the RAM "
-             "for its WARM load, which maps the whole ~12 GB file into CPU "
-             "memory regardless of gpu_layers. The warn line above says "
-             "which, with the measured numbers. Hardware limit, not a "
-             "defect — this runs on a host with the RAM free.");
+        SKIP(skip_reason_or_default("qwen3_6_a3b"));
     }
     GIVEN("an engine with qwen3_6_a3b loaded via Qwen36Adapter") {
         start_test_log("v219_qwen36_smoke");

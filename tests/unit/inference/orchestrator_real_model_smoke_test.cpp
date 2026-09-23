@@ -17,7 +17,7 @@
  * tests). Keeping these two real-model loads in different processes is
  * the deliberate isolation.
  *
- * @version 2.7.0
+ * @version 2.13.0
  */
 
 #include <catch2/catch_test_macros.hpp>
@@ -96,6 +96,31 @@ TEST_CASE("ModelOrchestrator real-model generate (one load, CPU)",
     auto r3 = orch.generate_streaming(
         msgs, params, [](std::string_view) {}, cancel, "lead");
     (void)r3;
+
+    // gh#154 (v2.13.0): one record per generation, on a REAL decode.
+    //
+    // The unit cases pin describe_grammar as a pure function; this is the
+    // only place that proves the orchestrator actually appends a record on
+    // the production path — the gap that let prefill_tokens, tok/s and the
+    // draft/accept counts be computed, logged and then reach no consumer.
+    auto records = orch.generation_records();
+    CHECK(records.size() == 3);   // r1 + r2 + the streaming call
+    if (!records.empty()) {
+        const auto& last = records.back();
+        CHECK_FALSE(last.finish_reason.empty());
+        CHECK(last.token_count >= 0);
+    }
+    if (records.size() >= 2) {
+        // No tier grammar and no request grammar on r1; r2 stages tools,
+        // so its record must not claim the same provenance as r1 unless
+        // the render genuinely derived no grammar. Either way the field
+        // must be POPULATED — an empty source string would mean the
+        // record was appended without provenance ever being computed.
+        CHECK_FALSE(records[0].grammar.source.empty());
+        CHECK_FALSE(records[1].grammar.source.empty());
+        CHECK(records[0].grammar.source == "none");
+        CHECK_FALSE(records[0].grammar.resolved);
+    }
 
     // Routing + last-used-tier accessors.
     (void)orch.route(msgs);

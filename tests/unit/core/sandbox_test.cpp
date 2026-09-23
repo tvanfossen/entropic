@@ -285,10 +285,15 @@ TEST_CASE("discard_sandbox refuses paths outside session base",
 namespace {
 fs::path g_swap_observed;
 fs::path g_restore_observed;
+std::string g_swap_key;
+bool g_last_entering = false;
 int g_swap_call_count = 0;
 
-void test_swap(const fs::path& path, void* user_data) {
+void test_swap(const std::string& session_key, const fs::path& path,
+               bool entering, void* user_data) {
     (void)user_data;
+    g_swap_key = session_key;
+    g_last_entering = entering;
     if (g_swap_call_count == 0) {
         g_swap_observed = path;
     } else {
@@ -307,18 +312,40 @@ TEST_CASE("ScopedSandbox swaps on construct and restores on destruct",
     fs::path sandbox_path = "/tmp/sandbox_path";
     fs::path original = "/tmp/original";
     {
-        ScopedSandbox s(test_swap, nullptr, sandbox_path, original);
+        ScopedSandbox s(test_swap, nullptr, "ws-a", sandbox_path, original);
         REQUIRE(g_swap_observed == sandbox_path);
         REQUIRE(g_swap_call_count == 1);
+        // gh#160: the facade cannot route a swap it cannot attribute.
+        REQUIRE(g_swap_key == "ws-a");
+        REQUIRE(g_last_entering);
     }
     REQUIRE(g_restore_observed == original);
     REQUIRE(g_swap_call_count == 2);
+    REQUIRE_FALSE(g_last_entering);
 }
 
 TEST_CASE("ScopedSandbox no-op when swap_fn is null", "[sandbox][scoped]") {
     fs::path p = "/tmp/x";
-    ScopedSandbox s(nullptr, nullptr, p, p);
+    ScopedSandbox s(nullptr, nullptr, "", p, p);
     SUCCEED();
+}
+
+TEST_CASE("gh#160: next_delegation_id never repeats",
+          "[sandbox][gh160][v2.13.0]") {
+    ScopedHome home;
+    auto project = make_temp_project(false);
+    SandboxManager mgr(project);
+
+    // Pre-gh#160 the caller minted "d" + depth, so two delegations at one
+    // depth shared a sandbox directory AND a pending/<id>.patch filename.
+    auto a = mgr.next_delegation_id("d1");
+    auto b = mgr.next_delegation_id("d1");
+    auto c = mgr.next_delegation_id("pipeline");
+    CHECK(a != b);
+    CHECK(a.rfind("d1", 0) == 0);
+    CHECK(b.rfind("d1", 0) == 0);
+    CHECK(c.rfind("pipeline", 0) == 0);
+    fs::remove_all(project);
 }
 
 // ── gh#33 (v2.1.6): session-scoped lifecycle ─────────────

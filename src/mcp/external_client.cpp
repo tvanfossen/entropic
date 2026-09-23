@@ -134,7 +134,8 @@ std::string ExternalMCPClient::empty_response_envelope(
  *         instead of a hang.
  * @req REQ-MCP-025
  * @req REQ-MCP-002
- * @version 2.12.1
+ * @req REQ-MCP-026
+ * @version 2.13.0
  */
 std::string ExternalMCPClient::execute(
     const std::string& tool_name,
@@ -162,16 +163,81 @@ std::string ExternalMCPClient::execute(
         params["arguments"] = nlohmann::json::object();
     }
 
-    auto request = build_request("tools/call", params.dump());
+    int request_id = 0;
+    auto request = build_request_id(
+        "tools/call", params.dump(), request_id);
     auto response = transport_->send_request(
         request, DEFAULT_TIMEOUT_MS);
 
-    if (response.empty()) {
-        return empty_response_envelope(tool_name);
+    auto problem = response_problem(tool_name, response, request_id);
+    if (!problem.empty()) {
+        return problem;
     }
 
     auto result_text = extract_tool_result(response);
     return build_response(result_text);
+}
+
+/**
+ * @brief The failure envelope a response warrants, or empty if it is fine.
+ *
+ * gh#158. `execute()` gained a second rejection reason (the JSON-RPC id
+ * pairing) and that would have put it at FOUR returns against a limit of
+ * three. Both rejections are "this response cannot be used", so they belong
+ * together rather than as two more early exits.
+ *
+ * @param tool_name Local tool name (without server prefix).
+ * @param response Raw response line from the transport.
+ * @param expected_id The id the request carried.
+ * @return An is_error envelope, or an empty string when the response is
+ *         usable (`build_response` never produces an empty string, so empty
+ *         is an unambiguous "no problem").
+ * @req REQ-MCP-025
+ * @req REQ-MCP-026
+ * @version 2.13.0
+ */
+std::string ExternalMCPClient::response_problem(
+    const std::string& tool_name,
+    const std::string& response,
+    int expected_id) const {
+    if (response.empty()) {
+        return empty_response_envelope(tool_name);
+    }
+    if (!response_matches(response, expected_id)) {
+        return mismatched_response_envelope(tool_name, expected_id);
+    }
+    return {};
+}
+
+/**
+ * @brief The envelope for a response that answered a different request.
+ *
+ * gh#158. Sibling of `empty_response_envelope`, reached through
+ * `response_problem`.
+ *
+ * Reported as an error rather than returned as a result, because the payload
+ * is REAL content that belongs to someone else's tool call — the one failure
+ * mode a caller could not detect for itself. The leading "Error:" is
+ * load-bearing: `classify_tool_result` routes on the text.
+ *
+ * @param tool_name Local tool name (without server prefix).
+ * @param expected_id The id this call sent.
+ * @return An is_error envelope naming the desynchronization.
+ * @req REQ-MCP-025
+ * @req REQ-MCP-026
+ * @version 2.13.0
+ */
+std::string ExternalMCPClient::mismatched_response_envelope(
+    const std::string& tool_name, int expected_id) const {
+    logger->error("Server '{}' answered request {} with a response carrying "
+                  "a different id; discarding it rather than returning "
+                  "another request's result for tool '{}'",
+                  name_, expected_id, tool_name);
+    return build_response(
+        "Error: tool '" + name_ + "." + tool_name +
+        "' got a response that did not answer it (JSON-RPC id mismatch). "
+        "The transport had a stale reply queued from an abandoned request; "
+        "it has been discarded. Retry the call.", true);
 }
 
 /**
@@ -239,15 +305,35 @@ bool ExternalMCPClient::is_connected() const {
  *         id; unparseable params degrade to an empty object rather than
  *         throwing.
  * @req REQ-MCP-025
- * @version 1.8.7
+ * @version 2.13.0
  */
 std::string ExternalMCPClient::build_request(
     const std::string& method,
     const std::string& params) {
+    int ignored = 0;
+    return build_request_id(method, params, ignored);
+}
 
+/**
+ * @brief Build a JSON-RPC request and report its id (gh#158).
+ * @param method JSON-RPC method name.
+ * @param params JSON-RPC params string.
+ * @param[out] id The id stamped into the request.
+ * @return A JSON-RPC 2.0 request carrying a monotonically increasing id;
+ *         unparseable params degrade to an empty object rather than throwing.
+ * @req REQ-MCP-025
+ * @req REQ-MCP-026
+ * @version 2.13.0
+ */
+std::string ExternalMCPClient::build_request_id(
+    const std::string& method,
+    const std::string& params,
+    int& id) {
+
+    id = next_id_.fetch_add(1, std::memory_order_relaxed);
     nlohmann::json req;
     req["jsonrpc"] = "2.0";
-    req["id"] = next_id_++;
+    req["id"] = id;
     req["method"] = method;
     try {
         req["params"] = nlohmann::json::parse(params);
@@ -255,6 +341,36 @@ std::string ExternalMCPClient::build_request(
         req["params"] = nlohmann::json::object();
     }
     return req.dump();
+}
+
+/**
+ * @brief Whether a response answers the request that asked — see header.
+ * @param response_json Raw JSON-RPC response line.
+ * @param expected_id The id of the request that was sent.
+ * @return true when the response carries `expected_id`; false on a
+ *         mismatch, a missing id, or an unparseable line.
+ * @req REQ-MCP-025
+ * @req REQ-MCP-026
+ * @version 2.13.0
+ */
+bool ExternalMCPClient::response_matches(
+    const std::string& response_json, int expected_id) {
+    try {
+        auto j = nlohmann::json::parse(response_json);
+        // A string id is accepted when it spells the same number. We always
+        // SEND an integer and JSON-RPC 2.0 requires the response to echo the
+        // same value, but stringifying it is the one deviation common enough
+        // in the wild to be worth tolerating — it is unambiguous, so
+        // rejecting it would break working servers for no safety gain.
+        if (j.value("id", nlohmann::json()).is_string()) {
+            return j["id"].get<std::string>()
+                == std::to_string(expected_id);
+        }
+        return j.contains("id") && j["id"].is_number_integer()
+            && j["id"].get<int>() == expected_id;
+    } catch (const nlohmann::json::exception&) {
+        return false;
+    }
 }
 
 /**
@@ -286,7 +402,8 @@ bool ExternalMCPClient::validate_init_response(
  *         response carried no JSON-RPC error; false on timeout, empty
  *         response, or an error object.
  * @req REQ-MCP-025
- * @version 1.8.8
+ * @req REQ-MCP-026
+ * @version 2.13.0
  */
 bool ExternalMCPClient::send_initialize() {
     nlohmann::json params;
@@ -295,11 +412,13 @@ bool ExternalMCPClient::send_initialize() {
     params["clientInfo"]["name"] = "entropic";
     params["clientInfo"]["version"] = "1.8.7";
 
-    auto request = build_request("initialize", params.dump());
+    int request_id = 0;
+    auto request = build_request_id(
+        "initialize", params.dump(), request_id);
     auto response = transport_->send_request(
         request, INIT_TIMEOUT_MS);
 
-    if (response.empty()) {
+    if (response.empty() || !response_matches(response, request_id)) {
         return false;
     }
     return validate_init_response(response);
@@ -315,14 +434,16 @@ bool ExternalMCPClient::send_initialize() {
  *         timeout, empty response, or an unparseable/misshaped result.
  * @req REQ-MCP-025
  * @req REQ-MCP-007
- * @version 1.8.7
+ * @req REQ-MCP-026
+ * @version 2.13.0
  */
 bool ExternalMCPClient::query_tools() {
-    auto request = build_request("tools/list");
+    int request_id = 0;
+    auto request = build_request_id("tools/list", "{}", request_id);
     auto response = transport_->send_request(
         request, INIT_TIMEOUT_MS);
 
-    if (response.empty()) {
+    if (response.empty() || !response_matches(response, request_id)) {
         return false;
     }
 

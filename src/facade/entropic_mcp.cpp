@@ -12,12 +12,17 @@
 #include "engine_handle.h"
 
 #include <entropic/entropic.h>
+#include <entropic/config/loader.h>
 #include <entropic/mcp/mcp_json_discovery.h>
 #include <entropic/types/logging.h>
 
 #include "json_serializers.h"
 
 #include <cstring>
+#include <filesystem>
+#include <memory>
+#include <string>
+#include <vector>
 
 static auto logger = entropic::log::get("facade.mcp");
 
@@ -32,6 +37,380 @@ static entropic_error_t check_server_mgr(entropic_handle_t h) {
     if (!h) { return ENTROPIC_ERROR_INVALID_HANDLE; }
     if (!h->server_manager) { return ENTROPIC_ERROR_INVALID_STATE; }
     return ENTROPIC_OK;
+}
+
+// ── Named workspaces (gh#166, v2.13.0) ──────────────────────
+
+/**
+ * @brief The handle's MCP config, confined to a workspace root (gh#166).
+ *
+ * `mcp.filesystem.allow_outside_root` is a SINGLE-PROJECT setting: one
+ * repository, the operator's own machine, "let the agent read
+ * /etc/os-release". Until v2.13.0 `data/default_config.yaml` shipped it
+ * TRUE; it is now `optional` (ask the host's path approver).
+ *
+ * The moment one handle serves several repositories that setting stops
+ * meaning what the operator agreed to. "Outside my root" no longer means
+ * "somewhere on the disk"; it means "inside ANOTHER WORKSPACE" — and a
+ * workspace's whole contract (REQ-MCP-027) is that a bound session
+ * cannot reach the other repository's files. The v2.13.0 gh#166 model
+ * gate proved the gap end to end: both repositories held a PROJECT.md,
+ * the model asked for the sibling by absolute path, and the bound
+ * session's own server served it without a single "Path escape blocked".
+ *
+ * So a workspace's servers are confined unconditionally: `refuse`, an
+ * EMPTY `outside_root_allow`, and no approver is ever installed on them
+ * (only the default set is wired, in `init_mcp_servers`). Neither an
+ * allow-list entry nor "just approve it" can reach a sibling
+ * workspace. `outside_root_deny` is kept — it can only narrow. The
+ * handle's DEFAULT set — every consumer that binds no workspace — is
+ * untouched and honours the host's setting verbatim.
+ *
+ * @param h Engine handle (configured).
+ * @return A copy of `h->config.mcp` with root confinement forced on.
+ * @utility
+ * @req REQ-MCP-027
+ * @req REQ-MCP-021
+ * @version 2.13.0 [reviewed]
+ */
+static entropic::MCPConfig confined_mcp_config(entropic_handle_t h) {
+    entropic::MCPConfig mcp = h->config.mcp;
+    auto& fs_cfg = mcp.filesystem;
+    if (fs_cfg.allow_outside_root != entropic::OutsideRootAccess::refuse
+        || !fs_cfg.outside_root_allow.empty()) {
+        logger->info("workspace servers confine to their root (host "
+                     "mcp.filesystem.allow_outside_root, outside_root_allow "
+                     "({} entries) and the path approver apply to the "
+                     "default set only)", fs_cfg.outside_root_allow.size());
+    }
+    fs_cfg.allow_outside_root = entropic::OutsideRootAccess::refuse;
+    fs_cfg.outside_root_allow.clear();
+    return mcp;
+}
+
+/**
+ * @brief FilesystemServer → consumer bridge for outside-root approval.
+ *
+ * Reads the handle's slot per call (so a later registration takes effect
+ * with no server rewiring), copies it under the slot mutex, and calls the
+ * consumer OUTSIDE the lock — the consumer may block on a person.
+ *
+ * @param req The pending access.
+ * @param ud Engine handle.
+ * @return The consumer's verdict, or `no_approver` when the slot is empty.
+ * @callback
+ * @req REQ-MCP-021
+ * @version 2.13.0
+ */
+static entropic::OutsideRootVerdict outside_root_thunk(
+    const entropic::OutsideRootRequest& req, void* ud) {
+    auto* h = static_cast<entropic_handle_t>(ud);
+    ent_path_approval_cb cb = nullptr;
+    void* cb_data = nullptr;
+    {
+        std::lock_guard<std::mutex> lock(h->path_approval_mutex);
+        cb = h->path_approval_cb;
+        cb_data = h->path_approval_data;
+    }
+    auto verdict = entropic::OutsideRootVerdict::no_approver;
+    if (cb != nullptr) {
+        const std::string session = entropic::current_run_session();
+        ent_path_approval_request_t c_req{
+            req.path.c_str(), req.root.c_str(), req.tool.c_str(),
+            req.access == entropic::PathAccess::write
+                ? ENT_PATH_ACCESS_WRITE : ENT_PATH_ACCESS_READ,
+            session.c_str()};
+        verdict = cb(&c_req, cb_data) == ENT_DECISION_ACCEPT
+            ? entropic::OutsideRootVerdict::approved
+            : entropic::OutsideRootVerdict::rejected;
+    }
+    return verdict;
+}
+
+/**
+ * @brief Wire the default set's filesystem server to the handle's slot.
+ * @param h Engine handle with `server_manager` constructed.
+ * @req REQ-MCP-021
+ * @version 2.13.0
+ */
+void entropic::wire_outside_root_approver(entropic_handle_t h) {
+    if (h != nullptr && h->server_manager) {
+        h->server_manager->set_outside_root_approver(outside_root_thunk, h);
+    }
+}
+
+/**
+ * @brief Move a session's servers into (or back out of) a sandbox.
+ *
+ * The implementation `sandbox.h` has described since v2.1.5 and nobody
+ * ever installed. `entering` drives a lock as well as the move: the
+ * in-process servers hold ONE working directory each, so two sandboxed
+ * delegations running at once (the default since gh#158) would
+ * otherwise interleave their swaps and write into each other's
+ * sandbox — or into the user's tree, once the first one restored.
+ *
+ * gh#158 (second audit pass): the lock is the server set's own
+ * (`ServerManager::enter_working_dir` / `leave_working_dir`), and every
+ * in-process dispatch on that set now takes it SHARED. Until then only
+ * the swaps took it (a facade `recursive_mutex`), so an UNBOUND session
+ * dispatching during another session's sandboxed delegation resolved
+ * inside that session's sandbox. One lock per ServerManager is still one
+ * per workspace (gh#166), which is where the parallelism comes back.
+ *
+ * Lives here rather than beside `wire_session_roots` because entropic.cpp
+ * is one `extern "C"` block and this is a C++ symbol: declared in
+ * engine_handle.h so a white-box test can drive the PRODUCTION swap
+ * through a real `ScopedSandbox` (gh#158).
+ *
+ * @param session_key Session whose tools are being moved.
+ * @param path Directory to point the servers at.
+ * @param entering True on sandbox entry, false on restore.
+ * @param ud Engine handle.
+ * @req REQ-DELEG-005
+ * @callback
+ * @version 2.13.0 [reviewed]
+ */
+void entropic::swap_session_tool_dir(
+    const std::string& session_key,
+    const std::filesystem::path& path,
+    bool entering, void* ud) {
+    auto* h = static_cast<entropic_handle_t>(ud);
+    auto* servers = entropic::workspace_servers(h, session_key);
+    if (servers == nullptr) { return; }
+    logger->info("delegation dir swap: session='{}' -> {} ({})",
+                 session_key, path.string(),
+                 entering ? "enter" : "restore");
+    if (entering) {
+        servers->enter_working_dir(path);
+    } else {
+        servers->leave_working_dir(path);
+    }
+}
+
+/**
+ * @brief Release a session's per-session tool state — see engine_handle.h.
+ *
+ * Lock order: the caller holds `api_mutex`; `workspace_mutex` is taken
+ * here, and under it only each server's leaf per-session lock. No run
+ * thread takes `workspace_mutex` while holding a per-session lock, so the
+ * order cannot invert. The ToolRootLock is deliberately NOT taken (see
+ * ServerManager::release_session).
+ *
+ * @param h Engine handle.
+ * @param key Session key ("" = the default session).
+ * @return Number of servers that held state for `key`.
+ * @req REQ-LOOP-009
+ * @version 2.13.0
+ */
+std::size_t entropic::release_session_tool_state(entropic_handle_t h,
+                                                 const std::string& key) {
+    std::size_t released = 0;
+    if (h == nullptr) { return released; }
+    if (h->server_manager) {
+        released += h->server_manager->release_session(key);
+    }
+    std::lock_guard<std::mutex> lock(h->workspace_mutex);
+    for (const auto& [name, ws] : h->workspaces) {
+        if (ws && ws->servers) {
+            released += ws->servers->release_session(key);
+        }
+    }
+    return released;
+}
+
+/**
+ * @brief Register the outside-root path approver — see entropic.h.
+ *
+ * Only the slot changes: the default set's filesystem server already
+ * holds the thunk (wired at configure), which reads the slot per call.
+ * Workspaces are never wired, so this can never reach them.
+ *
+ * @param handle Engine handle.
+ * @param cb Approver (NULL clears).
+ * @param user_data Forwarded to `cb`.
+ * @return ENTROPIC_OK, or ENTROPIC_ERROR_INVALID_HANDLE.
+ * @req REQ-MCP-021
+ * @req REQ-API-010
+ * @req REQ-API-005
+ * @version 2.13.0
+ */
+extern "C" ENTROPIC_EXPORT entropic_error_t
+entropic_set_path_approval_callback(entropic_handle_t handle,
+                                    ent_path_approval_cb cb,
+                                    void* user_data) {
+    if (handle == nullptr) { return ENTROPIC_ERROR_INVALID_HANDLE; }
+    entropic::log::HandleLogScope scope(handle->log_id);
+    {
+        std::lock_guard<std::mutex> lock(handle->path_approval_mutex);
+        handle->path_approval_cb = cb;
+        handle->path_approval_data = user_data;
+    }
+    logger->info("path approval callback {}",
+                 cb != nullptr ? "registered" : "cleared");
+    return ENTROPIC_OK;
+}
+
+/**
+ * @brief Build a workspace's own server instances rooted at `dir`.
+ *
+ * The built-in servers take their root at CONSTRUCTION and hold one
+ * working directory each, so a second repository needs a second set —
+ * this is the whole reason a workspace is an object and not a path.
+ * Plugins get the root through `set_working_dir` at load. Weights,
+ * tiers and identity are untouched: nothing here reloads a model.
+ *
+ * @param h Engine handle (configured).
+ * @param name Workspace name.
+ * @param dir Absolute workspace root.
+ * @return Owned workspace with connected servers.
+ * @utility
+ * @req REQ-MCP-027
+ * @version 2.13.0 [reviewed]
+ */
+static std::unique_ptr<EntropicWorkspace> build_workspace(
+    entropic_handle_t h, const std::string& name,
+    const std::filesystem::path& dir) {
+    auto ws = std::make_unique<EntropicWorkspace>();
+    ws->name = name;
+    ws->root = dir;
+    ws->servers = std::make_unique<entropic::ServerManager>(
+        h->config.permissions, dir);
+    std::vector<std::string> tier_names;
+    std::vector<std::string> require_context;
+    for (const auto& [tier, cfg] : h->config.models.tiers) {
+        if (tier != h->config.models.default_tier) {
+            tier_names.push_back(tier);
+        }
+        if (cfg.requires_context) { require_context.push_back(tier); }
+    }
+    auto data_dir = entropic::config::resolve_data_dir(h->config);
+    const auto mcp = confined_mcp_config(h);
+    ws->servers->init_builtins(mcp, tier_names,
+                               data_dir.string(), require_context);
+    ws->servers->load_plugins(mcp);
+    return ws;
+}
+
+/**
+ * @brief Validate workspace-create arguments and resolve the root.
+ *
+ * Extracted to keep `entropic_workspace_create` inside the knots returns
+ * gate; sets `handle->last_error` with the specific reason.
+ *
+ * @param handle Engine handle.
+ * @param name Requested workspace name.
+ * @param dir Requested root directory.
+ * @param[out] root Absolute, validated root on success.
+ * @return ENTROPIC_OK, or ENTROPIC_ERROR_INVALID_ARGUMENT with a reason.
+ * @utility
+ * @req REQ-MCP-027
+ * @version 2.13.0
+ */
+static entropic_error_t validate_workspace_args(
+    entropic_handle_t handle, const char* name, const char* dir,
+    std::filesystem::path& root) {
+    if (name == nullptr || *name == '\0' || dir == nullptr
+        || *dir == '\0') {
+        return ENTROPIC_ERROR_INVALID_ARGUMENT;
+    }
+    std::error_code ec;
+    root = std::filesystem::absolute(dir, ec);
+    std::string err;
+    if (ec || !std::filesystem::is_directory(root, ec)) {
+        err = std::string("workspace dir is not a directory: ") + dir;
+    } else {
+        std::lock_guard<std::mutex> guard(handle->workspace_mutex);
+        if (handle->workspaces.count(name) > 0) {
+            err = std::string("workspace already exists: ") + name;
+        }
+    }
+    if (!err.empty()) {
+        handle->last_error = err;
+        return ENTROPIC_ERROR_INVALID_ARGUMENT;
+    }
+    return ENTROPIC_OK;
+}
+
+/**
+ * @brief Create a named workspace (gh#166) — see entropic.h.
+ * @param handle Engine handle.
+ * @param name Workspace name.
+ * @param dir Workspace root directory.
+ * @return ENTROPIC_OK, or a typed argument/state error.
+ * @req REQ-API-005
+ * @req REQ-MCP-027
+ * @req REQ-ABI-002
+ * @version 2.13.0
+ */
+extern "C" ENTROPIC_EXPORT entropic_error_t
+entropic_workspace_create(entropic_handle_t handle,
+                          const char* name,
+                          const char* dir) {
+    auto rc = check_server_mgr(handle);
+    if (rc != ENTROPIC_OK) { return rc; }
+    entropic::HandleApiLock lock(handle);
+    std::filesystem::path root;
+    rc = validate_workspace_args(handle, name, dir, root);
+    if (rc == ENTROPIC_OK) {
+        try {
+            auto ws = build_workspace(handle, name, root);
+            ws->servers->initialize();
+            std::lock_guard<std::mutex> guard(handle->workspace_mutex);
+            handle->workspaces[name] = std::move(ws);
+            logger->info("workspace '{}' created at {}", name,
+                         root.string());
+        } catch (const std::exception& e) {
+            // Design rule #5: exceptions never cross the .so boundary.
+            handle->last_error = e.what();
+            rc = ENTROPIC_ERROR_INTERNAL;
+        }
+    }
+    return rc;
+}
+
+/**
+ * @brief Bind a session to a workspace (gh#166) — see entropic.h.
+ * @param handle Engine handle.
+ * @param session_key Session key (NULL or "" = default session).
+ * @param name Workspace name.
+ * @return ENTROPIC_OK, or a typed argument/state error.
+ * @req REQ-API-005
+ * @req REQ-MCP-027
+ * @req REQ-ABI-002
+ * @version 2.13.0
+ */
+extern "C" ENTROPIC_EXPORT entropic_error_t
+entropic_session_bind_workspace(entropic_handle_t handle,
+                                const char* session_key,
+                                const char* name) {
+    auto rc = check_server_mgr(handle);
+    if (rc != ENTROPIC_OK) { return rc; }
+    if (name == nullptr || *name == '\0' || !handle->engine) {
+        return ENTROPIC_ERROR_INVALID_ARGUMENT;
+    }
+    entropic::HandleApiLock lock(handle);
+    std::string key = session_key != nullptr ? session_key : "";
+    // Single-exit accumulator (knots returns gate ≤ 3). A conversation
+    // cites paths relative to the root it was built in, so re-rooting one
+    // mid-life invalidates every citation in it with no error anywhere:
+    // refuse rather than silently re-point.
+    rc = ENTROPIC_OK;
+    if (handle->engine->message_count_for(key) > 0) {
+        handle->last_error =
+            "session '" + key + "' already holds messages; bind a "
+            "workspace before its first turn";
+        rc = ENTROPIC_ERROR_INVALID_STATE;
+    } else {
+        std::lock_guard<std::mutex> guard(handle->workspace_mutex);
+        if (handle->workspaces.count(name) == 0) {
+            handle->last_error = std::string("unknown workspace: ") + name;
+            rc = ENTROPIC_ERROR_INVALID_ARGUMENT;
+        } else {
+            handle->session_workspace[key] = name;
+            logger->info("session '{}' bound to workspace '{}'", key, name);
+        }
+    }
+    return rc;
 }
 
 /**
@@ -97,6 +476,33 @@ static entropic::ExternalServerConfig parse_external_server_spec(
 }
 
 /**
+ * @brief Servers a registration targets, and the cwd it spawns in (gh#166).
+ *
+ * A `"workspace"` field registers the server on that workspace's set and
+ * spawns it with cwd = the workspace root — which is what a repo-scoped
+ * server like `clew-mcp --repo .` actually needs when one handle serves
+ * several repositories.
+ *
+ * @param handle Engine handle.
+ * @param ws_name Workspace name ("" = the handle's default set).
+ * @param[in,out] spec Spec whose `working_dir` is filled for a workspace.
+ * @return Target manager, or nullptr when the workspace is unknown.
+ * @utility
+ * @req REQ-MCP-027
+ * @version 2.13.0
+ */
+static entropic::ServerManager* resolve_registration_target(
+    entropic_handle_t handle, const std::string& ws_name,
+    entropic::ExternalServerConfig& spec) {
+    if (ws_name.empty()) { return handle->server_manager.get(); }
+    std::lock_guard<std::mutex> guard(handle->workspace_mutex);
+    auto it = handle->workspaces.find(ws_name);
+    if (it == handle->workspaces.end()) { return nullptr; }
+    spec.working_dir = it->second->root.string();
+    return it->second->servers.get();
+}
+
+/**
  * @brief Register an external MCP server from JSON config (C ABI).
  * @return ENTROPIC_OK on success; the check_server_mgr code for a
  *        bad handle/state, INVALID_ARGUMENT for NULL
@@ -105,7 +511,7 @@ static entropic::ExternalServerConfig parse_external_server_spec(
  * @req REQ-MCP-025
  * @req REQ-API-005
  * @req REQ-ABI-002
- * @version 2.3.7
+ * @version 2.13.0
  */
 extern "C" ENTROPIC_EXPORT entropic_error_t
 entropic_register_mcp_server(
@@ -121,14 +527,25 @@ entropic_register_mcp_server(
     try {
         auto j = nlohmann::json::parse(config_json);
         auto spec = parse_external_server_spec(name, j);
-        handle->server_manager->connect_external_server(spec);
-        logger->info("register_mcp_server: name='{}' env_keys={}",
-                     name, spec.env.size());
-        return ENTROPIC_OK;
+        // gh#166 (v2.13.0): an optional "workspace" field registers the
+        // server on that workspace's set instead of the handle's, and
+        // spawns it with cwd = the workspace root — which is what a
+        // repo-scoped server like `clew-mcp --repo` actually needs.
+        auto ws_name = j.value("workspace", std::string{});
+        auto* servers = resolve_registration_target(handle, ws_name, spec);
+        if (servers == nullptr) {
+            handle->last_error = "unknown workspace: " + ws_name;
+            rc = ENTROPIC_ERROR_INVALID_ARGUMENT;
+        } else {
+            servers->connect_external_server(spec);
+            logger->info("register_mcp_server: name='{}' env_keys={} "
+                         "workspace='{}'", name, spec.env.size(), ws_name);
+        }
     } catch (const std::exception& e) {
         handle->last_error = e.what();
-        return ENTROPIC_ERROR_CONNECTION_FAILED;
+        rc = ENTROPIC_ERROR_CONNECTION_FAILED;
     }
+    return rc;
 }
 
 /**

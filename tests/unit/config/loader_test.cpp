@@ -9,10 +9,13 @@
 #include <catch2/catch_approx.hpp>
 #include <entropic/config/loader.h>
 #include <entropic/config/bundled_models.h>
+#include <entropic/config/validate.h>  // gh#153: configure-time refusals
 #include <cstdlib>
 #include <filesystem>
 #include <fstream>
 #include <string>
+#include <vector>
+#include <unistd.h>
 
 /**
  * @brief Return the path to the test data directory.
@@ -105,7 +108,8 @@ SCENARIO("Parse config with tiers", "[config][loader]") {
 
             THEN("MCP config is parsed") {
                 REQUIRE(config.mcp.enable_filesystem == true);
-                REQUIRE(config.mcp.filesystem.allow_outside_root == true);
+                REQUIRE(config.mcp.filesystem.allow_outside_root
+                        == entropic::OutsideRootAccess::allow);
             }
         }
     }
@@ -280,10 +284,14 @@ SCENARIO("Comprehensive config exercises every parse_* helper",
                 CHECK(config.mcp.filesystem.diagnostics_on_edit == true);
                 CHECK(config.mcp.filesystem.fail_on_errors == false);
                 CHECK(config.mcp.filesystem.diagnostics_timeout == 10);
-                CHECK(config.mcp.filesystem.allow_outside_root == true);
+                CHECK(config.mcp.filesystem.allow_outside_root
+                      == entropic::OutsideRootAccess::allow);
                 CHECK(config.mcp.filesystem.max_read_context_pct
                       == Catch::Approx(0.5f));
                 CHECK(config.mcp.filesystem.max_read_bytes == 65536);
+                // gh#161 (v2.13.0): bounded glob/grep walk
+                CHECK(config.mcp.filesystem.max_walk_entries
+                      == 1000);
                 CHECK(config.mcp.external.enabled == true);
                 CHECK(config.mcp.external.rate_limit == 100);
                 REQUIRE(config.mcp.external.socket_path.has_value());
@@ -351,6 +359,184 @@ SCENARIO("Comprehensive config exercises every parse_* helper",
                 CHECK(config.constitutional_validation.grammar_key
                       == "constitutional");
                 CHECK(config.constitutional_validation.skip_tiers.size() == 1);
+            }
+        }
+    }
+}
+
+SCENARIO("gh#148: gpu_layers accepts a count or the word auto",
+         "[config][loader][gh148][2.13.0]")
+{
+    GIVEN("a tier asking the engine to derive the split") {
+        auto registry = load_test_registry();
+        entropic::ParsedConfig config;
+        std::string yaml =
+            "models:\n"
+            "  lead:\n"
+            "    path: primary\n"
+            "    gpu_layers: auto\n"
+            "  default: lead\n";
+
+        WHEN("the config is parsed") {
+            auto err = entropic::config::load_config_from_string(
+                yaml, registry, config);
+
+            THEN("the opt-in is recorded and no count is invented") {
+                REQUIRE(err.empty());
+                REQUIRE(config.models.tiers.count("lead") == 1);
+                CHECK(config.models.tiers["lead"].gpu_layers_auto);
+                // Left at the struct default until the admission gate
+                // resolves it — nothing downstream sees a half-resolved
+                // value, and "auto" is not silently 0.
+                CHECK(config.models.tiers["lead"].gpu_layers == -1);
+            }
+        }
+    }
+
+    GIVEN("a tier with an explicit layer count") {
+        auto registry = load_test_registry();
+        entropic::ParsedConfig config;
+        std::string yaml =
+            "models:\n"
+            "  lead:\n"
+            "    path: primary\n"
+            "    gpu_layers: 15\n"
+            "  default: lead\n";
+
+        WHEN("the config is parsed") {
+            auto err = entropic::config::load_config_from_string(
+                yaml, registry, config);
+
+            THEN("it is taken verbatim and auto stays off") {
+                REQUIRE(err.empty());
+                CHECK(config.models.tiers["lead"].gpu_layers == 15);
+                CHECK_FALSE(config.models.tiers["lead"].gpu_layers_auto);
+            }
+        }
+    }
+}
+
+SCENARIO("gh#153 #42(iii): cpu_moe_layers parses, and is absent by default",
+         "[config][loader][expert_offload][gh153][2.13.0]")
+{
+    GIVEN("a tier asking for expert-tensor offload on an explicit split") {
+        auto registry = load_test_registry();
+        entropic::ParsedConfig config;
+        std::string yaml =
+            "models:\n"
+            "  lead:\n"
+            "    path: primary\n"
+            "    gpu_layers: 31\n"
+            "    cpu_moe_layers: 18\n"
+            "  default: lead\n";
+
+        WHEN("the config is parsed") {
+            auto err = entropic::config::load_config_from_string(
+                yaml, registry, config);
+
+            THEN("the count lands on the tier verbatim") {
+                REQUIRE(err.empty());
+                REQUIRE(config.models.tiers.count("lead") == 1);
+                CHECK(config.models.tiers["lead"].cpu_moe_layers == 18);
+                CHECK(config.models.tiers["lead"].gpu_layers == 31);
+            }
+        }
+    }
+
+    GIVEN("a tier that does not mention the key at all") {
+        auto registry = load_test_registry();
+        entropic::ParsedConfig config;
+        std::string yaml =
+            "models:\n"
+            "  lead:\n"
+            "    path: primary\n"
+            "    gpu_layers: 31\n"
+            "  default: lead\n";
+
+        WHEN("the config is parsed") {
+            auto err = entropic::config::load_config_from_string(
+                yaml, registry, config);
+
+            THEN("it stays 0 — no overrides, byte-identical to pre-v2.13.0") {
+                REQUIRE(err.empty());
+                CHECK(config.models.tiers["lead"].cpu_moe_layers == 0);
+            }
+        }
+    }
+
+    GIVEN("a tier pairing the key with gpu_layers: auto") {
+        auto registry = load_test_registry();
+        entropic::ParsedConfig config;
+        std::string yaml =
+            "models:\n"
+            "  lead:\n"
+            "    path: primary\n"
+            "    gpu_layers: auto\n"
+            "    cpu_moe_layers: 18\n"
+            "  default: lead\n";
+
+        WHEN("the config is loaded and validated") {
+            auto err = entropic::config::load_config_from_string(
+                yaml, registry, config);
+            std::vector<std::string> warnings;
+            if (err.empty()) {
+                err = entropic::config::validate_config(config, warnings);
+            }
+
+            THEN("the load is refused by name, not silently derived") {
+                REQUIRE_FALSE(err.empty());
+                INFO(err);
+                CHECK(err.find("cpu_moe_layers") != std::string::npos);
+                CHECK(err.find("gpu_layers: auto") != std::string::npos);
+            }
+        }
+    }
+}
+
+SCENARIO("gh#157: models.defer_load parses and is not mistaken for a tier",
+         "[config][loader][gh157][2.13.0]")
+{
+    GIVEN("a models block carrying defer_load beside the tiers") {
+        auto registry = load_test_registry();
+        entropic::ParsedConfig config;
+        std::string yaml =
+            "models:\n"
+            "  defer_load: true\n"
+            "  lead:\n"
+            "    path: primary\n"
+            "    gpu_layers: 0\n"
+            "  default: lead\n";
+
+        WHEN("the config is parsed") {
+            auto err = entropic::config::load_config_from_string(
+                yaml, registry, config);
+
+            THEN("defer_load is read and creates no phantom tier") {
+                REQUIRE(err.empty());
+                CHECK(config.models.defer_load);
+                CHECK(config.models.tiers.count("defer_load") == 0);
+                CHECK(config.models.tiers.count("lead") == 1);
+            }
+        }
+    }
+
+    GIVEN("a models block that omits defer_load") {
+        auto registry = load_test_registry();
+        entropic::ParsedConfig config;
+        std::string yaml =
+            "models:\n"
+            "  lead:\n"
+            "    path: primary\n"
+            "    gpu_layers: 0\n"
+            "  default: lead\n";
+
+        WHEN("the config is parsed") {
+            auto err = entropic::config::load_config_from_string(
+                yaml, registry, config);
+
+            THEN("it stays false — the pre-2.13.0 eager startup load") {
+                REQUIRE(err.empty());
+                CHECK_FALSE(config.models.defer_load);
             }
         }
     }
@@ -1133,6 +1319,229 @@ SCENARIO("gh#133 fallout: the bundled default must not clobber explicit layers",
         }
         THEN("but it does NOT overwrite what the project layer set") {
             CHECK_FALSE(config.mcp.enable_bash);
+        }
+    }
+}
+
+// ── gh#160 (v2.13.0): delegation.isolation ─────────────────────────────
+
+SCENARIO("gh#160 delegation.isolation parses, and a bad mode is refused",
+         "[config][gh160][v2.13.0]")
+{
+    auto registry = load_test_registry();
+    auto dir = std::filesystem::temp_directory_path()
+        / "entropic-gh160-isolation";
+    std::filesystem::remove_all(dir);
+    std::filesystem::create_directories(dir);
+
+    GIVEN("a config with no delegation section at all") {
+        auto path = dir / "none.yaml";
+        std::ofstream(path) << "log_level: INFO\n";
+        entropic::ParsedConfig config;
+        auto err = entropic::config::parse_config_file(
+            path, registry, config);
+        THEN("it loads and isolation stays off — today's shipped behaviour") {
+            REQUIRE(err.empty());
+            CHECK(config.delegation.isolation
+                  == entropic::DelegationIsolation::none);
+        }
+    }
+
+    GIVEN("delegation: {isolation: sandbox}") {
+        auto path = dir / "sandbox.yaml";
+        std::ofstream(path) << "delegation:\n  isolation: sandbox\n";
+        entropic::ParsedConfig config;
+        auto err = entropic::config::parse_config_file(
+            path, registry, config);
+        THEN("the mode is carried through") {
+            REQUIRE(err.empty());
+            CHECK(config.delegation.isolation
+                  == entropic::DelegationIsolation::sandbox);
+        }
+    }
+
+    GIVEN("an unrecognized isolation mode") {
+        auto path = dir / "bogus.yaml";
+        std::ofstream(path) << "delegation:\n  isolation: worktree\n";
+        entropic::ParsedConfig config;
+        auto err = entropic::config::parse_config_file(
+            path, registry, config);
+        THEN("the load fails loudly rather than silently not isolating") {
+            REQUIRE_FALSE(err.empty());
+            CHECK(err.find("worktree") != std::string::npos);
+            CHECK(config.delegation.isolation
+                  == entropic::DelegationIsolation::none);
+        }
+    }
+
+    std::filesystem::remove_all(dir);
+}
+
+// ── v2.13.0: mcp.filesystem outside-root policy ────────────────────────
+
+/**
+ * @brief Parse a one-off YAML body as a config file.
+ * @param name File stem, unique per GIVEN.
+ * @param body YAML content.
+ * @param[out] config Parsed config.
+ * @return The loader's error string ("" on success).
+ * @internal
+ * @version 2.13.0
+ */
+static std::string parse_yaml_body(const std::string& name,
+                                   const std::string& body,
+                                   entropic::ParsedConfig& config)
+{
+    auto dir = std::filesystem::temp_directory_path()
+        / ("entropic-outside-root-" + std::to_string(::getpid()));
+    std::filesystem::create_directories(dir);
+    auto path = dir / (name + ".yaml");
+    std::ofstream(path) << body;
+    auto registry = load_test_registry();
+    auto err = entropic::config::parse_config_file(path, registry, config);
+    std::filesystem::remove(path);
+    return err;
+}
+
+SCENARIO("mcp.filesystem.allow_outside_root is tri-state and defaults to "
+         "optional", "[config][loader][outside_root][v2.13.0]")
+{
+    GIVEN("a config that never mentions allow_outside_root") {
+        // Repo rule: every optional key gets a test where it is ABSENT.
+        entropic::ParsedConfig config;
+        auto err = parse_yaml_body("omitted",
+            "mcp:\n  filesystem:\n    max_read_bytes: 1024\n", config);
+        THEN("the default is optional, with both lists empty") {
+            REQUIRE(err.empty());
+            CHECK(config.mcp.filesystem.allow_outside_root
+                  == entropic::OutsideRootAccess::optional);
+            CHECK(config.mcp.filesystem.outside_root_allow.empty());
+            CHECK(config.mcp.filesystem.outside_root_deny.empty());
+        }
+    }
+
+    GIVEN("no mcp section at all") {
+        entropic::ParsedConfig config;
+        auto err = parse_yaml_body("no_mcp", "log_level: INFO\n", config);
+        THEN("the struct default is optional too") {
+            REQUIRE(err.empty());
+            CHECK(config.mcp.filesystem.allow_outside_root
+                  == entropic::OutsideRootAccess::optional);
+        }
+    }
+
+    GIVEN("each accepted spelling") {
+        struct Case { const char* yaml; entropic::OutsideRootAccess want; };
+        const Case cases[] = {
+            {"true", entropic::OutsideRootAccess::allow},
+            {"yes", entropic::OutsideRootAccess::allow},
+            {"false", entropic::OutsideRootAccess::refuse},
+            {"no", entropic::OutsideRootAccess::refuse},
+            {"optional", entropic::OutsideRootAccess::optional},
+        };
+        for (const auto& c : cases) {
+            entropic::ParsedConfig config;
+            auto err = parse_yaml_body(std::string("spelling_") + c.yaml,
+                std::string("mcp:\n  filesystem:\n    allow_outside_root: ")
+                    + c.yaml + "\n", config);
+            INFO("allow_outside_root: " << c.yaml << " err=" << err);
+            CHECK(err.empty());
+            CHECK(config.mcp.filesystem.allow_outside_root == c.want);
+        }
+    }
+
+    GIVEN("an unrecognised value") {
+        entropic::ParsedConfig config;
+        auto err = parse_yaml_body("bogus",
+            "mcp:\n  filesystem:\n    allow_outside_root: maybe\n", config);
+        THEN("the load fails naming the key and the value — a security "
+             "switch is never silently defaulted") {
+            REQUIRE_FALSE(err.empty());
+            CHECK(err.find("allow_outside_root") != std::string::npos);
+            CHECK(err.find("maybe") != std::string::npos);
+        }
+    }
+}
+
+SCENARIO("mcp.filesystem outside_root_allow / outside_root_deny parse as "
+         "absolute paths", "[config][loader][outside_root][v2.13.0]")
+{
+    GIVEN("absolute and ~ entries in both lists") {
+        entropic::ParsedConfig config;
+        auto err = parse_yaml_body("lists",
+            "mcp:\n  filesystem:\n"
+            "    outside_root_allow:\n      - /opt/data\n      - ~/notes\n"
+            "    outside_root_deny:\n      - ~/.ssh\n", config);
+        const auto home = std::filesystem::path(std::getenv("HOME"));
+        THEN("both lists carry the entries, ~ expanded") {
+            REQUIRE(err.empty());
+            const auto& fs_cfg = config.mcp.filesystem;
+            REQUIRE(fs_cfg.outside_root_allow.size() == 2);
+            CHECK(fs_cfg.outside_root_allow[0]
+                  == std::filesystem::path("/opt/data"));
+            CHECK(fs_cfg.outside_root_allow[1] == home / "notes");
+            REQUIRE(fs_cfg.outside_root_deny.size() == 1);
+            CHECK(fs_cfg.outside_root_deny[0] == home / ".ssh");
+        }
+    }
+
+    GIVEN("a relative entry") {
+        entropic::ParsedConfig config;
+        auto err = parse_yaml_body("relative",
+            "mcp:\n  filesystem:\n"
+            "    outside_root_deny:\n      - secrets\n", config);
+        THEN("it is refused — a relative entry has no defensible anchor") {
+            REQUIRE_FALSE(err.empty());
+            CHECK(err.find("outside_root_deny") != std::string::npos);
+            CHECK(err.find("secrets") != std::string::npos);
+            CHECK(config.mcp.filesystem.outside_root_deny.empty());
+        }
+    }
+}
+
+// ── v2.13.0: mcp.bash.timeout_seconds ──────────────────────────────────
+
+SCENARIO("mcp.bash.timeout_seconds parses, defaults to 30, and refuses a "
+         "non-positive value", "[config][loader][bash][v2.13.0]")
+{
+    GIVEN("a config with no mcp.bash section") {
+        // Repo rule: every optional key gets a test where it is ABSENT.
+        entropic::ParsedConfig config;
+        auto err = parse_yaml_body("bash_omitted",
+            "mcp:\n  enable_bash: true\n", config);
+        THEN("the documented 30 s default holds") {
+            REQUIRE(err.empty());
+            CHECK(config.mcp.bash.timeout_seconds == 30);
+        }
+    }
+    GIVEN("an mcp.bash section without timeout_seconds") {
+        entropic::ParsedConfig config;
+        auto err = parse_yaml_body("bash_empty",
+            "mcp:\n  bash: {}\n", config);
+        THEN("the default holds") {
+            REQUIRE(err.empty());
+            CHECK(config.mcp.bash.timeout_seconds == 30);
+        }
+    }
+    GIVEN("timeout_seconds: 600") {
+        entropic::ParsedConfig config;
+        auto err = parse_yaml_body("bash_600",
+            "mcp:\n  bash:\n    timeout_seconds: 600\n", config);
+        THEN("it is carried through") {
+            REQUIRE(err.empty());
+            CHECK(config.mcp.bash.timeout_seconds == 600);
+        }
+    }
+    GIVEN("timeout_seconds: 0 or negative") {
+        for (const char* v : {"0", "-1"}) {
+            entropic::ParsedConfig config;
+            auto err = parse_yaml_body(std::string("bash_bad") + v,
+                std::string("mcp:\n  bash:\n    timeout_seconds: ") + v
+                    + "\n", config);
+            THEN("the load fails and names the key") {
+                INFO("value " << v << " -> " << err);
+                CHECK(err.find("mcp.bash.timeout_seconds") != std::string::npos);
+            }
         }
     }
 }

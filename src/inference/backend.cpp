@@ -80,14 +80,29 @@ bool InferenceBackend::load(const ModelConfig& config) {
 }
 
 /**
- * @brief Promote to GPU (WARM → ACTIVE). Loads first if COLD.
+ * @brief Promote to GPU (WARM → ACTIVE).
  * @return true on success, false on failure.
  * @dg_internal
- * @version 2.0.0
+ * @version 2.13.0
  */
 bool InferenceBackend::activate() {
     std::lock_guard<std::mutex> lock(transition_mutex_);
+    return promote_to_active();
+}
 
+/**
+ * @brief WARM → ACTIVE promotion, with the transition mutex already held.
+ *
+ * gh#148 split this out of `activate()` so `load_and_activate` can choose
+ * between the one-read cold path and this promotion under a single
+ * acquisition of the non-recursive transition mutex.
+ *
+ * @return true when ACTIVE afterwards.
+ * @dg_internal
+ * @req REQ-INFER-002
+ * @version 2.13.0
+ */
+bool InferenceBackend::promote_to_active() {
     if (state() == ModelState::ACTIVE) {
         logger->info("[VRAM] activate() no-op: already ACTIVE");
         return true;
@@ -161,17 +176,49 @@ void InferenceBackend::unload() {
 }
 
 /**
- * @brief Convenience: load() + activate().
+ * @brief Reach ACTIVE in as few whole-file reads as possible (gh#148).
+ *
+ * From COLD: ONE read, straight into the residency `config` asks for.
+ * Before v2.13.0 this was `load()` + `activate()`, which read the whole
+ * file with `n_gpu_layers = 0`, discarded that model, and read the whole
+ * file again with the configured split — two reads of a file that can be
+ * 13 GB, for one cold activation.
+ *
+ * From WARM: promotion, which IS still a reload (design decision #19 —
+ * llama.cpp ties offloading to the model load). That is the path
+ * `keep_warm` buys and it is deliberately unchanged.
+ *
+ * Holds `transition_mutex_` across the whole decision, so the state cannot
+ * change between choosing a path and taking it.
+ *
  * @param config Model config.
- * @return true on success.
+ * @return true when ACTIVE afterwards.
  * @dg_internal
- * @version 1.8.2
+ * @req REQ-INFER-002
+ * @version 2.13.0
  */
 bool InferenceBackend::load_and_activate(const ModelConfig& config) {
-    if (!load(config)) {
-        return false;
+    std::lock_guard<std::mutex> lock(transition_mutex_);
+
+    if (state() != ModelState::COLD) { return promote_to_active(); }
+
+    // Hook: ON_MODEL_LOAD — can cancel (v1.9.1). Same contract as load().
+    if (fire_model_load_hook(config)) { return false; }
+
+    logger->info("[VRAM] Loading into target residency: {} (gpu_layers={})",
+                 config.path.string(), config.gpu_layers);
+    auto start = entropic::log::now();
+
+    config_ = config;
+    bool ok = do_load_active(config);
+    if (!ok) {
+        logger->error("[VRAM] Load+activate failed: {}", last_error_);
+    } else {
+        state_.store(ModelState::ACTIVE, std::memory_order_release);
+        logger->info("[VRAM] Active in {:.2f}ms (one file read)",
+                     entropic::log::elapsed_ms(start, entropic::log::now()));
     }
-    return activate();
+    return ok;
 }
 
 // ── Generation ─────────────────────────────────────────────

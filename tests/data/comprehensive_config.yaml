@@ -110,6 +110,7 @@ mcp:
     allow_outside_root: true
     max_read_context_pct: 0.5
     max_read_bytes: 65536
+    max_walk_entries: 1000
   external:
     enabled: true
     rate_limit: 100

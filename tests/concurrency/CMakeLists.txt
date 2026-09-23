@@ -11,6 +11,9 @@ add_executable(entropic-concurrency-tests
 target_include_directories(entropic-concurrency-tests PRIVATE
     ${PROJECT_SOURCE_DIR}/src/inference
     ${PROJECT_SOURCE_DIR}/src/mcp
+    # gh#158 (v2.13.0): the per-session run guard is exercised against the
+    # shared MockInference, the same one the core tests drive.
+    ${PROJECT_SOURCE_DIR}/tests/unit/core
 )
 
 target_link_libraries(entropic-concurrency-tests PRIVATE

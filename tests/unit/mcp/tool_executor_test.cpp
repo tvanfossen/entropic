@@ -1516,3 +1516,240 @@ SCENARIO("gh#143: an argument-free call serialises as an object "
         }
     }
 }
+
+// ── gh#168 (v2.13.0): a PRE_TOOL_CALL hook's modified_json is APPLIED ──
+//
+// Pre-2.13.0 fire_pre_tool_hook did `free(mod); return rc != 0;` — the
+// modification channel that entropic.h advertises in its allocation
+// contract was dropped for EVERY tool, on every call. A downstream host
+// tried to append a parent's verbatim observation to a delegated task;
+// the specialist only ever saw the lead's paraphrase.
+//
+// The fix applies the ARGUMENTS only. Identity (tool_name) is immutable,
+// malformed payloads are refused loudly, and rc != 0 still cancels.
+
+namespace {
+
+/**
+ * @brief What a scripted PRE_TOOL_CALL hook hands back (gh#168).
+ * @internal
+ * @version 2.13.0
+ */
+struct PreModSpec {
+    std::string payload;  ///< Written to *modified_json ("" = none).
+    int rc = 0;           ///< 0 proceeds, non-zero cancels.
+};
+
+/**
+ * @brief PRE_TOOL_CALL hook driven by a PreModSpec.
+ * @param mod Out-param for the modification (engine frees it).
+ * @param ud PreModSpec*.
+ * @return The spec's rc.
+ * @internal
+ * @version 2.13.0
+ */
+static int pre_mod_cb(entropic_hook_point_t /*hp*/,
+                      const char* /*ctx*/, char** mod, void* ud) {
+    auto* spec = static_cast<PreModSpec*>(ud);
+    if (mod != nullptr && !spec->payload.empty()) {
+        *mod = dup_to_heap(spec->payload.c_str());
+    }
+    return spec->rc;
+}
+
+/**
+ * @brief Run one `git.diff` call through an executor with a scripted
+ *        PRE hook, returning the result content the model would see.
+ *
+ * `git.diff` (OptionalArgsTool) reads `staged` out of its arguments and
+ * answers "staged" or "unstaged" — so the returned string IS the
+ * observation of what the tool actually received.
+ *
+ * @param spec Scripted hook behaviour.
+ * @return Result message content.
+ * @internal
+ * @version 2.13.0
+ */
+static std::string run_with_pre_mod(PreModSpec& spec) {
+    auto mgr = make_optional_args_manager();
+    LoopConfig lc;
+    lc.auto_approve_tools = true;
+    EngineCallbacks cb;
+    ToolExecutor executor(mgr, lc, cb);
+
+    HookRegistry reg;
+    reg.register_hook(ENTROPIC_HOOK_PRE_TOOL_CALL,
+                      pre_mod_cb, &spec, 0);
+    attach_registry(executor, reg);
+
+    LoopContext ctx;
+    auto results = executor.process_tool_calls(ctx, {make_call("git.diff")});
+    REQUIRE(results.size() == 1);
+    return results[0].content;
+}
+
+} // namespace
+
+SCENARIO("gh#168: a PRE_TOOL_CALL hook's modified args reach the tool",
+         "[tool_executor][gh168][regression][2.13.0]") {
+    GIVEN("a PRE hook that returns 0 and rewrites args") {
+        PreModSpec spec{
+            R"({"tool_name":"git.diff","args":{"staged":true}})", 0};
+
+        WHEN("an argument-free call is dispatched") {
+            THEN("the tool sees the hook's arguments, not the model's") {
+                // RED before the fix: free(mod) discarded the rewrite and
+                // the tool answered "unstaged" on every run.
+                CHECK(run_with_pre_mod(spec) == "staged");
+            }
+        }
+    }
+}
+
+SCENARIO("gh#168: the rewrite is visible to the dup cache and POST hook",
+         "[tool_executor][gh168][regression][2.13.0]") {
+    GIVEN("an executor with a rewriting PRE hook and a POST recorder") {
+        auto mgr = make_optional_args_manager();
+        LoopConfig lc;
+        lc.auto_approve_tools = true;
+        EngineCallbacks cb;
+        ToolExecutor executor(mgr, lc, cb);
+
+        PreModSpec spec{R"({"args":{"staged":true}})", 0};
+        HookRegistry reg;
+        std::vector<HookEvent> events;
+        reg.register_hook(ENTROPIC_HOOK_PRE_TOOL_CALL,
+                          pre_mod_cb, &spec, 0);
+        reg.register_hook(ENTROPIC_HOOK_POST_TOOL_CALL,
+                          record_hook_cb, &events, 0);
+        attach_registry(executor, reg);
+
+        WHEN("an argument-free call is dispatched") {
+            LoopContext ctx;
+            executor.process_tool_calls(ctx, {make_call("git.diff")});
+
+            THEN("POST_TOOL_CALL reports the rewritten args") {
+                // Everything downstream of the hook — schema validation,
+                // the duplicate key, permission patterns, the POST
+                // context — is computed from the same ToolCall, so the
+                // rewrite must be visible here or it is only half applied.
+                REQUIRE(events.size() == 1);
+                auto post = nlohmann::json::parse(events[0].context_json);
+                REQUIRE(post.at("args").is_object());
+                CHECK(post.at("args").at("staged").get<bool>());
+            }
+        }
+    }
+}
+
+SCENARIO("gh#168: a modification that renames the tool is refused",
+         "[tool_executor][gh168][guard][2.13.0]") {
+    GIVEN("a PRE hook that returns 0 but names a different tool") {
+        PreModSpec spec{
+            R"({"tool_name":"git.boom","args":{"staged":true}})", 0};
+
+        WHEN("the call is dispatched") {
+            THEN("neither the identity nor the args are taken") {
+                // RED against the NAIVE fix: applying args without an
+                // identity check answers "staged" here. The whole
+                // payload is refused, so git.diff runs on the model's
+                // own (empty) arguments. git.boom always throws, so a
+                // rerouted dispatch would surface as "tool exploded".
+                auto content = run_with_pre_mod(spec);
+                CHECK(content == "unstaged");
+                CHECK(content.find("exploded") == std::string::npos);
+            }
+        }
+    }
+}
+
+SCENARIO("gh#168: a malformed modification is refused, not half-applied",
+         "[tool_executor][gh168][guard][2.13.0]") {
+    GIVEN("PRE hooks returning payloads the contract does not allow") {
+        WHEN("the payload is not JSON at all") {
+            PreModSpec spec{"not json at all", 0};
+            THEN("the call dispatches unmodified") {
+                CHECK(run_with_pre_mod(spec) == "unstaged");
+            }
+        }
+        WHEN("the payload is JSON but not an object") {
+            PreModSpec spec{R"(["staged"])", 0};
+            THEN("the call dispatches unmodified") {
+                CHECK(run_with_pre_mod(spec) == "unstaged");
+            }
+        }
+        WHEN("the payload carries no args object") {
+            PreModSpec spec{R"({"tool_name":"git.diff"})", 0};
+            THEN("the call dispatches unmodified") {
+                CHECK(run_with_pre_mod(spec) == "unstaged");
+            }
+        }
+        WHEN("args is present but is not an object") {
+            PreModSpec spec{R"({"args":"staged=true"})", 0};
+            THEN("the call dispatches unmodified") {
+                CHECK(run_with_pre_mod(spec) == "unstaged");
+            }
+        }
+    }
+}
+
+SCENARIO("gh#168: a rewritten payload carrying bad UTF-8 is sanitized, "
+         "not rejected",
+         "[tool_executor][gh168][utf8][2.13.0]") {
+    GIVEN("a PRE hook whose args contain an ill-formed byte") {
+        auto mgr = make_optional_args_manager();
+        LoopConfig lc;
+        lc.auto_approve_tools = true;
+        EngineCallbacks cb;
+        ToolExecutor executor(mgr, lc, cb);
+
+        // gh#113/#114/#132 class: a hook is a plugin .so, an external
+        // boundary in BOTH directions. nlohmann's parser rejects an
+        // ill-formed UTF-8 byte inside a string, so sanitizing AFTER
+        // the parse would refuse a payload that is merely dirty.
+        std::string payload =
+            std::string(R"({"args":{"staged":true,"note":"a)")
+            + '\xFF' + R"(b"}})";
+        PreModSpec spec{payload, 0};
+
+        HookRegistry reg;
+        std::vector<HookEvent> events;
+        reg.register_hook(ENTROPIC_HOOK_PRE_TOOL_CALL,
+                          pre_mod_cb, &spec, 0);
+        reg.register_hook(ENTROPIC_HOOK_POST_TOOL_CALL,
+                          record_hook_cb, &events, 0);
+        attach_registry(executor, reg);
+
+        WHEN("the call is dispatched") {
+            LoopContext ctx;
+            auto results = executor.process_tool_calls(
+                ctx, {make_call("git.diff")});
+
+            THEN("the modification still applies") {
+                REQUIRE(results.size() == 1);
+                CHECK(results[0].content == "staged");
+            }
+            AND_THEN("the bad byte became U+FFFD") {
+                REQUIRE(events.size() == 1);
+                auto post = nlohmann::json::parse(events[0].context_json);
+                auto note = post.at("args").at("note").get<std::string>();
+                CHECK(note == "a\xEF\xBF\xBD" "b");
+            }
+        }
+    }
+}
+
+SCENARIO("gh#168: a non-zero return still cancels, modification or not",
+         "[tool_executor][gh168][regression][2.13.0]") {
+    GIVEN("a PRE hook that writes args AND returns non-zero") {
+        PreModSpec spec{R"({"args":{"staged":true}})", 1};
+
+        WHEN("the call is dispatched") {
+            THEN("the call is cancelled, not rewritten and run") {
+                auto content = run_with_pre_mod(spec);
+                CHECK(content.find("denied") != std::string::npos);
+                CHECK(content != "staged");
+            }
+        }
+    }
+}

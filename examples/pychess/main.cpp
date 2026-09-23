@@ -390,7 +390,7 @@ static bool play_ai_turn(entropic_handle_t handle, GameState& state)
  * @return Configured engine handle, or nullptr on failure.
  *
  * @dg_internal
- * @version 2
+ * @version 3
  */
 static entropic_handle_t setup_engine(const char* project_dir)
 {
@@ -402,13 +402,11 @@ static entropic_handle_t setup_engine(const char* project_dir)
     }
     std::string cmd = "chess_server.py";
     std::string json = R"({"command":"python3","args":[")" + cmd + R"("]})";
+    // gh#154 (v2.13.0): both chess grammars are registered during configure
+    // from `config_dir/grammars`, because the thinker and executor tiers NAME
+    // them and an unresolvable tier stem now fails configure. Registering
+    // them here would run too late and collide with the configure-time keys.
     bool ok = (entropic_configure_dir(handle, project_dir) == ENTROPIC_OK)
-           && (entropic_grammar_register_file(
-                   handle, "chess_thinker",
-                   "data/grammars/chess_thinker.gbnf") == ENTROPIC_OK)
-           && (entropic_grammar_register_file(
-                   handle, "chess_executor",
-                   "data/grammars/chess_executor.gbnf") == ENTROPIC_OK)
            && (entropic_register_mcp_server(handle, "chess", json.c_str()) == ENTROPIC_OK);
     if (!ok) {
         std::fprintf(stderr, "Setup failed: %s\n", entropic_last_error(handle));

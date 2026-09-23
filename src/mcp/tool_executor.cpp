@@ -9,6 +9,7 @@
 #include <entropic/mcp/tool_result_classify.h>
 #include <entropic/mcp/utf8_sanitize.h>
 #include <entropic/types/logging.h>
+#include <entropic/types/run_scope.h>
 
 #include <nlohmann/json.hpp>
 
@@ -39,6 +40,35 @@ ToolExecutor::ToolExecutor(
       loop_config_(loop_config),
       callbacks_(callbacks),
       hooks_(hooks) {}
+
+/**
+ * @brief Install the workspace server resolver (gh#166).
+ * @param fn Resolver, or nullptr to clear.
+ * @param user_data Forwarded to the resolver.
+ * @req REQ-MCP-027
+ * @version 2.13.0
+ */
+void ToolExecutor::set_server_resolver(
+    ServerManager* (*fn)(const std::string&, void*), void* user_data) {
+    server_resolver_ = fn;
+    server_resolver_data_ = user_data;
+}
+
+/**
+ * @brief The servers a session's tool call runs against (gh#166).
+ * @param session_key Session the call belongs to.
+ * @return The bound workspace's manager, else the constructed one.
+ * @req REQ-MCP-027
+ * @version 2.13.0
+ */
+ServerManager& ToolExecutor::servers_for(
+    const std::string& session_key) const {
+    if (server_resolver_ != nullptr) {
+        auto* resolved = server_resolver_(session_key, server_resolver_data_);
+        if (resolved != nullptr) { return *resolved; }
+    }
+    return server_manager_;
+}
 
 /**
  * @brief Set permission persistence interface.
@@ -430,6 +460,12 @@ static std::string parse_tool_result_text(const std::string& result_json) {
  * before anything downstream reads it, then unwrapped from the
  * ServerResponse envelope and recorded in the history ring buffer.
  *
+ * gh#158 (v2.13.0): the session this call ROUTES on is also published to
+ * this thread for the dispatch, so a server that keeps per-session state
+ * (read-before-write tracker, todo list) keys it by exactly the value
+ * that chose its server set — and a delegated child, whose context
+ * inherits its parent's key, lands in its parent's session.
+ *
  * @param ctx Loop context (tool-call metric incremented).
  * @param call Tool call.
  * @return A pair of the user-role result Message — content is the
@@ -438,7 +474,9 @@ static std::string parse_tool_result_text(const std::string& result_json) {
  *         extraction later parses.
  * @req REQ-MCP-002
  * @req REQ-MCP-020
- * @version 2.3.7
+ * @req REQ-MCP-027
+ * @req REQ-LOOP-009
+ * @version 2.13.0 [reviewed]
  */
 std::pair<Message, std::string> ToolExecutor::execute_tool(
     LoopContext& ctx, const ToolCall& call) {
@@ -458,8 +496,18 @@ std::pair<Message, std::string> ToolExecutor::execute_tool(
     // full policy. The earlier "trust downstream" assumption was wrong:
     // bytes also enter via the model token stream and the audit-replay
     // path; both now sanitize at their own boundaries.
-    auto result_json = mcp::sanitize_utf8(
-        server_manager_.execute(call.name, args_json));
+    // gh#166 (v2.13.0): route to the RUNNING SESSION's workspace. This is
+    // the call that touches the filesystem, so it is the one that must
+    // land in the right repository; the metadata lookups above answer
+    // schema/permission questions that are workspace-invariant for the
+    // built-in servers and fail SAFE (unknown → WRITE required, no schema
+    // → no validation skip that grants anything).
+    std::string result_json;
+    {
+        RunSessionScope session_scope(ctx.session_key);
+        result_json = mcp::sanitize_utf8(
+            servers_for(ctx.session_key).execute(call.name, args_json));
+    }
     auto end = std::chrono::steady_clock::now();
     auto ms = std::chrono::duration_cast<
         std::chrono::milliseconds>(end - start).count();
@@ -854,16 +902,21 @@ PreconditionCheck ToolExecutor::check_approval_pc(
  * path drops the hook.
  *
  * @param ctx Loop context.
- * @param call Tool call.
+ * @param incoming Tool call as the model emitted it.
  * @return Exactly one Message: the executed tool's result, the
  *         hook-cancelled denial, or the precondition rejection — each
  *         carrying its result_kind in metadata.
  * @req REQ-MCP-017
  * @req REQ-MCP-012
- * @version 2.5.1
+ * @version 2.13.0
  */
 std::vector<Message> ToolExecutor::process_single_call(
-    LoopContext& ctx, const ToolCall& call) {
+    LoopContext& ctx, const ToolCall& incoming) {
+    // gh#168 (v2.13.0): the PRE_TOOL_CALL hook may rewrite the call's
+    // ARGUMENTS, so the executor works on its own copy — preconditions,
+    // dispatch, the dup cache and the POST hook all then see one
+    // consistent call rather than the model's superseded version.
+    ToolCall call = incoming;
     // Hook: PRE_TOOL_CALL first — fires for every attempt, including
     // those that a precondition will reject. (E9, 2.0.6-rc19)
     if (fire_pre_tool_hook(ctx, call)) {
@@ -921,13 +974,23 @@ static ToolResultKind classify_tool_result(const std::string& content) {
 
 /**
  * @brief Emit the per-tool-call info log line.
+ *
+ * `session` is on this line because it is the ONE field that makes the
+ * log attributable once a handle runs several sessions at a time (the
+ * v2.13.0 default). Two concurrent runs interleave their lines freely —
+ * they are not even grouped per inference sequence — so without the key
+ * printed HERE, at the dispatch that touches the filesystem, "which
+ * session read that file" cannot be answered from the log at all. The
+ * gh#166 gate failure cost a full forensic pass to a question this field
+ * answers outright. `""` is the default session.
+ *
  * @param ctx Loop context.
  * @param call The tool call.
  * @param exec_ms Execution time (ms).
  * @param raw_result Raw server result (for size).
  * @param kind Classified result kind.
  * @dg_internal
- * @version 2.3.7
+ * @version 2.13.0
  */
 void ToolExecutor::log_tool_call(LoopContext& ctx, const ToolCall& call,
                                  double exec_ms,
@@ -935,8 +998,9 @@ void ToolExecutor::log_tool_call(LoopContext& ctx, const ToolCall& call,
                                  ToolResultKind kind) {
     auto args_log = serialize_args(call);
     if (args_log.size() > 512) { args_log.resize(512); }
-    logger->info("[tool_call] iter={} tier={} tool={} args={} "
+    logger->info("[tool_call] session='{}' iter={} tier={} tool={} args={} "
                  "elapsed_ms={:.0f} result_chars={} status={}",
+                 ctx.session_key,
                  ctx.metrics.iterations,
                  ctx.locked_tier.empty() ? "lead" : ctx.locked_tier,
                  call.name, args_log, exec_ms,
@@ -997,29 +1061,138 @@ void ToolExecutor::finalize_tool_call(LoopContext& ctx, const ToolCall& call,
 }
 
 /**
+ * @brief Does a PRE_TOOL_CALL payload try to change the call's identity?
+ *
+ * gh#168. Absent `tool_name` is fine — the hook simply did not restate
+ * it. Anything else must be the string the call already carries; a
+ * non-string value counts as an attempted rename, not as "absent".
+ *
+ * @param parsed Parsed (object) payload.
+ * @param tool_name The fully-qualified name of the call being made.
+ * @return true when the payload names a different tool.
+ * @dg_internal
+ * @version 2.13.0
+ */
+static bool pre_mod_renames_tool(const nlohmann::json& parsed,
+                                 const std::string& tool_name) {
+    auto it = parsed.find("tool_name");
+    return it != parsed.end()
+        && !(it->is_string() && it->get<std::string>() == tool_name);
+}
+
+/**
+ * @brief Why a PRE_TOOL_CALL modification must be refused (gh#168).
+ * @param parsed Parsed payload (any JSON type).
+ * @param tool_name Name of the call being modified.
+ * @return Empty when the payload is acceptable; otherwise the reason,
+ *         phrased for the ERROR log a host operator has to act on.
+ * @dg_internal
+ * @version 2.13.0
+ */
+static std::string pre_mod_refusal(const nlohmann::json& parsed,
+                                   const std::string& tool_name) {
+    std::string reason;
+    if (!parsed.is_object()) {
+        reason = "payload is not a JSON object";
+    } else if (pre_mod_renames_tool(parsed, tool_name)) {
+        reason = "payload changes the call's identity — a hook may "
+                 "rewrite arguments, never the tool it routes to";
+    } else if (!parsed.contains("args")
+               || !parsed.at("args").is_object()) {
+        reason = "payload carries no 'args' object";
+    }
+    return reason;
+}
+
+/**
+ * @brief Replace a call's arguments from a validated `args` object.
+ *
+ * gh#168. BOTH representations are rewritten: `arguments_json` (what
+ * serialize_args hands the server and the hooks) and the `arguments`
+ * map (what tool_call_key hashes for duplicate detection). Writing only
+ * one would let a rewritten call collide with the original in the dup
+ * cache. Non-string values are dumped, matching the convention
+ * interface_factory uses when it builds a ToolCall from model output.
+ *
+ * @param call Tool call to rewrite.
+ * @param args The payload's `args` object.
+ * @dg_internal
+ * @version 2.13.0
+ */
+static void overwrite_call_arguments(ToolCall& call,
+                                     const nlohmann::json& args) {
+    call.arguments_json = args.dump();
+    call.arguments.clear();
+    for (const auto& [k, v] : args.items()) {
+        call.arguments[k] = v.is_string() ? v.get<std::string>() : v.dump();
+    }
+}
+
+/**
+ * @brief Apply a PRE_TOOL_CALL hook's modification — see header (gh#168).
+ * @param call Tool call whose arguments are rewritten.
+ * @param modified The hook's payload.
+ * @return true when applied, false when refused.
+ * @req REQ-MCP-017
+ * @version 2.13.0
+ */
+bool ToolExecutor::apply_pre_tool_modification(ToolCall& call,
+                                               const char* modified) {
+    // A registered hook is a plugin .so — an external boundary in BOTH
+    // directions (gh#3 / gh#111 / gh#132). Sanitize BEFORE the parse:
+    // nlohmann rejects an ill-formed UTF-8 byte inside a string, so
+    // sanitizing afterwards would refuse a payload that is merely dirty.
+    const std::string sanitized = mcp::sanitize_utf8(modified);
+    auto parsed = nlohmann::json::parse(sanitized, nullptr, false);
+    std::string refusal = parsed.is_discarded()
+        ? std::string{"payload is not valid JSON"}
+        : pre_mod_refusal(parsed, call.name);
+    if (!refusal.empty()) {
+        logger->error(
+            "[hook] PRE_TOOL_CALL modification REFUSED for '{}': {}. "
+            "Dispatching the call with the model's own arguments. "
+            "Payload: {}", call.name, refusal, sanitized);
+        return false;
+    }
+    overwrite_call_arguments(call, parsed.at("args"));
+    logger->info("[hook] PRE_TOOL_CALL rewrote args for '{}': {}",
+                 call.name, call.arguments_json);
+    return true;
+}
+
+/**
  * @brief Fire PRE_TOOL_CALL hook.
  *
  * Fires for EVERY attempt, including ones a precondition will go on to
  * reject, carrying tool name, args, tier and iteration.
  *
+ * gh#168 (v2.13.0): a proceed (rc == 0) that writes `*modified_json` now
+ * rewrites the call's ARGUMENTS before dispatch instead of having the
+ * string freed unread. A cancel (rc != 0) still frees without applying
+ * — the cancelled call is never dispatched, so there is nothing to
+ * modify, and overloading the two signals would let a malformed payload
+ * masquerade as a policy denial.
+ *
  * @param ctx Loop context.
- * @param call Tool call.
+ * @param[in,out] call Tool call; arguments may be rewritten in place.
  * @return true when the hook returned non-zero, cancelling the call
  *         before dispatch; false when no hook is wired or it allowed the
- *         call. Any string the pre-hook wrote is freed, not applied —
- *         only POST_TOOL_CALL may rewrite content.
+ *         call.
  * @req REQ-MCP-017
- * @version 2.0.6-rc19
+ * @version 2.13.0
  */
 bool ToolExecutor::fire_pre_tool_hook(
-    const LoopContext& ctx, const ToolCall& call) {
+    const LoopContext& ctx, ToolCall& call) {
     if (hook_iface_.fire_pre == nullptr) { return false; }
     auto json = build_pre_tool_json(call, ctx.locked_tier,
                                     ctx.metrics.iterations);
     char* mod = nullptr;
     int rc = hook_iface_.fire_pre(hook_iface_.registry,
         ENTROPIC_HOOK_PRE_TOOL_CALL, json.c_str(), &mod);
-    free(mod);
+    if (mod != nullptr) {
+        if (rc == 0) { apply_pre_tool_modification(call, mod); }
+        free(mod);
+    }
     return rc != 0;
 }
 
@@ -1480,6 +1653,39 @@ static std::unique_ptr<Directive> build_complete_directive(
 }
 
 /**
+ * @brief Parse the `context` array of a delegate/pipeline result (gh#162).
+ *
+ * The MCP layer owns this because core.so takes typed structs, never JSON
+ * (design decision #21). Entries without a `path` are skipped — the tool
+ * boundary already dropped them, and a second reader must not resurrect
+ * what the first refused.
+ *
+ * @param result_json Parsed tool result JSON.
+ * @return Typed references, empty when the key is absent or malformed.
+ * @utility
+ * @req REQ-DELEG-006
+ * @version 2.13.0
+ */
+static std::vector<ContextRef> extract_context_refs(
+    const nlohmann::json& result_json) {
+    std::vector<ContextRef> refs;
+    if (!result_json.contains("context")
+        || !result_json["context"].is_array()) {
+        return refs;
+    }
+    for (const auto& entry : result_json["context"]) {
+        if (!entry.is_object()) { continue; }
+        ContextRef ref;
+        ref.path = entry.value("path", std::string{});
+        if (ref.path.empty()) { continue; }
+        ref.lines = entry.value("lines", std::string{});
+        ref.note = entry.value("note", std::string{});
+        refs.push_back(std::move(ref));
+    }
+    return refs;
+}
+
+/**
  * @brief Build a Directive from a parsed directive + result JSON.
  * @param d Directive descriptor JSON carrying the wire "type" name.
  * @param result_json Parsed result JSON, source of the directive's
@@ -1489,7 +1695,7 @@ static std::unique_ptr<Directive> build_complete_directive(
  *         the caller then skips rather than dispatching.
  * @req REQ-MCP-002
  * @req REQ-MCP-024
- * @version 2.3.7
+ * @version 2.13.0
  */
 static std::unique_ptr<Directive> build_directive(
     const nlohmann::json& d, const nlohmann::json& result_json) {
@@ -1502,17 +1708,24 @@ static std::unique_ptr<Directive> build_directive(
         // with delegation_id but no target. The directive's target is
         // resolved later by the engine after loading the original
         // delegation's tier from storage.
-        result = std::make_unique<DelegateDirective>(
+        auto dl = std::make_unique<DelegateDirective>(
             result_json.value("target", ""),
             result_json.value("task", ""),
             result_json.value("max_turns", -1),
             result_json.value("delegation_id", ""));
+        // gh#162 (v2.13.0): carry the lead's file references and the
+        // resume-by-tier flag through to the engine.
+        dl->context = extract_context_refs(result_json);
+        dl->resume_by_target = result_json.value("resume_by_target", false);
+        result = std::move(dl);
     } else if (type_str == "complete") {
         result = build_complete_directive(result_json);
     } else if (type_str == "pipeline") {
-        result = std::make_unique<PipelineDirective>(
+        auto pl = std::make_unique<PipelineDirective>(
             extract_pipeline_stages(result_json),
             result_json.value("task", ""));
+        pl->context = extract_context_refs(result_json);  // gh#162
+        result = std::move(pl);
     }
     return result;
 }

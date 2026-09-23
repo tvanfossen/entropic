@@ -25,6 +25,10 @@
 
 #include <catch2/catch_test_macros.hpp>
 #include <entropic/entropic.h>
+// gh#164 (v2.13.0): the mid-turn refusal is only observable from the
+// private handle struct — same private-facade-header pattern as
+// final_text_test.cpp and serialize_messages_utf8_test.cpp.
+#include "engine_handle.h"
 
 #include <cstring>
 #include <cstdint>
@@ -3743,4 +3747,424 @@ TEST_CASE("ExternalBridge dispatch handles numeric JSON-RPC id",
     CHECK(resp.contains("result"));
     CHECK(resp["id"].is_number());
     ::close(c);
+}
+
+// ── gh#156 (v2.13.0): a configured prompt file that cannot be loaded ──
+//
+// The reporter pointed `app_context` at a plain markdown file — a
+// repository's CLAUDE.md, which they do not own and cannot add
+// frontmatter to. `parse_prompt_file` rejected it for a missing `type`
+// field, `load_app_context` returned that error, and all three callers
+// DISCARDED the return value. The only observable symptom was
+// `app_context=false` in the assembly line, one line under a
+// `Read file: ..., 19883 bytes` that actively suggested success.
+//
+// The decision recorded on the issue is that this is a CONFIG error, not
+// a warning: a consumer who named a path wanted the document, and a
+// review judged without its standards is not the review that was asked
+// for. It is raised BEFORE the orchestrator is constructed, so a 13 GB
+// model does not load ahead of a diagnosis that costs a stat and a
+// parse.
+//
+// The ordering claim is what these cases are built to prove. Each config
+// names a tier whose GGUF does not exist, so reaching `init_orchestrator`
+// is observable as ENTROPIC_ERROR_LOAD_FAILED. INVALID_CONFIG therefore
+// means the prompt check ran FIRST; LOAD_FAILED means it did not run, or
+// ran and passed.
+
+namespace {
+
+/// @brief Write `body` to <tmp>/entropic-gh156-<tag>/<name> and return it.
+std::filesystem::path gh156_write(const std::string& tag,
+                                  const std::string& name,
+                                  const std::string& body) {
+    auto dir = std::filesystem::temp_directory_path()
+        / ("entropic-gh156-" + tag);
+    std::filesystem::create_directories(dir);
+    auto path = dir / name;
+    std::ofstream out(path);
+    out << body;
+    out.close();
+    return path;
+}
+
+/// @brief A models block naming a tier whose GGUF cannot exist.
+///
+/// Reaching model load is then observable at the C ABI: `initialize()`
+/// returns false and `configure` answers LOAD_FAILED.
+std::string gh156_absent_model() {
+    return R"("models":{"default":"lead","lead":)"
+           R"({"path":"/nonexistent/entropic-gh156-never-here.gguf"}})";
+}
+
+}  // namespace
+
+TEST_CASE("gh#156 a frontmatter-less app_context fails configure "
+          "before the model loads",
+          "[v2.13.0][entropic_capi][configure][gh156]") {
+    auto ctx = gh156_write("plain-appctx", "CLAUDE.md",
+                           "# Project guidelines\n\nNo frontmatter here.\n");
+    CreatedOnlyHandle h;
+    REQUIRE(h.h != nullptr);
+
+    auto cfg = std::string("{") + gh156_absent_model()
+        + R"(,"app_context":")" + ctx.string() + R"("})";
+    auto rc = entropic_configure(h, cfg.c_str());
+
+    // RED before the fix: LOAD_FAILED — the absent GGUF was reached
+    // first and the unreadable app_context was never diagnosed at all.
+    REQUIRE(rc == ENTROPIC_ERROR_INVALID_CONFIG);
+
+    const char* msg = entropic_last_error(h);
+    REQUIRE(msg != nullptr);
+    std::string err(msg);
+    INFO("last_error: " << err);
+    CHECK(err.find("app_context") != std::string::npos);
+    CHECK(err.find(ctx.string()) != std::string::npos);
+    // The message must name the gh#141 inline form, which is the
+    // supported route for a document the consumer does not own.
+    CHECK(err.find("content:") != std::string::npos);
+}
+
+TEST_CASE("gh#156 a frontmatter-less constitution fails configure too",
+          "[v2.13.0][entropic_capi][configure][gh156]") {
+    // The issue comment widened the report: `assemble` discards the
+    // constitution error identically, so a misconfigured constitution
+    // vanishes into `constitution=false` the same way.
+    auto con = gh156_write("plain-constitution", "house-rules.md",
+                           "Be brief.\n");
+    CreatedOnlyHandle h;
+    REQUIRE(h.h != nullptr);
+
+    auto cfg = std::string("{") + gh156_absent_model()
+        + R"(,"constitution":")" + con.string() + R"("})";
+    auto rc = entropic_configure(h, cfg.c_str());
+
+    REQUIRE(rc == ENTROPIC_ERROR_INVALID_CONFIG);
+    std::string err(entropic_last_error(h));
+    INFO("last_error: " << err);
+    CHECK(err.find("constitution") != std::string::npos);
+    CHECK(err.find(con.string()) != std::string::npos);
+}
+
+TEST_CASE("gh#156 a missing app_context path fails configure",
+          "[v2.13.0][entropic_capi][configure][gh156]") {
+    CreatedOnlyHandle h;
+    REQUIRE(h.h != nullptr);
+
+    auto cfg = std::string("{") + gh156_absent_model()
+        + R"(,"app_context":"/nonexistent/entropic-gh156/absent.md"})";
+    auto rc = entropic_configure(h, cfg.c_str());
+
+    REQUIRE(rc == ENTROPIC_ERROR_INVALID_CONFIG);
+    std::string err(entropic_last_error(h));
+    INFO("last_error: " << err);
+    CHECK(err.find("absent.md") != std::string::npos);
+}
+
+// ── Controls: the two working spellings must reach model load ────────
+//
+// Without these, "reject everything" would pass the cases above. Each
+// control asserts the run got PAST the new check — LOAD_FAILED is the
+// absent GGUF being reached, which is exactly what must still happen.
+
+TEST_CASE("gh#156 inline app_context content still configures",
+          "[v2.13.0][entropic_capi][configure][gh156]") {
+    CreatedOnlyHandle h;
+    REQUIRE(h.h != nullptr);
+
+    auto cfg = std::string("{") + gh156_absent_model()
+        + R"(,"app_context":{"content":"Inline, owned by the caller."}})";
+    auto rc = entropic_configure(h, cfg.c_str());
+
+    CHECK(rc != ENTROPIC_ERROR_INVALID_CONFIG);
+}
+
+TEST_CASE("gh#156 app_context false still configures",
+          "[v2.13.0][entropic_capi][configure][gh156]") {
+    CreatedOnlyHandle h;
+    REQUIRE(h.h != nullptr);
+
+    auto cfg = std::string("{") + gh156_absent_model()
+        + R"(,"app_context":false})";
+    auto rc = entropic_configure(h, cfg.c_str());
+
+    CHECK(rc != ENTROPIC_ERROR_INVALID_CONFIG);
+}
+
+TEST_CASE("gh#156 a well-formed app_context file still configures",
+          "[v2.13.0][entropic_capi][configure][gh156]") {
+    auto ctx = gh156_write("good-appctx", "context.md",
+                           "---\ntype: app_context\nversion: 1\n---\n"
+                           "Body the engine can use.\n");
+    CreatedOnlyHandle h;
+    REQUIRE(h.h != nullptr);
+
+    auto cfg = std::string("{") + gh156_absent_model()
+        + R"(,"app_context":")" + ctx.string() + R"("})";
+    auto rc = entropic_configure(h, cfg.c_str());
+
+    CHECK(rc != ENTROPIC_ERROR_INVALID_CONFIG);
+}
+
+// ── gh#154 (v2.13.0): grammar provenance + unresolvable tier stems ────
+//
+// A consumer spent three days measuring speculative decode under what
+// they believed was a grammar-constrained configuration. Their tier
+// named its grammar by bare stem, their harness wrote each arm's config
+// where no matching `.gbnf` sat, and `GrammarRegistry::get()` returned
+// "" — so the engine logged a warning and decoded UNCONSTRAINED, as
+// documented. Two accept-rate figures and one throughput figure were
+// withdrawn because of it.
+//
+// Two gaps, both closed here. (a) The engine knew and the consumer could
+// not ask: no GenerationResult field reaches any consumer, so "did this
+// run decode under a grammar" was answerable only by the ABSENCE of a
+// log line. (b) The stem was unresolvable from the moment the config was
+// read, and the engine waited until decode to not-mention it.
+
+namespace {
+
+/// @brief A models block naming a tier with a `grammar:` stem.
+std::string gh154_config(const std::string& grammar_stem) {
+    return std::string("{\"models\":{\"default\":\"lead\",\"lead\":{")
+        + R"("path":"/nonexistent/entropic-gh154.gguf","grammar":")"
+        + grammar_stem + R"("}}})";
+}
+
+}  // namespace
+
+TEST_CASE("gh#154 a tier grammar stem that cannot resolve YET still "
+          "configures",
+          "[v2.13.0][entropic_capi][configure][gh154]") {
+    // gh#154 follow-up: the configure-time REFUSAL is withdrawn, because
+    // it made a documented C API workflow impossible.
+    // `entropic_grammar_register` and `entropic_grammar_register_file`
+    // both require an orchestrator (`check_orchestrator`), which exists
+    // only AFTER configure — so "configure, then register the tier's
+    // grammar" is the only sequence available to a consumer whose grammar
+    // lives in memory or at a path the engine cannot discover, and
+    // refusing at configure locked them out of it.
+    // tests/model/test_gh95_identity_grammar.cpp is that sequence.
+    //
+    // Configure now WARNS. The refusal moves to first use: a run that
+    // selects the tier while its grammar is still unregistered fails with
+    // ENTROPIC_ERROR_GRAMMAR_NOT_FOUND (tier_grammar_gate_test.cpp).
+    CreatedOnlyHandle h;
+    REQUIRE(h.h != nullptr);
+
+    auto rc = entropic_configure(h, gh154_config("no-such-grammar").c_str());
+
+    INFO("last_error: " << entropic_last_error(h));
+    CHECK(rc != ENTROPIC_ERROR_INVALID_CONFIG);
+}
+
+TEST_CASE("gh#154 a tier grammar stem that resolves still configures",
+          "[v2.13.0][entropic_capi][configure][gh154]") {
+    // The control. Without it "reject every tier grammar" would pass the
+    // case above. constitutional_critique.gbnf is the bundled grammar, so
+    // this stem resolves from the data dir exactly as production does.
+    CreatedOnlyHandle h;
+    REQUIRE(h.h != nullptr);
+
+    auto rc = entropic_configure(
+        h, gh154_config("constitutional_critique").c_str());
+
+    INFO("last_error: " << entropic_last_error(h));
+    CHECK(rc != ENTROPIC_ERROR_INVALID_CONFIG);
+}
+
+TEST_CASE("gh#154 a tier with no grammar is unaffected",
+          "[v2.13.0][entropic_capi][configure][gh154]") {
+    CreatedOnlyHandle h;
+    REQUIRE(h.h != nullptr);
+
+    auto rc = entropic_configure(
+        h, R"({"models":{"default":"lead","lead":)"
+           R"({"path":"/nonexistent/entropic-gh154.gguf"}}})");
+
+    CHECK(rc != ENTROPIC_ERROR_INVALID_CONFIG);
+}
+
+TEST_CASE("gh#154 entropic_metrics_json carries a generations array",
+          "[v2.13.0][entropic_capi][metrics][gh154]") {
+    // The consumer's actual ask: a field on the result saying what
+    // constrained the decode. It has to arrive somewhere a C consumer can
+    // read, and entropic_metrics_json is the only metrics surface that
+    // crosses the ABI. RED before the fix: the key does not exist.
+    CreatedOnlyHandle h;
+    REQUIRE(h.h != nullptr);
+    REQUIRE(entropic_configure(h, R"({"log_level":"WARN"})") == ENTROPIC_OK);
+
+    char* out = nullptr;
+    REQUIRE(entropic_metrics_json(h, &out) == ENTROPIC_OK);
+    REQUIRE(out != nullptr);
+    std::string json(out);
+    entropic_free(out);
+
+    INFO("metrics: " << json);
+    // Present and an array even before any generation has run — a
+    // consumer must be able to read it without guessing whether the key
+    // appears only sometimes.
+    CHECK(json.find("\"generations\"") != std::string::npos);
+    CHECK(json.find("\"generations\":[]") != std::string::npos);
+}
+
+// ── gh#164 (v2.13.0): entropic_release_model ────────────────────────
+
+TEST_CASE("gh#164 entropic_release_model rejects a NULL handle",
+          "[v2.13.0][entropic_capi][residency][gh164]") {
+    CHECK(entropic_release_model(nullptr, nullptr)
+          == ENTROPIC_ERROR_INVALID_HANDLE);
+    CHECK(entropic_release_model(nullptr, "lead")
+          == ENTROPIC_ERROR_INVALID_HANDLE);
+}
+
+TEST_CASE("gh#164 entropic_release_model needs a configured engine",
+          "[v2.13.0][entropic_capi][residency][gh164]") {
+    CreatedOnlyHandle h;
+    REQUIRE(h.h != nullptr);
+    CHECK(entropic_release_model(h, nullptr) == ENTROPIC_ERROR_INVALID_STATE);
+}
+
+TEST_CASE("gh#164 entropic_release_model names an unknown tier",
+          "[v2.13.0][entropic_capi][residency][gh164]") {
+    CreatedOnlyHandle h;
+    REQUIRE(h.h != nullptr);
+    REQUIRE(entropic_configure(h, R"({"log_level":"WARN"})") == ENTROPIC_OK);
+
+    // A typo must not read as "released successfully" — the consumer's
+    // whole reason for calling is to know the VRAM came back.
+    CHECK(entropic_release_model(h, "no-such-tier")
+          == ENTROPIC_ERROR_MODEL_NOT_FOUND);
+    // Releasing everything when nothing is resident is a no-op.
+    CHECK(entropic_release_model(h, nullptr) == ENTROPIC_OK);
+    CHECK(entropic_release_model(h, "") == ENTROPIC_OK);
+}
+
+TEST_CASE("gh#164 entropic_release_model refuses to unload mid-turn",
+          "[v2.13.0][entropic_capi][residency][gh164]") {
+    // swap_mutex_ does not serialize generation (orchestrator.h), so an
+    // unload during a decode frees the llama_context out from under it.
+    // The claim is the same one the six run entry points take, so the
+    // refusal is structural rather than a timing hope.
+    CreatedOnlyHandle h;
+    REQUIRE(h.h != nullptr);
+    REQUIRE(entropic_configure(h, R"({"log_level":"WARN"})") == ENTROPIC_OK);
+    REQUIRE(h.h->engine != nullptr);
+
+    REQUIRE(h.h->engine->try_begin_turn());
+    CHECK(entropic_release_model(h, nullptr)
+          == ENTROPIC_ERROR_ALREADY_RUNNING);
+    CHECK(entropic_release_model(h, "lead")
+          == ENTROPIC_ERROR_ALREADY_RUNNING);
+
+    h.h->engine->end_turn();
+    CHECK(entropic_release_model(h, nullptr) == ENTROPIC_OK);
+}
+
+TEST_CASE("gh#158 entropic_interrupt_session targets exactly one run",
+          "[v2.13.0][entropic_capi][concurrency][gh158]") {
+    // `entropic_interrupt` means every run on the handle; this means that
+    // one. Against v2.12.0 the call did not exist and a host serving two
+    // clients could only cancel both or neither.
+    CreatedOnlyHandle h;
+    REQUIRE(h.h != nullptr);
+    REQUIRE(entropic_configure(h, R"({"log_level":"WARN"})") == ENTROPIC_OK);
+    REQUIRE(h.h->engine != nullptr);
+    h.h->engine->set_concurrent_sessions(true);
+
+    REQUIRE(h.h->engine->try_begin_turn("alpha"));
+    REQUIRE(h.h->engine->try_begin_turn("bravo"));
+
+    CHECK(entropic_interrupt_session(h, "alpha") == ENTROPIC_OK);
+    CHECK(h.h->engine->session_interrupted("alpha"));
+    CHECK_FALSE(h.h->engine->session_interrupted("bravo"));
+
+    // A session with no run in flight is told so rather than silently OK'd.
+    CHECK(entropic_interrupt_session(h, "nobody")
+          == ENTROPIC_ERROR_NOT_RUNNING);
+
+    // The handle-wide call still means ALL runs.
+    CHECK(entropic_interrupt(h) == ENTROPIC_OK);
+    CHECK(h.h->engine->session_interrupted("bravo"));
+
+    h.h->engine->end_turn("alpha");
+    h.h->engine->end_turn("bravo");
+}
+
+TEST_CASE("gh#158 interrupt_session on a NULL handle is rejected",
+          "[v2.13.0][entropic_capi][concurrency][gh158]") {
+    CHECK(entropic_interrupt_session(nullptr, "x")
+          == ENTROPIC_ERROR_INVALID_HANDLE);
+}
+
+TEST_CASE("gh#165 entropic_session_context_set round-trips through the C ABI",
+          "[v2.13.0][entropic_capi][session][gh165]") {
+    // The whole point of the pair: snapshot on shutdown, restore on start.
+    // Before v2.13.0 there was no write counterpart at all, so a host that
+    // stopped the engine to free VRAM (gh#164) lost every conversation.
+    CreatedOnlyHandle h;
+    REQUIRE(h.h != nullptr);
+    REQUIRE(entropic_configure(h, R"({"log_level":"WARN"})") == ENTROPIC_OK);
+
+    const char* stored =
+        R"([{"content":"You are terse.","role":"system"},)"
+        R"({"content":"ls","metadata":{"tool_name":"bash.run"},"role":"tool"}])";
+
+    REQUIRE(entropic_session_context_set(h, "repo-a", stored) == ENTROPIC_OK);
+
+    char* out = nullptr;
+    REQUIRE(entropic_session_context_get(h, "repo-a", &out) == ENTROPIC_OK);
+    REQUIRE(out != nullptr);
+    const std::string read_back = out;
+    entropic_free(out);
+
+    // Byte-identical: what the host stored is what it gets back, metadata
+    // included. A lossy serializer would drop tool_name here — the key
+    // context_manager, compaction and tool-result folding all read.
+    CHECK(read_back == stored);
+
+    // Another session is untouched by the restore.
+    size_t other = 99;
+    REQUIRE(entropic_session_context_count(h, "repo-b", &other)
+            == ENTROPIC_OK);
+    CHECK(other == 0);
+}
+
+TEST_CASE("gh#165 entropic_session_context_set guards its preconditions",
+          "[v2.13.0][entropic_capi][session][gh165]") {
+    CHECK(entropic_session_context_set(nullptr, "k", "[]")
+          == ENTROPIC_ERROR_INVALID_HANDLE);
+
+    CreatedOnlyHandle h;
+    REQUIRE(entropic_configure(h, R"({"log_level":"WARN"})") == ENTROPIC_OK);
+    CHECK(entropic_session_context_set(h, "k", nullptr)
+          == ENTROPIC_ERROR_INVALID_ARGUMENT);
+    // Malformed JSON is an argument error, not a crash and not a silent
+    // "restored nothing".
+    CHECK(entropic_session_context_set(h, "k", "{not json")
+          == ENTROPIC_ERROR_INVALID_ARGUMENT);
+    // A NULL key means the default session, matching every sibling.
+    CHECK(entropic_session_context_set(h, nullptr, "[]") == ENTROPIC_OK);
+}
+
+TEST_CASE("gh#165 entropic_session_context_set refuses the running session",
+          "[v2.13.0][entropic_capi][session][gh165]") {
+    // The session APIs take api_mutex but not the run guard, so clear/drop
+    // could already mutate conversations_ mid-turn. A write counterpart
+    // makes that latent race a likely one, so the running key is refused —
+    // and only the running key.
+    CreatedOnlyHandle h;
+    REQUIRE(entropic_configure(h, R"({"log_level":"WARN"})") == ENTROPIC_OK);
+    REQUIRE(h.h->engine != nullptr);
+    h.h->engine->set_concurrent_sessions(true);
+    REQUIRE(h.h->engine->try_begin_turn("busy"));
+
+    CHECK(entropic_session_context_set(h, "busy", "[]")
+          == ENTROPIC_ERROR_ALREADY_RUNNING);
+    CHECK(entropic_session_context_set(h, "idle", "[]") == ENTROPIC_OK);
+
+    h.h->engine->end_turn("busy");
+    CHECK(entropic_session_context_set(h, "busy", "[]") == ENTROPIC_OK);
 }

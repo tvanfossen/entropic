@@ -54,6 +54,7 @@ ENUM_SOURCES = [
     (TYPES_DIR / "hooks.h", "entropic_hook_point_t"),
     (ENTROPIC_H, "ent_decision_t"),
     (ENTROPIC_H, "entropic_mcp_access_level_t"),
+    (ENTROPIC_H, "ent_path_access_t"),  # v2.13.0
 ]
 
 # C-enum-typedef → (Python class name, prefix to strip, drop-sentinels set)
@@ -65,6 +66,8 @@ ENUM_RENAME = {
     "entropic_compute_backend_t": ("EntropicComputeBackend", "ENTROPIC_BACKEND_", set()),
     "entropic_hook_point_t": ("EntropicHookPoint", "ENTROPIC_HOOK_", {"COUNT_"}),
     "ent_decision_t": ("EntDecision", "ENT_DECISION_", set()),
+    # v2.13.0 — outside-root path approval
+    "ent_path_access_t": ("EntPathAccess", "ENT_PATH_ACCESS_", set()),
     "entropic_mcp_access_level_t": ("EntropicMcpAccessLevel", "ENTROPIC_MCP_ACCESS_", set()),
 }
 
@@ -78,6 +81,8 @@ STRUCT_SOURCES = [
     (ENTROPIC_H, "ent_delegation_request_t", "EntDelegationRequest"),
     (ENTROPIC_H, "ent_delegation_result_t", "EntDelegationResult"),
     (ENTROPIC_H, "entropic_logprob_result_t", "EntropicLogprobResult"),
+    # v2.13.0 — outside-root path approval request
+    (ENTROPIC_H, "ent_path_approval_request_t", "EntPathApprovalRequest"),
 ]
 
 # C-callback-typedef → Python CFUNCTYPE name. Pulled from the header
@@ -91,6 +96,8 @@ NAMED_CB_RENAME = {
     "entropic_compactor_fn": "COMPACTOR_CB",
     # v2.2.4, gh#57 — residency observer
     "entropic_residency_observer_t": "RESIDENCY_OBSERVER_CB",
+    # v2.13.0 — outside-root path approver
+    "ent_path_approval_cb": "PATH_APPROVAL_CB",
 }
 
 # Inline function-pointer parameters that pre-2.2.1 had hand-named
@@ -157,6 +164,8 @@ CTYPE_MAP = {
     "ent_decision_t": "ctypes.c_int",
     # v2.2.4, gh#57
     "entropic_residency_event_t": "ctypes.c_int",
+    # v2.13.0 — outside-root path approval
+    "ent_path_access_t": "ctypes.c_int",
 }
 
 # ── Comment & token utilities ──────────────────────────────

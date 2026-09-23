@@ -91,17 +91,28 @@ public:
     bool open() override;
 
     /**
-     * @brief Send SIGTERM, reap child, close pipes.
-     * @version 1.8.7
+     * @brief Send SIGTERM, reap the child, join the stderr pump, close pipes.
+     *
+     * gh#158 (v2.13.0): the stderr thread is joined BEFORE the fds are
+     * closed. Closing first raced the pump on `stderr_fd_` — a
+     * ThreadSanitizer finding, and a use-after-close if the number had been
+     * handed to another thread's `open()` in between.
+     *
+     * @version 2.13.0
      */
     void close() override;
 
     /**
      * @brief Send JSON-RPC request via stdin, read response from stdout.
+     *
+     * gh#158 (v2.13.0): an abandoned read marks the pipe desynced, and the
+     * next request drains the server's late reply before writing. See
+     * `desynced_`.
+     *
      * @param request_json JSON-RPC request string.
      * @param timeout_ms Timeout in milliseconds (0 = default).
      * @return JSON-RPC response string, or empty on error/timeout.
-     * @version 1.8.7
+     * @version 2.13.0
      */
     std::string send_request(
         const std::string& request_json,
@@ -140,6 +151,19 @@ public:
     void clear_interrupt() override;
 
     /**
+     * @brief Whether THIS request must abort (gh#158, v2.13.0).
+     *
+     * The handle-wide latch OR the cancel token of the run that issued this
+     * call. See the definition for why a per-session interrupt must not use
+     * the latch.
+     *
+     * @return true when the in-flight request should stop.
+     * @utility
+     * @version 2.13.0
+     */
+    bool request_cancelled() const;
+
+    /**
      * @brief Whether an interrupt is currently short-circuiting calls.
      * @return true while cancel_flag_ is set.
      * @req REQ-MCP-025
@@ -162,6 +186,20 @@ public:
      */
     const std::string& display_name() const { return display_name_; }
 
+    /**
+     * @brief Set the child's working directory, before connect (gh#166).
+     *
+     * An external MCP server is a separate process that has always taken
+     * whatever cwd the HOST happened to have — which makes a repo-scoped
+     * server (`clew-mcp --repo .`) useless once one handle serves several
+     * workspaces. `ServerManager` fills this from its own root.
+     *
+     * @param dir Directory to chdir into on spawn ("" = inherit).
+     * @req REQ-MCP-027
+     * @version 2.13.0
+     */
+    void set_working_dir(std::string dir) { working_dir_ = std::move(dir); }
+
 private:
     std::atomic<bool> cancel_flag_{false};        ///< Set by interrupt() (P1-10)
 
@@ -169,6 +207,7 @@ private:
     std::string command_;                        ///< Executable path
     std::vector<std::string> args_;              ///< Command-line arguments
     std::map<std::string, std::string> env_;     ///< Environment overrides
+    std::string working_dir_;                    ///< gh#166: child cwd ("" = inherit)
     uint32_t default_timeout_ms_;                ///< Default request timeout
 
     pid_t child_pid_{-1};                        ///< Child process PID
@@ -178,6 +217,22 @@ private:
     std::atomic<bool> connected_{false};         ///< Connection state
     std::thread stderr_thread_;                  ///< Stderr forwarding thread
     std::mutex io_mutex_;                        ///< Guards pipe I/O
+    /// @brief gh#158: the last request on this pipe was ABANDONED.
+    ///
+    /// `send_request` holds `io_mutex_` across write-then-read, so two
+    /// concurrent callers never interleave bytes. What it cannot do is
+    /// un-send a request whose read it gave up on — a timeout, or an
+    /// interrupt tripping `request_cancelled()` mid-poll. The server still
+    /// answers, and that answer sits in the pipe as the first line the NEXT
+    /// request reads.
+    ///
+    /// Under the v2.12.0 per-handle run guard that was a stale answer to
+    /// yourself. With keyed runs it is a cross-session leak, and it is the
+    /// exact shape gh#150 was filed for: a result that cannot be told from a
+    /// real one. Set when a request is abandoned, consumed by the drain at
+    /// the head of the next `send_request`. Guarded by `io_mutex_`, so it is
+    /// a plain bool rather than an atomic.
+    bool desynced_ = false;
 
     /**
      * @brief Build merged environment for child process.
@@ -219,6 +274,21 @@ private:
      * @version 1.8.8
      */
     std::string read_line(int fd, uint32_t timeout_ms);
+
+    /**
+     * @brief Discard replies left over from an abandoned request (gh#158).
+     *
+     * Called with `io_mutex_` held, before the next request is written.
+     * Polls with a zero timeout and throws away whole lines until the pipe
+     * has nothing ready, so the next `read_line` sees this request's answer
+     * and not the last one's. Bounded so a server that streams garbage
+     * cannot spin here forever.
+     *
+     * @return Number of orphaned lines discarded.
+     * @utility
+     * @version 2.13.0
+     */
+    int drain_orphaned_responses();
 
     /**
      * @brief Poll fd for readability within remaining deadline.

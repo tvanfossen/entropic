@@ -274,11 +274,19 @@ void SandboxManager::prune_stale_sessions() {
 
 /**
  * @brief Ensure the `base/` snapshot of the project exists.
+ *
+ * gh#158 (v2.13.0): serialized on `base_mutex_`. The check-and-snapshot is
+ * not atomic, and two concurrent delegating runs both copying the project
+ * tree into one `base_dir_` is a file-level race, not a duplicated effort.
+ * The lock is held across the copy because that IS the critical section;
+ * the second caller wants the finished snapshot, not its own.
+ *
  * @return true on success.
  * @dg_internal
- * @version 2.1.5
+ * @version 2.13.0
  */
 bool SandboxManager::ensure_base_snapshot() {
+    std::lock_guard<std::mutex> guard(base_mutex_);
     if (base_ready_) { return true; }
     std::error_code ec;
     std::filesystem::create_directories(base_dir_, ec);
@@ -600,6 +608,18 @@ const std::filesystem::path& SandboxManager::session_base() const {
     return session_base_;
 }
 
+/**
+ * @brief Mint a collision-free delegation id (gh#160).
+ * @param prefix Human-readable stem ("d1", "pipeline", ...).
+ * @return `<prefix>_<n>` where n is unique for this manager's lifetime.
+ * @req REQ-DELEG-005
+ * @version 2.13.0
+ */
+std::string SandboxManager::next_delegation_id(const std::string& prefix) {
+    auto n = id_seq_.fetch_add(1, std::memory_order_relaxed) + 1;
+    return prefix + "_" + std::to_string(n);
+}
+
 // ── ScopedSandbox ────────────────────────────────────────
 
 /**
@@ -614,27 +634,30 @@ const std::filesystem::path& SandboxManager::session_base() const {
 ScopedSandbox::ScopedSandbox(
     SwapDirFn swap_fn,
     void* user_data,
+    std::string session_key,
     const std::filesystem::path& sandbox_path,
     const std::filesystem::path& original_path)
     : swap_fn_(swap_fn),
       user_data_(user_data),
+      session_key_(std::move(session_key)),
       original_path_(original_path) {
     if (swap_fn_ != nullptr) {
-        swap_fn_(sandbox_path, user_data_);
-        logger->info("Swapped tool dir to sandbox: {}",
-                     sandbox_path.string());
+        swap_fn_(session_key_, sandbox_path, true, user_data_);
+        logger->info("Swapped tool dir to sandbox: {} (session='{}')",
+                     sandbox_path.string(), session_key_);
     }
 }
 
 /**
- * @brief Restore the original directory.
+ * @brief Restore the caller's active directory (gh#160).
  * @dg_internal
- * @version 2.1.5
+ * @version 2.13.0
  */
 ScopedSandbox::~ScopedSandbox() {
     if (swap_fn_ != nullptr) {
-        swap_fn_(original_path_, user_data_);
-        logger->info("Restored tool dir to: {}", original_path_.string());
+        swap_fn_(session_key_, original_path_, false, user_data_);
+        logger->info("Restored tool dir to: {} (session='{}')",
+                     original_path_.string(), session_key_);
     }
 }
 

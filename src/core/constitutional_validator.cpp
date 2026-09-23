@@ -20,6 +20,80 @@
 namespace entropic {
 
 namespace {
+
+/// @brief gh#158: per-TURN validation context, one set per RUN thread.
+///
+/// Confined to this translation unit for the reason `run_scope.cpp` gives:
+/// a thread-local defined in a header embedded in several `.so` files is a
+/// different variable per library. Nothing outside this file needs them.
+thread_local std::string t_current_tier;
+thread_local std::string t_current_tool_context;   ///< Tool-call manifest
+thread_local std::string t_current_tool_evidence;  ///< Un-pruned evidence
+thread_local std::string t_current_system_prompt;  ///< Identity prompt
+
+}  // namespace
+
+/**
+ * @brief gh#158: this thread's tier under validation — see header.
+ * @return Tier name; empty outside a validation call stack.
+ * @dg_internal
+ * @version 2.13.0
+ */
+const std::string& ConstitutionalValidator::current_tier() {
+    return t_current_tier;
+}
+
+/**
+ * @brief gh#158: this thread's tool-call manifest — see header.
+ * @return Manifest text; empty when none was supplied.
+ * @dg_internal
+ * @version 2.13.0
+ */
+const std::string& ConstitutionalValidator::current_tool_context() {
+    return t_current_tool_context;
+}
+
+/**
+ * @brief gh#158: this thread's un-pruned tool evidence — see header.
+ * @return Evidence text; empty when none was supplied.
+ * @dg_internal
+ * @version 2.13.0
+ */
+const std::string& ConstitutionalValidator::current_tool_evidence() {
+    return t_current_tool_evidence;
+}
+
+/**
+ * @brief gh#158: this thread's identity system prompt — see header.
+ * @return System prompt; empty when none was supplied.
+ * @dg_internal
+ * @version 2.13.0
+ */
+const std::string& ConstitutionalValidator::current_system_prompt() {
+    return t_current_system_prompt;
+}
+
+/**
+ * @brief gh#158: publish this thread's per-turn context — see header.
+ * @param tier Tier under validation.
+ * @param tool_context Tool-call manifest.
+ * @param tool_evidence Un-pruned tool evidence.
+ * @param system_prompt Identity system prompt.
+ * @dg_internal
+ * @version 2.13.0
+ */
+void ConstitutionalValidator::set_turn_context(
+    const std::string& tier,
+    const std::string& tool_context,
+    const std::string& tool_evidence,
+    const std::string& system_prompt) {
+    t_current_tier = tier;
+    t_current_tool_context = tool_context;
+    t_current_tool_evidence = tool_evidence;
+    t_current_system_prompt = system_prompt;
+}
+
+namespace {
 auto logger = entropic::log::get("core.constitutional_validator");
 } // anonymous namespace
 
@@ -167,7 +241,7 @@ bool ConstitutionalValidator::auto_retry_enabled() const {
  *
  * @return ENTROPIC_OK on success, INVALID_STATE if nothing paused.
  * @req REQ-VALID-003
- * @version 2.1.5
+ * @version 2.13.0
  */
 entropic_error_t ConstitutionalValidator::resume_retry() {
     std::optional<PendingValidationState> state;
@@ -179,6 +253,10 @@ entropic_error_t ConstitutionalValidator::resume_retry() {
     if (!state) {
         return ENTROPIC_ERROR_INVALID_STATE;
     }
+    // gh#158: re-publish the paused turn's identity prompt onto THIS thread.
+    // The revision fallback in inject_feedback_into_messages reads it, and
+    // the consumer resumes from a thread that never ran that turn.
+    set_turn_context(state->tier, "", "", state->system_prompt);
     auto result = apply_revisions(
         state->result, state->critique,
         state->messages_json.empty() ? nullptr
@@ -285,8 +363,8 @@ void ConstitutionalValidator::set_tier_rules(
 /**
  * @brief Run the full validation pipeline on generated content.
  *
- * When called from handle_hook(), current_tool_context_ and
- * current_system_prompt_ are set before this call so that
+ * When called from handle_hook(), the per-turn thread-local context
+ * (tool manifest, evidence, identity prompt) is published first so that
  * build_critique_prompt() and inject_feedback_into_messages()
  * have the per-turn context they need.
  *
@@ -296,7 +374,7 @@ void ConstitutionalValidator::set_tier_rules(
  * @return ValidationResult with final content and critique metadata.
  * @req REQ-VALID-001
  * @req REQ-VALID-002
- * @version 2.10.3
+ * @version 2.13.0
  */
 ValidationResult ConstitutionalValidator::validate(
     const std::string& content,
@@ -328,7 +406,7 @@ ValidationResult ConstitutionalValidator::validate(
         return result;
     }
 
-    current_tier_ = tier;
+    t_current_tier = tier;
     logger->info("Validation start: {} chars, tier='{}'",
                  cleaned.size(), tier);
     result = run_validation_loop(cleaned, tier, messages_json);
@@ -429,14 +507,14 @@ int ConstitutionalValidator::hook_callback(
  * When no validation_rules exist, falls back to the constitution
  * as the sole rubric (pre-v2.0.8 behavior).
  *
- * Prepends a tool call manifest (from current_tool_context_) when
+ * Prepends a tool call manifest (from current_tool_context()) when
  * available so the validator can distinguish grounded claims from
  * ungrounded assertions.
  *
  * @param content Text to critique (think blocks already stripped).
  * @return Formatted critique prompt string.
  * @req REQ-VALID-002
- * @version 2.1.3
+ * @version 2.13.0
  */
 std::string ConstitutionalValidator::build_critique_prompt(
     const std::string& content) const {
@@ -452,12 +530,12 @@ std::string ConstitutionalValidator::build_critique_prompt(
     bool has_tier_rules = false;
     {
         std::lock_guard<std::mutex> lock(overrides_mutex_);
-        auto it = tier_rules_.find(current_tier_);
+        auto it = tier_rules_.find(current_tier());
         has_tier_rules = (it != tier_rules_.end()
                           && !it->second.empty());
         if (has_tier_rules) {
             prompt += "Evaluate against these rules for the '"
-                   + current_tier_ + "' identity:\n";
+                   + current_tier() + "' identity:\n";
             for (const auto& rule : it->second) {
                 prompt += "- " + rule + "\n";
             }
@@ -469,27 +547,44 @@ std::string ConstitutionalValidator::build_critique_prompt(
         }
     }
 
-    // Provide tool call manifest so validator can assess grounding
-    if (!current_tool_context_.empty()) {
-        prompt += "\n\nTool calls made this turn:\n";
-        prompt += current_tool_context_;
-    }
-
-    // Issue #5 (v2.1.3): un-pruned tool-result content. Lets the
-    // critique pass verify file:line citations against actual
-    // evidence rather than the manifest-plus-stubs that pre-2.1.3
-    // produced. Engine surfaces this when the messages have been
-    // partially pruned (#6 limits when this happens, but legitimate
-    // long-context delegations still trigger it).
-    if (!current_tool_evidence_.empty()) {
-        prompt += "\n\nTool result evidence (verify citations against this):\n";
-        prompt += current_tool_evidence_;
-    }
+    append_turn_evidence(prompt);
 
     prompt += "\n\nEvaluate this output for compliance:\n\n---\n";
     prompt += content;
     prompt += "\n---";
     return prompt;
+}
+
+/**
+ * @brief Append this turn's tool manifest and evidence to a critique prompt.
+ *
+ * Extracted at gh#158 (v2.13.0): the per-turn context moved from members to
+ * thread-local accessors, and six calls where there had been six field reads
+ * put `build_critique_prompt` over the ABC gate. The two sections belong
+ * together anyway — both answer "what did the model actually have in front
+ * of it", and both are optional.
+ *
+ * The evidence half is Issue #5 (v2.1.3): un-pruned tool-result content, so
+ * the critique pass can verify `file:line` citations against what was really
+ * returned rather than against the manifest-plus-stubs that pre-2.1.3
+ * produced. The engine surfaces it when messages have been partially pruned.
+ *
+ * @param prompt Critique prompt under construction (appended to in place).
+ * @dg_internal
+ * @version 2.13.0
+ */
+void ConstitutionalValidator::append_turn_evidence(
+    std::string& prompt) const {
+    const std::string& manifest = current_tool_context();
+    if (!manifest.empty()) {
+        prompt += "\n\nTool calls made this turn:\n";
+        prompt += manifest;
+    }
+    const std::string& evidence = current_tool_evidence();
+    if (!evidence.empty()) {
+        prompt += "\n\nTool result evidence (verify citations against this):\n";
+        prompt += evidence;
+    }
 }
 
 /**
@@ -542,7 +637,7 @@ void ConstitutionalValidator::store_result(
  * @return ValidationResult after critique/revision.
  * @req REQ-VALID-002
  * @req REQ-VALID-003
- * @version 2.1.5
+ * @version 2.13.0
  */
 ValidationResult ConstitutionalValidator::run_validation_loop(
     const std::string& content,
@@ -569,7 +664,7 @@ ValidationResult ConstitutionalValidator::run_validation_loop(
             pending_state_ = PendingValidationState{
                 result, critique,
                 messages_json ? std::string(messages_json) : std::string{},
-                tier};
+                tier, t_current_system_prompt};
         }
         logger->info("Constitutional validation paused (gh#30): "
                      "auto_retry disabled, awaiting consumer decision");
@@ -900,7 +995,7 @@ std::string ConstitutionalValidator::build_feedback_text(
  * @brief Inject feedback into the conversation messages.
  *
  * When no messages_json is provided (hook-path), builds a fallback
- * context using the tier's identity system prompt (current_system_prompt_)
+ * context using the tier's identity system prompt (current_system_prompt())
  * rather than just the constitution. This keeps the model in its assigned
  * persona during revision instead of reverting to base behaviour.
  *
@@ -909,7 +1004,7 @@ std::string ConstitutionalValidator::build_feedback_text(
  * @param messages_json Base conversation messages (may be NULL).
  * @return Augmented JSON array with assistant + user feedback appended.
  * @dg_internal
- * @version 2.0.7
+ * @version 2.13.0
  */
 std::string ConstitutionalValidator::inject_feedback_into_messages(
     const std::string& original,
@@ -921,8 +1016,8 @@ std::string ConstitutionalValidator::inject_feedback_into_messages(
     } else {
         // Prefer identity system prompt over bare constitution — keeps
         // the model in persona during revision (prevents apology spirals).
-        const auto& sys = !current_system_prompt_.empty()
-            ? current_system_prompt_ : constitution_text_;
+        const auto& sys = !current_system_prompt().empty()
+            ? current_system_prompt() : constitution_text_;
         base = "[{\"role\":\"system\",\"content\":\""
              + json_escape(sys) + "\"}";
     }
@@ -1026,7 +1121,7 @@ static bool is_pure_tool_call(const std::string& content) {
  * @return 0 (post-hooks cannot cancel).
  * @req REQ-HOOK-002
  * @req REQ-VALID-001
- * @version 2.1.3
+ * @version 2.13.0
  */
 int ConstitutionalValidator::handle_hook(
     const char* context_json,
@@ -1039,17 +1134,18 @@ int ConstitutionalValidator::handle_hook(
     if (content.empty()) { return 0; }
 
     // Store per-call context for build_critique_prompt and revision
-    current_tool_context_ = extract_json_string(
+    const auto tool_context = extract_json_string(
         context_json, "tool_context");
     // Issue #5 (v2.1.3): un-pruned tool-result content surfaced by the
     // engine so the validator can verify citations against actual
     // evidence rather than post-prune stubs. Optional field — pre-2.1.3
     // engines that don't send it give an empty string, falling back to
     // the manifest-only behaviour.
-    current_tool_evidence_ = extract_json_string(
+    const auto tool_evidence = extract_json_string(
         context_json, "tool_evidence");
-    current_system_prompt_ = extract_json_string(
+    const auto system_prompt = extract_json_string(
         context_json, "system_prompt");
+    set_turn_context(tier, tool_context, tool_evidence, system_prompt);
 
     auto result = validate(content, tier, nullptr);
     if (!result.was_revised) {

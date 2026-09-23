@@ -166,6 +166,39 @@ public:
     }
 
     /**
+     * @brief Drop one session's resident KV and release its slot (gh#165).
+     *
+     * Removes the session's sequence cells and forgets its residency, so a
+     * restored conversation starts from a cold prefill instead of matching a
+     * prefix the conversation it replaced left behind.
+     *
+     * @param session_key Session whose KV to drop.
+     * @req REQ-LOOP-010
+     * @version 2.13.0
+     */
+    void forget_session_kv(const std::string& session_key) override;
+
+    /**
+     * @brief How many times the WHOLE KV cache has been cleared (gh#158).
+     *
+     * A deterministic counter, in the instrumentation shape #62/gh#161 and
+     * #65/gh#148 established: RSS and wall-clock both depend on state a test
+     * cannot pin, so the observable is the CALL, not its effect.
+     *
+     * `entropic_run_batch` used to bump this once per batch, destroying
+     * every OTHER session's resident prefix on the way past. The gh#158
+     * model test asserts it does not move across a batch while a second
+     * session's KV survives — a correctness test alone passes either way,
+     * because a wiped session still produces correct output after a silent
+     * cold re-prefill.
+     *
+     * @return Whole-cache clear count since activation.
+     * @utility
+     * @version 2.13.0
+     */
+    int kv_full_clear_count() const { return kv_full_clear_count_; }
+
+    /**
      * @brief Set prompt cache configuration.
      *
      * Must be called before activate(). The config is consumed when
@@ -292,6 +325,37 @@ public:
             ? static_cast<int>(llama_memory_seq_pos_max(llama_get_memory(ctx_), 0))
             : -1;
     }
+
+    /**
+     * @brief Whole-file loads of a tier model in this process (gh#148).
+     *
+     * Deterministic instrumentation, in the same spirit as gh#161's
+     * regex-evaluation counter: every `llama_model_load_from_file` of a
+     * TIER model increments it exactly once, so a test can assert WORK
+     * DONE instead of wall-clock time or RSS — both of which are
+     * page-cache and machine-load dependent, which is what made the
+     * original "1.5x the file size" report untestable.
+     *
+     * Process-wide and static because the waste it measures spans a
+     * single backend's own COLD → WARM → ACTIVE sequence, and because a
+     * pooled backend is shared by several tiers.
+     *
+     * The MTP head is deliberately NOT counted: it is a separate ~57 MB
+     * GGUF with its own lifecycle, and folding it in would make the
+     * number mean two different things.
+     *
+     * @return Cumulative whole-file tier-model loads.
+     * @utility
+     * @version 2.13.0
+     */
+    static std::uint64_t model_file_loads();
+
+    /**
+     * @brief Reset the whole-file load counter (gh#148, test surface).
+     * @utility
+     * @version 2.13.0
+     */
+    static void reset_model_file_loads();
 
     /* ── gh#87 (v2.7.0): common_chat tool-call render + parse ── */
 
@@ -469,6 +533,22 @@ protected:
 
     bool do_load(const ModelConfig& config) override;
     bool do_activate() override;
+
+    /**
+     * @brief COLD → ACTIVE in ONE whole-file read (gh#148).
+     *
+     * Reads the GGUF once with the configured `gpu_layers` and builds the
+     * context on it, instead of the base class's read-for-CPU-then-read-
+     * again-for-the-real-placement. llama.cpp ties offloading to the model
+     * load, so the second read was never avoidable from WARM — but from
+     * COLD the first one is pure waste.
+     *
+     * @param config Validated model config.
+     * @return true on success; sets last_error_ on failure.
+     * @req REQ-INFER-002
+     * @version 2.13.0
+     */
+    bool do_load_active(const ModelConfig& config) override;
     void do_deactivate() override;
     void do_unload() override;
 
@@ -530,6 +610,14 @@ protected:
         std::atomic<bool>& cancel) override;
 
 public:
+    /**
+     * @brief The tool-call GBNF captured by the last render (gh#154).
+     * @return `tool_grammar_`, or "" when no tools were staged.
+     * @req REQ-INFER-008
+     * @version 2.13.0
+     */
+    std::string active_tool_grammar() const override { return tool_grammar_; }
+
     /**
      * @brief Speculative-decoding kernel with explicit draft backend.
      *
@@ -685,7 +773,24 @@ protected:
 
     /// @brief Sequence slot the current generation is bound to (gh#144).
     /// 0 unless a session pool is configured and a session_key resolved.
+    ///
+    /// Written by `bind_session_slot` and read for the rest of the
+    /// generation. It is ONE field for a value that is per-generation, which
+    /// is safe only because `ModelOrchestrator::generation_mutex_` holds a
+    /// whole generation — see its declaration for the lock order (gh#158).
     int active_slot_ = 0;
+
+    /// @brief gh#158: whole-KV-cache clears since activation. See
+    /// `kv_full_clear_count()`.
+    int kv_full_clear_count_ = 0;
+
+    /// @brief v2.13.0: why the last prefill refused to run ("" = it ran).
+    ///
+    /// Set by `refuse_over_context` at the top of `run_prefill_cached` and
+    /// consumed by `prefill_error()`. Written and read inside one
+    /// generation, which `ModelOrchestrator::generation_mutex_` holds whole
+    /// — the same ownership rule as `active_slot_` above.
+    std::string prefill_refusal_;
 
     /* ── gh#106 (v2.9.0): MTP draft head (target-owned, shared-KV) ── */
     llama_model* mtp_draft_model_ = nullptr;   ///< MTP head GGUF (separate, trunk-sharing)
@@ -988,18 +1093,60 @@ protected:
 
     /**
      * @brief Run prefill with prompt cache integration.
+     *
+     * v2.13.0: also the context-admission gate. Every text decode path
+     * funnels through here immediately after tokenizing its render, which
+     * makes it the earliest point that holds BOTH the rendered prompt size
+     * and the tier's context_length — so the refusal lands here, before a
+     * single token is decoded.
+     *
      * @param tokens Full token sequence.
      * @param system_prompt System prompt text for cache key.
      * @param messages Original messages (for prefix boundary).
      * @param params Generation parameters.
-     * @return true on success.
-     * @version 1.8.3
+     * @return true on success; false on refusal (see `prefill_error()`) or
+     *         decode failure.
+     * @req REQ-INFER-026
+     * @version 2.13.0
      */
     bool run_prefill_cached(
         const std::vector<llama_token>& tokens,
         const std::string& system_prompt,
         const std::vector<Message>& messages,
         const GenerationParams& params);
+
+    /**
+     * @brief Refuse this turn when its prompt cannot fit the tier context.
+     *
+     * Measures the staged tool block and the system prompt against the
+     * rendered prompt, then asks `context_fit_overflows`. On a refusal it
+     * records the operator-facing diagnosis in `prefill_refusal_` and logs
+     * it at ERROR; the caller then returns without decoding.
+     *
+     * @param tokens Rendered + tokenized prompt for this turn.
+     * @param system_prompt System prompt text extracted from the messages.
+     * @return true when the turn was refused.
+     * @req REQ-INFER-026
+     * @version 2.13.0
+     */
+    bool refuse_over_context(const std::vector<llama_token>& tokens,
+                             const std::string& system_prompt);
+
+    /**
+     * @brief Build the error result for a prefill that did not run.
+     *
+     * Two distinct outcomes share one call site in each decode path: a
+     * context REFUSAL (typed ENTROPIC_ERROR_EVAL_CONTEXT_FULL, carrying the
+     * token breakdown) and a genuine decode failure. Reporting the first as
+     * the second is what let the v2.13.0 gate read a structural
+     * misconfiguration as a flaky model.
+     *
+     * @return GenerationResult with finish_reason "error" and the code that
+     *         matches what actually happened.
+     * @req REQ-INFER-026
+     * @version 2.13.0
+     */
+    GenerationResult prefill_error() const;
 
     /**
      * @brief Cache-aware prefill dispatch (gh#96 v2.7.5: extracted body of
@@ -1245,6 +1392,47 @@ protected:
      * @version 2.3.7
      */
     bool load_gpu_model();
+
+    /**
+     * @brief Bind vocab, tokenizer and architecture flags to `model_`.
+     *
+     * Every successful model load ends here, so the recurrent/hybrid flags
+     * cannot go stale on one path and not another — before gh#148
+     * `load_gpu_model` refreshed the vocab and tokenizer but left
+     * `is_recurrent_` / `is_hybrid_` to whatever `do_load` had set.
+     *
+     * @dg_internal
+     * @version 2.13.0
+     */
+    void bind_model_handles();
+
+    /**
+     * @brief Refuse a loaded model that cannot honour `cpu_moe_layers`.
+     *
+     * gh#153 #42(iii) (v2.13.0, EXPERIMENTAL). The expert-offload refusals
+     * that need GGUF metadata — a model declaring no experts, and a count
+     * beyond the block count — so they cannot be made at configure time by
+     * `expert_offload_conflict_reason`. Runs immediately after a load that
+     * carried overrides; frees the model and sets `last_error_` on refusal.
+     *
+     * @param config Tier config carrying `cpu_moe_layers`.
+     * @return true to proceed; false with `last_error_` set.
+     * @dg_internal
+     * @version 2.13.0
+     */
+    bool expert_offload_admits(const ModelConfig& config);
+
+    /**
+     * @brief Context + sampler + mmproj, shared by both activation paths.
+     *
+     * The tail of `do_activate` after the model is resident, so the gh#148
+     * one-read path and the WARM promotion cannot drift apart.
+     *
+     * @return true on success; sets last_error_ on failure.
+     * @dg_internal
+     * @version 2.13.0
+     */
+    bool finish_activation();
 
     /**
      * @brief Create the llama context + prompt cache (do_activate step 2).

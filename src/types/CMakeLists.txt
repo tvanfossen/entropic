@@ -8,6 +8,7 @@ target_sources(entropic-types PRIVATE
     content.cpp
     session_logger.cpp
     messages_json.cpp
+    run_scope.cpp
 )
 
 target_include_directories(entropic-types PUBLIC

@@ -18,6 +18,8 @@
 
 #include <nlohmann/json.hpp>
 
+#include <algorithm>
+
 static auto logger = entropic::log::get("mcp.server_manager");
 
 namespace entropic {
@@ -42,22 +44,29 @@ ServerManager::ServerManager(
  * arrives with dispatch, envelope shape and anchoring already provided
  * by the base and only its own tools and overrides on top.
  *
+ * v2.13.0: the bash server gets `mcp.bash.timeout_seconds`, which it now
+ * enforces; before, nothing passed a timeout and nothing read one.
+ *
  * @param mcp MCP config with enable flags — a disabled server is never
  *            constructed, so its tools never appear in list_tools().
  * @param tier_names Tier names for the entropic server (drives whether
  *                   delegate/pipeline are registered at all).
  * @param data_dir Bundled data directory holding the tool descriptors.
+ * @param require_context_tiers Tiers that refuse a contextless
+ *        delegation (gh#162).
  * @req REQ-MCP-001
  * @req REQ-MCP-007
- * @version 2.0.1
+ * @req REQ-MCP-023
+ * @version 2.13.0 [reviewed]
  */
 void ServerManager::init_builtins(
     const MCPConfig& mcp,
     const std::vector<std::string>& tier_names,
-    const std::string& data_dir) {
+    const std::string& data_dir,
+    const std::vector<std::string>& require_context_tiers) {
     if (mcp.enable_entropic) {
         register_server(std::make_unique<EntropicServer>(
-            tier_names, data_dir));
+            tier_names, data_dir, require_context_tiers));
     }
     if (mcp.enable_filesystem) {
         register_server(std::make_unique<FilesystemServer>(
@@ -65,7 +74,7 @@ void ServerManager::init_builtins(
     }
     if (mcp.enable_bash) {
         register_server(std::make_unique<BashServer>(
-            project_dir_, data_dir));
+            project_dir_, data_dir, mcp.bash.timeout_seconds));
     }
     if (mcp.enable_git) {
         register_server(std::make_unique<GitServer>(
@@ -236,6 +245,143 @@ void ServerManager::append_external_tools(nlohmann::json& all) const {
 }
 
 /**
+ * @brief Point every in-process and plugin server at `dir` (gh#160).
+ *
+ * gh#158: exclusive on `root_lock_` for its own duration, so it waits out
+ * any in-flight dispatch — the write of each server's root field and the
+ * filesystem server's ignore-rule reload never overlap a tool call that
+ * reads them. Re-entrant for a thread already inside enter_working_dir().
+ *
+ * @param dir New working directory.
+ * @return Number of servers that accepted the change.
+ * @req REQ-MCP-001
+ * @req REQ-DELEG-005
+ * @req REQ-LOOP-009
+ * @version 2.13.0 [reviewed]
+ */
+size_t ServerManager::set_working_dir_all(
+        const std::filesystem::path& dir) {
+    std::lock_guard<ToolRootLock> exclusive(*root_lock_);
+    size_t moved = 0;
+    for (const auto& [name, server] : servers_) {
+        if (server->set_working_dir(dir.string())) { ++moved; }
+    }
+    for (const auto& [name, plugin] : plugin_servers_) {
+        if (plugin->set_working_dir(dir.string()) == ENTROPIC_OK) {
+            ++moved;
+        }
+    }
+    logger->info("Tool working dir → {} ({} servers moved)",
+                 dir.string(), moved);
+    return moved;
+}
+
+/**
+ * @brief Re-root for a sandboxed delegation and keep the root lock (gh#158).
+ *
+ * The lock is taken BEFORE the move and kept after it, so from the first
+ * re-rooted field to the restore no other thread's in-process or plugin
+ * dispatch runs on this manager. The owner's own dispatches pass through.
+ *
+ * @param dir Sandbox directory.
+ * @return Number of servers that accepted the change.
+ * @req REQ-DELEG-005
+ * @req REQ-LOOP-009
+ * @version 2.13.0
+ */
+size_t ServerManager::enter_working_dir(const std::filesystem::path& dir) {
+    root_lock_->lock();
+    auto moved = set_working_dir_all(dir);
+    logger->info("Tool root lock HELD for sandbox {} — other sessions' "
+                 "in-process dispatch on this server set waits until "
+                 "restore", dir.string());
+    return moved;
+}
+
+/**
+ * @brief Restore after enter_working_dir(), then release one lock level.
+ * @param dir Directory to restore.
+ * @return Number of servers moved; 0 when this thread holds no lock.
+ * @req REQ-DELEG-005
+ * @req REQ-LOOP-009
+ * @version 2.13.0
+ */
+size_t ServerManager::leave_working_dir(const std::filesystem::path& dir) {
+    if (!root_lock_->owned_by_this_thread()) {
+        logger->error("leave_working_dir({}) from a thread that holds no "
+                      "sandbox root lock — refusing, nothing moved",
+                      dir.string());
+        return 0;
+    }
+    auto moved = set_working_dir_all(dir);
+    root_lock_->unlock();
+    logger->info("Tool root lock released on restore to {}", dir.string());
+    return moved;
+}
+
+/**
+ * @brief Whether one tool descriptor asserts `readOnlyHint: true` (gh#160).
+ * @param tool Tool descriptor from an MCP `tools/list` reply.
+ * @return true only when the annotation is present AND true.
+ * @utility
+ * @version 2.13.0
+ */
+static bool tool_is_read_only(const nlohmann::json& tool) {
+    if (!tool.is_object() || !tool.contains("annotations")) {
+        return false;
+    }
+    const auto& ann = tool["annotations"];
+    return ann.is_object() && ann.value("readOnlyHint", false);
+}
+
+/**
+ * @brief Tools in one descriptor list lacking a read-only assertion.
+ * @param tools_json A `tools/list` array (names already prefixed).
+ * @param allowed Allow-list to restrict the check to (empty = all).
+ * @return Fully-qualified names of the offending tools.
+ * @req REQ-MCP-007
+ * @req REQ-DELEG-005
+ * @version 2.13.0
+ */
+std::vector<std::string> ServerManager::tools_without_readonly_hint(
+        const std::string& tools_json,
+        const std::vector<std::string>& allowed) {
+    std::vector<std::string> unsafe;
+    auto tools = nlohmann::json::parse(tools_json, nullptr, false);
+    if (!tools.is_array()) { return unsafe; }
+    for (const auto& tool : tools) {
+        auto full = tool.value("name", std::string{});
+        bool visible = allowed.empty()
+            || std::find(allowed.begin(), allowed.end(), full)
+                   != allowed.end();
+        if (visible && !full.empty() && !tool_is_read_only(tool)) {
+            unsafe.push_back(full);
+        }
+    }
+    return unsafe;
+}
+
+/**
+ * @brief External tools lacking a read-only assertion (gh#160).
+ * @param allowed Allow-list to restrict the check to (empty = all).
+ * @return Fully-qualified names of the offending tools.
+ * @req REQ-MCP-007
+ * @version 2.13.0
+ */
+std::vector<std::string>
+ServerManager::external_tools_without_readonly_hint(
+        const std::vector<std::string>& allowed) const {
+    std::vector<std::string> unsafe;
+    for (const auto& [name, client] : external_clients_) {
+        if (!client->is_connected()) { continue; }
+        auto found = tools_without_readonly_hint(
+            client->list_tools(), allowed);
+        unsafe.insert(unsafe.end(), found.begin(), found.end());
+    }
+    return unsafe;
+}
+
+/**
  * @brief List tools from all servers (in-process + plugin + external).
  *
  * Concatenates all three server kinds so the model sees one flat tool
@@ -313,6 +459,61 @@ std::string ServerManager::execute(
 MCPServerBase* ServerManager::get_server(const std::string& name) const {
     auto it = servers_.find(name);
     return (it != servers_.end()) ? it->second.get() : nullptr;
+}
+
+/**
+ * @brief Install the outside-root approver on the filesystem server.
+ *
+ * v2.13.0. A set with `enable_filesystem: false` has nothing to receive
+ * it, which is not an error — there is then no path-taking tool whose
+ * escapes need deciding.
+ *
+ * Shared on `root_lock_` (gh#158): the install logs the server's root,
+ * which a concurrent sandbox swap writes.
+ *
+ * @param fn Approver, or nullptr to clear.
+ * @param user_data Forwarded to `fn`.
+ * @return true when a filesystem server received it.
+ * @req REQ-MCP-021
+ * @version 2.13.0 [reviewed]
+ */
+bool ServerManager::set_outside_root_approver(OutsideRootApprover fn,
+                                              void* user_data) {
+    ToolRootShared root(*root_lock_, "set_outside_root_approver");
+    auto* fs_server = dynamic_cast<FilesystemServer*>(
+        get_server("filesystem"));
+    if (fs_server != nullptr) {
+        fs_server->set_outside_root_approver(fn, user_data);
+    }
+    return fs_server != nullptr;
+}
+
+/**
+ * @brief Release every in-process server's state for one session (gh#158).
+ *
+ * Cross-casts each in-process server to SessionStateOwner rather than
+ * adding a virtual to MCPServerBase, whose vtable is plugin ABI. Plugins
+ * and external servers hold no engine-side per-session state, so they are
+ * not visited. `servers_` is written only during configuration, so the
+ * iteration needs no lock beyond each owner's own.
+ *
+ * @param key Session key ("" = the default session).
+ * @return Number of servers that held state for `key`.
+ * @req REQ-LOOP-009
+ * @req REQ-MCP-021
+ * @version 2.13.0
+ */
+std::size_t ServerManager::release_session(const std::string& key) {
+    std::size_t released = 0;
+    for (const auto& [name, server] : servers_) {
+        auto* owner = dynamic_cast<SessionStateOwner*>(server.get());
+        if (owner != nullptr && owner->release_session(key)) {
+            ++released;
+        }
+    }
+    logger->info("Released session '{}' tool state on {} server(s)",
+                 key, released);
+    return released;
 }
 
 /**
@@ -416,13 +617,22 @@ std::string ServerManager::plugin_tool_schema(
  * than MCPServerBase subclasses — the base's list_tools/execute are
  * non-virtual and would present an empty registry.
  *
+ * gh#158 (v2.13.0): an in-process or plugin dispatch holds `root_lock_`
+ * SHARED for its duration — those are the servers a sandbox swap
+ * re-roots. While another session's sandboxed delegation holds it
+ * exclusively the call WAITS, then resolves against the restored root;
+ * before this it resolved inside that session's sandbox. External
+ * servers are separate processes the swap never moves, so they take
+ * nothing.
+ *
  * @param tool_name Fully-qualified name (`<server>.<tool>`).
  * @param args_json JSON arguments.
  * @return The resolved server's ServerResponse JSON envelope; for an
  *         unrecognised prefix, an error envelope naming the unknown
  *         server rather than a throw.
  * @req REQ-MCP-007
- * @version 2.10.1
+ * @req REQ-LOOP-009
+ * @version 2.13.0
  */
 std::string ServerManager::route_tool_call(
     const std::string& tool_name,
@@ -434,12 +644,14 @@ std::string ServerManager::route_tool_call(
     // Try in-process server first
     auto it = servers_.find(prefix);
     if (it != servers_.end()) {
+        ToolRootShared root(*root_lock_, tool_name);
         return it->second->execute(local_name, args_json);
     }
 
     // gh#133 (v2.10.1): try a loaded plugin
     auto plug_it = plugin_servers_.find(prefix);
     if (plug_it != plugin_servers_.end()) {
+        ToolRootShared root(*root_lock_, tool_name);
         return route_plugin_call(*plug_it->second, local_name, args_json);
     }
 
@@ -921,10 +1133,10 @@ void ServerManager::connect_and_register_external(
  *         labelled with the registered server name so child stderr and
  *         lifecycle logs identify the server, not the spawn command.
  * @req REQ-MCP-025
- * @version 2.1.5
+ * @version 2.13.0
  */
 std::unique_ptr<Transport> ServerManager::make_transport(
-    const ExternalServerConfig& spec) {
+    const ExternalServerConfig& spec) const {
     bool prefer_sse = (spec.transport == "sse")
         || (!spec.url.empty() && spec.command.empty());
     if (prefer_sse) {
@@ -934,9 +1146,16 @@ std::unique_ptr<Transport> ServerManager::make_transport(
     // label so child stderr lines and lifecycle logs identify the
     // server, not the resolved spawn command (which collides when
     // multiple servers share an entrypoint like /usr/bin/env python).
-    return std::make_unique<StdioTransport>(
+    auto transport = std::make_unique<StdioTransport>(
         spec.name, spec.command, spec.args, spec.env,
         /*default_timeout_ms=*/30000U);
+    // gh#166 (v2.13.0): spawn the child IN the repository its tools are
+    // supposed to serve. An explicit spec value wins; otherwise the
+    // manager's own root, which for a workspace is the workspace root.
+    transport->set_working_dir(spec.working_dir.empty()
+                                   ? project_dir_.string()
+                                   : spec.working_dir);
+    return transport;
 }
 
 /**
@@ -1130,7 +1349,7 @@ ServerManager::create_external_client(
  * @param config Discovery config.
  * @return Client instance.
  * @utility
- * @version 2.1.4
+ * @version 2.13.0
  */
 std::unique_ptr<ExternalMCPClient>
 ServerManager::create_external_client(

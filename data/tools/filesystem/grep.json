@@ -1,6 +1,6 @@
 {
   "name": "grep",
-  "description": "Search file contents for a regex pattern within the project directory.\n\nReturns matching lines with file paths and line numbers.\nResults are capped at 100 matches. Skips binary files.\n\n**Response format:**\n```json\n{\"matches\": [{\"path\": \"src/main.py\", \"line\": 42, \"content\": \"def main():\"}], \"total\": 1, \"truncated\": false}\n```",
+  "description": "Search file contents for a regex pattern within the project directory.\n\nReturns matching lines with file paths and line numbers.\nResults are capped at 100 matches, and the directory walk itself is capped (config `filesystem.max_walk_entries`). If the walk is cut short, the LAST array element is an object \u2014 `{\"truncated\": true, \"note\": \"walk truncated at N entries \u2014 narrow the pattern\"}` \u2014 instead of a match: the answer is partial, so narrow the glob and retry. Skips binary files.\n\n**Response format:**\n```json\n{\"matches\": [{\"path\": \"src/main.py\", \"line\": 42, \"content\": \"def main():\"}], \"total\": 1, \"truncated\": false}\n```",
   "inputSchema": {
     "type": "object",
     "properties": {

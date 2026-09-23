@@ -583,8 +583,11 @@ ENTROPIC_EXPORT entropic_error_t entropic_set_stream_observer(
  * WAITING_TOOL, VERIFYING, DELEGATING — onto user-visible task status.
  * Pass observer=NULL to clear.
  *
- * @threadsafety Callback may fire from the engine thread or a
- *        child-loop delegation thread. Must be thread-safe.
+ * @threadsafety Callback fires on whichever thread is running the turn
+ *        — a delegated child loop runs INLINE on its parent's thread,
+ *        there is no separate delegation thread — and with
+ *        `concurrent_sessions` on (the v2.13.0 default) several run
+ *        threads can fire it at once. Must be thread-safe.
  *
  * @param handle Engine handle.
  * @param observer State-change callback (state_int, user_data).
@@ -667,6 +670,42 @@ ENTROPIC_EXPORT entropic_error_t entropic_set_critique_callbacks(
  * @version 1.8.4
  */
 ENTROPIC_EXPORT entropic_error_t entropic_interrupt(entropic_handle_t handle);
+
+/**
+ * @brief Interrupt the run belonging to ONE session (gh#158, v2.13.0).
+ *
+ * `entropic_interrupt()` means "every run on this handle" and keeps that
+ * meaning. This means "that one": with `concurrent_sessions: true` a handle
+ * may have several turns in flight, and a host that cancels one client's
+ * request must not abort the others.
+ *
+ * Deliberately does NOT trip the external-transport interrupt latch, which
+ * `ServerManager::interrupt_external_tools()` applies to EVERY transport at
+ * once — using it here would abort another session's in-flight MCP call and
+ * hand that session an empty result it cannot tell from a real one, which is
+ * the defect gh#150 was filed for. The interrupted run's own tool call still
+ * aborts, because the run publishes its cancel token to its own thread and
+ * the transport polls it per request.
+ *
+ * Added as a NEW NAMED FUNCTION rather than by changing
+ * `entropic_interrupt`'s signature, per REQ-ABI-001. Additive, so
+ * ENTROPIC_API_VERSION does NOT move.
+ *
+ * @param handle Engine handle.
+ * @param session_key Session whose run to interrupt; NULL or "" = default.
+ * @return ENTROPIC_OK when a run was found and flagged.
+ *         - ENTROPIC_ERROR_INVALID_HANDLE — handle is NULL.
+ *         - ENTROPIC_ERROR_INVALID_STATE — handle is not configured.
+ *         - ENTROPIC_ERROR_NOT_RUNNING — that session has no run in flight.
+ *
+ * @threadsafety Thread-safe. Designed for cross-thread cancellation.
+ * @req REQ-API-009
+ * @req REQ-LOOP-006
+ * @version 2.13.0
+ */
+ENTROPIC_EXPORT entropic_error_t entropic_interrupt_session(
+    entropic_handle_t handle,
+    const char* session_key);
 
 /* ── Mid-generation message queue (v2.1.10, gh#40) ────── */
 
@@ -941,6 +980,52 @@ ENTROPIC_EXPORT entropic_error_t entropic_residency_snapshot(
     entropic_handle_t handle,
     char** out_json);
 
+/**
+ * @brief Release a resident model, keeping everything else on the handle.
+ *
+ * A loaded model otherwise stays in VRAM for the life of the handle: the
+ * engine evicts only when a DIFFERENT tier needs the space, so a host that
+ * wants the GPU back had to destroy the handle — which also destroys every
+ * session's conversation, re-runs configure and re-registers MCP servers.
+ * Weights and conversation state have very different lifetimes; this
+ * separates them.
+ *
+ * Unloads the tier's backend and fires `ENTROPIC_RESIDENCY_EVICTED` for
+ * every tier that was backed by it. KEPT: the handle, its config, its
+ * registered MCP servers, all session conversations, and the tier's LoRA
+ * adapter REGISTRATIONS — their llama handles are freed with the model and
+ * re-bound at the next activation, so a release does not silently
+ * deregister an adapter the consumer loaded.
+ *
+ * The next use reloads lazily through the residency gate, exactly as a
+ * `models.defer_load` first use does (gh#157). There is no idle timer:
+ * only the host knows what idle means for its users.
+ *
+ * @param handle Engine handle.
+ * @param tier_name Tier to release, or NULL/"" for EVERY resident model —
+ *        every tier plus the secondary roles (router, speculative draft)
+ *        and any MTP head, which the target backend owns and tears down
+ *        with itself.
+ * @return ENTROPIC_OK on success — including when the tier was already
+ *         unloaded, which is a no-op rather than an error.
+ *         - ENTROPIC_ERROR_INVALID_HANDLE — handle is NULL.
+ *         - ENTROPIC_ERROR_INVALID_STATE — engine not configured.
+ *         - ENTROPIC_ERROR_MODEL_NOT_FOUND — no such tier.
+ *         - ENTROPIC_ERROR_ALREADY_RUNNING — a turn is in flight on this
+ *           handle. Unloading a model mid-generation frees the context the
+ *           decode is running on, so the call is refused rather than
+ *           serialized behind the turn.
+ *
+ * @threadsafety Claims the handle's turn; concurrent with nothing.
+ * @req REQ-INFER-019
+ * @req REQ-API-005
+ * @req REQ-ABI-001
+ * @version 2.13.0
+ */
+ENTROPIC_EXPORT entropic_error_t entropic_release_model(
+    entropic_handle_t handle,
+    const char* tier_name);
+
 /* ── Conversation Context (v2.0.1) ───────────────────── */
 
 /**
@@ -1096,6 +1181,51 @@ ENTROPIC_EXPORT entropic_error_t entropic_session_context_get(
     char** messages_json);
 
 /**
+ * @brief Replace one session's conversation (gh#165, v2.13.0).
+ *
+ * The write counterpart `entropic_session_context_get` never had. Accepts
+ * exactly what that call emits, so a host can snapshot on shutdown and
+ * restore on start — which is what makes a session survive a process
+ * restart, and what makes `entropic_release_model` (gh#164) usable: weights
+ * and conversations get independent lifetimes.
+ *
+ * Replaces that session's conversation, runs NO turn and touches no model.
+ * The only way to get messages in before this was `entropic_run_session`,
+ * which appends and then RUNS — replaying a stored conversation that way
+ * re-executes the whole agentic loop per message, tool calls included.
+ *
+ * @par What is refused, and what is not
+ * Refuses `ENTROPIC_ERROR_ALREADY_RUNNING` when a run on THAT session is in
+ * flight — the conversation a turn is appending to must not be swapped under
+ * it. Every OTHER session stays mutable mid-run: a busy handle is not a
+ * reason to refuse, only a busy conversation is.
+ *
+ * @par What restoring invalidates
+ * The session's resident KV and its sequence slot are dropped, so the
+ * restored history cannot decode against a prefix the old conversation left
+ * behind. Its next turn costs a cold prefill, which is exactly what an
+ * evicted session already costs.
+ *
+ * @param handle Engine handle.
+ * @param session_key Session to replace; NULL or "" = default session.
+ * @param messages_json JSON array of message objects, in the shape
+ *        `entropic_session_context_get` emits.
+ * @return ENTROPIC_OK on success.
+ *         - ENTROPIC_ERROR_INVALID_HANDLE — handle is NULL or unconfigured.
+ *         - ENTROPIC_ERROR_INVALID_ARGUMENT — messages_json is NULL or is
+ *           not a parseable JSON array.
+ *         - ENTROPIC_ERROR_ALREADY_RUNNING — a run on that session is in
+ *           flight; the conversation was left untouched.
+ * @threadsafety Serialized per-handle.
+ * @req REQ-LOOP-010
+ * @version 2.13.0
+ */
+ENTROPIC_EXPORT entropic_error_t entropic_session_context_set(
+    entropic_handle_t handle,
+    const char* session_key,
+    const char* messages_json);
+
+/**
  * @brief Message count for one session (gh#144).
  * @param handle Engine handle.
  * @param session_key Session to count; NULL or "" = default session.
@@ -1160,6 +1290,79 @@ ENTROPIC_EXPORT entropic_error_t entropic_session_drop(
 ENTROPIC_EXPORT entropic_error_t entropic_session_list(
     entropic_handle_t handle,
     char** sessions_json);
+
+/* ── Named Workspaces (v2.13.0, gh#166) ───────────────── */
+
+/**
+ * @brief Create a named workspace rooted at a directory (gh#166).
+ *
+ * One resident model, many projects. A workspace owns its OWN built-in
+ * and plugin MCP server instances rooted at `dir`, its own external MCP
+ * servers, and its own delegation sandbox — because a server holds one
+ * working directory, and two repositories cannot share one instance.
+ * Weights, tiers and identity stay handle-wide, so opening a second
+ * repository costs no model reload.
+ *
+ * Creating a workspace changes nothing for existing sessions: a session
+ * that is never bound keeps using `mcp.working_dir` (else the process
+ * cwd) exactly as before.
+ *
+ * A workspace's filesystem tools are HARD-confined to `dir`: whatever the
+ * host set for `mcp.filesystem.allow_outside_root`, `outside_root_allow`
+ * or `entropic_set_path_approval_callback`, a path outside `dir` is
+ * refused ("Path escapes project root: ..."), because outside one
+ * workspace is inside another (v2.13.0). `outside_root_deny` still
+ * applies — it can only narrow.
+ *
+ * @param handle Engine handle (must be configured).
+ * @param name Workspace name, unique per handle. Non-empty.
+ * @param dir Existing directory the workspace's tools resolve against.
+ * @return ENTROPIC_OK on success.
+ *         - ENTROPIC_ERROR_INVALID_HANDLE — handle is NULL.
+ *         - ENTROPIC_ERROR_INVALID_STATE — handle not configured.
+ *         - ENTROPIC_ERROR_INVALID_ARGUMENT — NULL/empty name or dir, a
+ *           name already in use, or a dir that is not a directory.
+ *
+ * @threadsafety Serialized per-handle (api_mutex).
+ * @req REQ-API-005
+ * @req REQ-MCP-027
+ * @version 2.13.0
+ */
+ENTROPIC_EXPORT entropic_error_t entropic_workspace_create(
+    entropic_handle_t handle,
+    const char* name,
+    const char* dir);
+
+/**
+ * @brief Bind a session to a workspace (gh#166).
+ *
+ * Every tool call that session makes — and every delegation sandbox it
+ * opens — then resolves against that workspace's root and servers.
+ *
+ * Binding is ONCE per session. A session that already holds messages is
+ * refused: its conversation cites paths relative to the root it was
+ * working in, and silently re-rooting it would make every one of those
+ * citations wrong without a single error.
+ *
+ * @param handle Engine handle (must be configured).
+ * @param session_key Session key; "" (or NULL) is the default session.
+ * @param name Workspace name previously passed to
+ *        `entropic_workspace_create`.
+ * @return ENTROPIC_OK on success.
+ *         - ENTROPIC_ERROR_INVALID_HANDLE — handle is NULL.
+ *         - ENTROPIC_ERROR_INVALID_STATE — handle not configured, or the
+ *           session already holds messages.
+ *         - ENTROPIC_ERROR_INVALID_ARGUMENT — unknown workspace name.
+ *
+ * @threadsafety Serialized per-handle (api_mutex).
+ * @req REQ-API-005
+ * @req REQ-MCP-027
+ * @version 2.13.0
+ */
+ENTROPIC_EXPORT entropic_error_t entropic_session_bind_workspace(
+    entropic_handle_t handle,
+    const char* session_key,
+    const char* name);
 
 /**
  * @brief Get the number of messages in the conversation.
@@ -1400,9 +1603,25 @@ typedef ent_decision_t (*ent_delegation_complete_cb)(
  * run.
  *
  * Replaces the pre-2.1.5 silent auto-merge-to-`develop` behavior that
- * caused gh#29 (engine corrupting the user's repo state). The engine
- * never writes to the user's project directory; the consumer applies
- * patches with user consent.
+ * caused gh#29 (engine corrupting the user's repo state): the engine
+ * never runs `git checkout`, creates branches, commits or merges in the
+ * user's repository, on any path.
+ *
+ * @par What "isolation" does and does not mean (gh#160, v2.13.0)
+ * These callbacks fire only when `delegation.isolation: sandbox` is
+ * configured. The default is `none`, and under `none` a delegated child
+ * uses the SAME working directory as its parent — its edits land in the
+ * project directly and NO patch is produced. Every release from v2.1.5
+ * to v2.12.2 behaved that way regardless of configuration, because the
+ * directory-swap callback had no production caller; the claim that the
+ * engine "never writes to the user's project directory" described an
+ * intention, not the shipped wiring. With `sandbox` it is true again:
+ * the child's tools are pointed at
+ * `~/.entropic/sandbox/<session>/<delegation-id>/`, and the diff comes
+ * back here for the consumer to apply with the user's consent.
+ * External (stdio/SSE) MCP servers cannot be moved into the sandbox, so
+ * a delegation whose child can reach one that does not declare
+ * `readOnlyHint: true` is refused rather than run uncontained.
  *
  * @param handle Engine handle.
  * @param on_start Pre-delegation gate callback (NULL to clear).
@@ -1411,10 +1630,14 @@ typedef ent_decision_t (*ent_delegation_complete_cb)(
  * @return ENTROPIC_OK on success.
  *         - ENTROPIC_ERROR_INVALID_HANDLE — handle is NULL.
  *
- * @threadsafety Serialized per-handle. Callbacks may fire from the
- *        engine thread or a child-loop delegation thread.
+ * @threadsafety Serialized per-handle. Callbacks fire on the thread
+ *        that is running the parent turn — a child loop runs inline on
+ *        it, not on a thread of its own — so with `concurrent_sessions`
+ *        on (the v2.13.0 default) they may fire from several run
+ *        threads at once and must be thread-safe.
  * @req REQ-API-010
  * @req REQ-DELEG-002
+ * @req REQ-DELEG-005
  * @req REQ-API-005
  * @version 2.1.5
  */
@@ -1422,6 +1645,109 @@ ENTROPIC_EXPORT entropic_error_t entropic_set_delegation_callbacks(
     entropic_handle_t handle,
     ent_delegation_start_cb on_start,
     ent_delegation_complete_cb on_complete,
+    void* user_data);
+
+/* ── Outside-Root Path Approval (v2.13.0) ─────────────── */
+
+/**
+ * @brief What a filesystem tool is about to do with a path.
+ *
+ * `read_file` and `list_directory` READ; `write_file` and `edit_file`
+ * WRITE.
+ *
+ * @version 2.13.0
+ */
+typedef enum {
+    ENT_PATH_ACCESS_READ = 0,
+    ENT_PATH_ACCESS_WRITE = 1
+} ent_path_access_t;
+
+/**
+ * @brief One filesystem access OUTSIDE the project root, awaiting the
+ *        host's decision.
+ *
+ * Passed to `ent_path_approval_cb`. Every string is engine-owned and valid
+ * only for the callback's duration — copy what must be retained. `path` is
+ * the CANONICAL path the tool resolved (symlinks and `..` already
+ * resolved), so what the host shows the user is what would be touched,
+ * not what the model typed.
+ *
+ * @version 2.13.0
+ */
+typedef struct {
+    const char* path;         ///< Canonical absolute path outside the root
+    const char* root;         ///< Canonical project root it lies outside
+    const char* tool;         ///< Fully-qualified tool ("filesystem.write_file")
+    ent_path_access_t access; ///< READ or WRITE
+    const char* session_key;  ///< Session running the call ("" = default)
+} ent_path_approval_request_t;
+
+/**
+ * @brief Host decision for one outside-root filesystem access.
+ *
+ * Consulted only under `mcp.filesystem.allow_outside_root: optional` (the
+ * default), and only for a path that is outside the root AND matches
+ * neither `outside_root_deny` (always refused, never asked) nor
+ * `outside_root_allow` (always served, never asked). One call per tool
+ * call — the engine remembers nothing between them.
+ *
+ * @param req Request descriptor (engine-owned, callback-scoped).
+ * @param user_data Pointer passed to `entropic_set_path_approval_callback`.
+ * @return ENT_DECISION_ACCEPT to serve this one access;
+ *         ENT_DECISION_REJECT to refuse it — the model then receives a
+ *         tool error beginning `outside_root_rejected:`.
+ * @version 2.13.0
+ */
+typedef ent_decision_t (*ent_path_approval_cb)(
+    const ent_path_approval_request_t* req, void* user_data);
+
+/**
+ * @brief Register the approver for filesystem access outside the root.
+ *
+ * `mcp.filesystem.allow_outside_root` is tri-state: `false` refuses every
+ * path outside the root, `true` serves every one, and `optional` — the
+ * default since v2.13.0 — asks THIS callback. With no callback registered,
+ * `optional` REFUSES, with a tool error beginning
+ * `outside_root_approval_required:` that names the path and says how to
+ * configure access. It never fails open.
+ *
+ * Until v2.13.0 the bundled `data/default_config.yaml` set the flag to
+ * `true`, so every consumer on bundled defaults gave the model unconfined
+ * read and write of the whole filesystem. A host that relied on that must
+ * now choose: register this callback, pre-approve directories with
+ * `outside_root_allow`, or set `allow_outside_root: true` explicitly.
+ *
+ * @par Not approval: permissions.auto_approve
+ * `permissions.auto_approve` does NOT approve an outside-root access. It
+ * skips per-TOOL permission prompts; it does not widen the filesystem
+ * boundary. An auto_approve host that wants outside access uses
+ * `outside_root_allow` or `allow_outside_root: true`.
+ *
+ * @par Not consulted: named workspaces
+ * A session bound to a workspace (`entropic_workspace_create`) is
+ * confined to that workspace's root unconditionally: its servers ignore
+ * this callback and `outside_root_allow`, because outside one workspace
+ * is inside another (gh#166).
+ *
+ * @param handle Engine handle. Registration before `entropic_configure*`
+ *        is kept and applied when the servers are built.
+ * @param cb Approver, or NULL to clear (escapes then refuse).
+ * @param user_data Pointer forwarded to `cb`.
+ * @return ENTROPIC_OK on success.
+ *         - ENTROPIC_ERROR_INVALID_HANDLE — handle is NULL.
+ *
+ * @threadsafety Thread-safe. `cb` fires on the thread running the turn
+ *        that made the tool call — with `concurrent_sessions` on, several
+ *        at once — so it must be thread-safe, and it may block (to ask a
+ *        person) without holding up other sessions' registration.
+ * @req REQ-MCP-021
+ * @req REQ-API-010
+ * @req REQ-API-005
+ * @version 2.13.0
+ */
+ENTROPIC_EXPORT entropic_error_t entropic_set_path_approval_callback(
+    entropic_handle_t handle,
+    ent_path_approval_cb cb,
     void* user_data);
 
 /* ── Validation Retry Controls (v2.1.5, gh#30) ───────── */

@@ -1,22 +1,27 @@
 # Entropic Roadmap
 
-Master roadmap for the Entropic engine. Each version has a corresponding
-proposal in `.claude/proposals/{ACTIVE,STAGED,COMPLETE}/` with detailed
-implementation plans and post-hoc implementation logs.
+Master roadmap for the Entropic engine. This document is the source of
+truth for version targeting and feature scope.
 
-This document is the source of truth for version targeting and feature
-scope. Individual proposals contain implementation details, examples,
-and validation criteria.
+Per-version design notes and implementation logs live in **GitHub
+issues** (`gh issue view N`) — the issue body is the proposal, its
+comments are the log, and roadmap entries reference `gh#N`. The
+pre-2026-05 files under `.claude/proposals/{ACTIVE,STAGED,COMPLETE}/`
+are historical only; sections below written before that switch still
+cite them.
 
 ---
 
-## Current State (v2.2.2 shipped — v2.2.3 / v2.2.4 in flight)
+## Current State (v2.13.0 on `develop`)
 
 - C++20 engine, pure C ABI at every `.so` boundary
-- Unit + regression tests (CPU pre-commit gate)
+- Unit + regression tests (CPU pre-commit gate), ThreadSanitizer preset
+  for the concurrency scenarios
 - Model tests (developer-run, GPU recommended; results attached as
   a GitHub Release artifact at each x.y.0 bump)
 - Per-library coverage gates enforced via gcovr
+- Requirement traceability: `docs/requirements.yaml` catalog checked by
+  `inv check-requirements` against the `@req` tags in source
 - Single shared library `librentropic.so` plus `entropic` CLI binary
   plus pure-Python ctypes wrapper (`pip install entropic-engine`)
 - MCP servers built-in: filesystem, bash, git, web, diagnostics,
@@ -25,6 +30,11 @@ and validation criteria.
 - External MCP plugins via stdio + SSE transports
 - Identity-based delegation, GBNF grammar constraints, prompt caching,
   constitutional validation with revision sub-loop
+- Per-session concurrency on one resident model (default on), named
+  workspaces with per-workspace tool roots, opt-in delegation sandbox
+  isolation, path-approval callback for outside-root file access
+- Speculative decoding (MTP) composing with prefill reuse; experimental
+  expert-tensor offload for MoE tiers
 - Three consumer surfaces validated: tarball + find_package, pip
   wrapper, OpenAI-compat HTTP example
 
@@ -33,6 +43,114 @@ and validation criteria.
 > design choice — not as in-flight work. The v2.1.0 section reflects
 > what actually shipped (different from the original "Fine-Tuning
 > Pipeline" plan, which moves to v2.2 candidate).
+>
+> **Gap notice (v2.3 → v2.12):** this file was not maintained across
+> those releases and they are **not** backfilled here. Their record is
+> `RELEASE_NOTES.md` (last ten releases; older in `OLD_NOTES.md`), the
+> per-version GitHub issues, and the design decision log at the bottom
+> of `docs/architecture-cpp.md`. Only v2.13.0 below resumes the
+> convention. Do not read the absence of a section as absence of work.
+
+---
+
+## v2.13.0 — Multi-session hosting, workspaces, real delegation isolation (SHIPPED)
+
+Nineteen issues plus a llama.cpp bump (b9886 → b11009). The unifying
+theme is **contracts that were documented and never enforced**: a
+delegation sandbox whose swap callback had no caller since v2.1.5, a
+`max_turns` argument advertised to the model that bound nothing, a bash
+timeout stored and ignored, a grammar stem that failed open. Each fix is
+the missing enforcement, not a softened claim — which is why this minor
+carries behavioural changes a consumer meets without editing config.
+
+**Concurrency and hosting**
+
+- Per-session run guard, serialized decode, per-session interrupt;
+  `concurrent_sessions` defaults `true` (gh#158)
+- `entropic_interrupt_session`, `entropic_session_context_set` — a
+  session can now be restored, not just read (gh#158, gh#165)
+- Named workspaces: `entropic_workspace_create`,
+  `entropic_session_bind_workspace`, per-workspace tool roots and
+  server instances — one handle serves several repositories (gh#166)
+- Session-scoped built-in server state (read-before-write tracker, todo
+  list) — the shared versions corrupted the heap under load (gh#158)
+
+**Delegation**
+
+- `delegation.isolation: none|sandbox` (default `none`), actually
+  wired, unique sibling ids, restore to the parent's active root
+  (gh#160)
+- Explicit context seeds, `requires_context` tiers, resume-by-target
+  (gh#162)
+- Iteration cap and thinking-budget hard cut annotate the child's real
+  output instead of replacing it with a placeholder (gh#169, gh#181)
+- `entropic.delegate`'s `max_turns` binds the child; operator limit
+  wins on conflict (gh#182)
+- Identity frontmatter overrides reach a named top-level tier, not only
+  delegated children (gh#183; routed leads remain open as gh#185)
+
+**Residency and performance**
+
+- Load once into the target residency; refuse unsafe `use_mlock` /
+  `gpu_layers` with `ENTROPIC_ERROR_MLOCK_LIMIT_EXCEEDED` (gh#148)
+- `models.defer_load` — opt-in deferred load through the residency
+  gate, which the eager path had been bypassing (gh#157)
+- `entropic_release_model` — evict weights, keep the handle, sessions
+  and adapter registrations (gh#164)
+- Experimental `cpu_moe_layers` expert-tensor offload, default off
+  (gh#153, productionization tracked by gh#180)
+- Pruned and explicitly bounded gitignore walk;
+  `filesystem.max_walk_entries` (gh#161)
+- MTP measured on a four-arm matrix with a same-config floor: +42.8 % /
+  +46.7 % fully resident, ~0 % partially resident despite a higher
+  accept rate (gh#153)
+
+**Safety and correctness**
+
+- `mcp.filesystem.allow_outside_root` becomes tri-state, default
+  `optional`, routed to `entropic_set_path_approval_callback`; refused
+  when no approver is registered
+- `mcp.bash.timeout_seconds` enforced, process group killed
+- Unresolvable tier `grammar:` stems fail loud; per-generation metric
+  records carry the resolved grammar source (gh#154)
+- A prompt that cannot fit its tier context is refused
+  (`ENTROPIC_ERROR_EVAL_CONTEXT_FULL`) instead of degrading silently
+- Unreadable prompt paths rejected before the model loads (gh#156)
+- `PRE_TOOL_CALL`'s `modified_json` is applied, not freed (gh#168)
+- Bare tool-call turns are no longer logged as reasoning faults (gh#159)
+- Model-test skips state their real reason (gh#149)
+
+**Gate:** 87/87 model tests passed, 0 skipped, 0 failed, 3 flaky, at
+`e4382f5` on a GTX 1080 Ti; CPU suite 1924/1924; TSan 36/36 with zero
+warnings. Audit record attached to the release as
+`model-results-v2.13.0.json`.
+
+**Not done:** the `[mtp-a4b-iq2]` bench arm does not allocate its
+compute pp buffers on an 11 GiB card (gh#167, gh#180). gh#163 was
+investigated and reproduced no defect; evidence tests shipped.
+
+Issues: [gh#148](https://github.com/tvanfossen/entropic/issues/148),
+[gh#149](https://github.com/tvanfossen/entropic/issues/149),
+[gh#153](https://github.com/tvanfossen/entropic/issues/153),
+[gh#154](https://github.com/tvanfossen/entropic/issues/154),
+[gh#156](https://github.com/tvanfossen/entropic/issues/156),
+[gh#157](https://github.com/tvanfossen/entropic/issues/157),
+[gh#158](https://github.com/tvanfossen/entropic/issues/158),
+[gh#159](https://github.com/tvanfossen/entropic/issues/159),
+[gh#160](https://github.com/tvanfossen/entropic/issues/160),
+[gh#161](https://github.com/tvanfossen/entropic/issues/161),
+[gh#162](https://github.com/tvanfossen/entropic/issues/162),
+[gh#164](https://github.com/tvanfossen/entropic/issues/164),
+[gh#165](https://github.com/tvanfossen/entropic/issues/165),
+[gh#166](https://github.com/tvanfossen/entropic/issues/166),
+[gh#168](https://github.com/tvanfossen/entropic/issues/168),
+[gh#169](https://github.com/tvanfossen/entropic/issues/169),
+[gh#181](https://github.com/tvanfossen/entropic/issues/181),
+[gh#182](https://github.com/tvanfossen/entropic/issues/182),
+[gh#183](https://github.com/tvanfossen/entropic/issues/183).
+
+Design decisions #60–#80 in `docs/architecture-cpp.md`. Consumer-facing
+detail in `RELEASE_NOTES.md`.
 
 ---
 

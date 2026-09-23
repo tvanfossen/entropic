@@ -28,6 +28,10 @@
 // v2.12.0: shared WARM-load host-RAM predicate, so this path and the v2.1.9
 // family helper gate the same models by the same rule.
 #include "../../src/inference/partial_offload.h"
+// gh#149: and the same REASON TEXTS, so the two paths cannot state the same
+// rule two different ways — or, as this one did, state the RAM rule when the
+// operator waiver was what actually fired.
+#include "model_skip_reason.h"
 
 #include <cstdint>
 #include <cstdlib>
@@ -79,6 +83,10 @@ inline void verify_family_common_chat(const std::string& gguf,
                                       const std::string& adapter,
                                       int gpu_layers) {
     auto path = model_path(gguf);
+    // Deliberately NOT routed through skip_reason_text's kGgufMissing: this
+    // helper is keyed by GGUF FILENAME, not registry key, so the shared text's
+    // "run `entropic download <key>`" would name a command that does not
+    // exist. The existing wording is already true here.
     if (!std::filesystem::is_regular_file(path)) {
         SKIP("GGUF not present: " + path.string());
     }
@@ -103,15 +111,25 @@ inline void verify_family_common_chat(const std::string& gguf,
             mi.ignore(std::numeric_limits<std::streamsize>::max(), '\n');
         }
         const uint64_t avail = kb * 1024ull;
-        if (!sz_ec
-            && (entropic::large_model_tests_waived(file_bytes)
-                || !entropic::host_can_hold_warm_load(file_bytes, avail))) {
-            SKIP("host RAM insufficient for the WARM load of "
-                 + gguf + ": needs ~"
-                 + std::to_string((file_bytes / (1024ull * 1024)) + 2048)
-                 + " MiB, "
-                 + std::to_string(avail / (1024ull * 1024))
-                 + " MiB available. Hardware limit, not a defect.");
+        // gh#149: the waiver and the RAM shortfall are two DIFFERENT rules,
+        // and this site reported both as "host RAM insufficient" — so an
+        // operator's deliberate allowance was recorded as a machine that ran
+        // out of memory, with measured numbers that made it look verified.
+        // Same defect the v2.1.9 family helper carried; same fix, same text.
+        const bool waived = entropic::large_model_tests_waived(file_bytes);
+        const bool fits =
+            entropic::host_can_hold_warm_load(file_bytes, avail);
+        if (!sz_ec && (waived || !fits)) {
+            entropic::test::SkipFacts facts;
+            facts.key = gguf;
+            facts.path = path.string();
+            facts.file_bytes = file_bytes;
+            facts.available_bytes = avail;
+            facts.needed_bytes = file_bytes + (2ull * 1024 * 1024 * 1024);
+            SKIP(entropic::test::skip_reason_text(
+                waived ? entropic::test::SkipCause::kLargeModelWaived
+                       : entropic::test::SkipCause::kHostRamInsufficient,
+                facts));
         }
     }
 

@@ -16,9 +16,20 @@
 #include <entropic/inference/throughput_tracker.h>
 #include <entropic/mcp/mcp_key_set.h>
 #include <entropic/core/hook_registry.h>
+#include <entropic/core/compaction.h>
+#include <entropic/core/engine.h>
+#include <entropic/mcp/external_client.h>
+#include <entropic/mcp/transport.h>
+#include "mock_inference.h"
 #include <catch2/catch_test_macros.hpp>
 
+#include <nlohmann/json.hpp>
+
+#include <algorithm>
 #include <atomic>
+#include <memory>
+#include <mutex>
+#include <string>
 #include <thread>
 #include <vector>
 
@@ -383,6 +394,583 @@ SCENARIO("HookRegistry fire_info from multiple threads",
             THEN("all fires counted, no lost or duplicated") {
                 REQUIRE(fire_count.load() ==
                         kThreads * kIterations);
+            }
+        }
+    }
+}
+
+// ── gh#158: per-session-key run concurrency (v2.13.0) ───
+
+/**
+ * @brief Build an engine over a mock inference interface.
+ * @param iface Mock interface.
+ * @return Engine bound to it.
+ * @utility
+ * @version 2.13.0
+ */
+static entropic::AgentEngine make_session_engine(
+    entropic::InferenceInterface& iface) {
+    static entropic::LoopConfig lc;
+    static entropic::CompactionConfig cc;
+    return entropic::AgentEngine(iface, lc, cc);
+}
+
+SCENARIO("gh#158: the run guard is scoped to the session key",
+         "[concurrency][gh158][2.13.0]") {
+    GIVEN("an engine with per-session concurrency enabled") {
+        entropic::test::MockInference mock;
+        auto iface = entropic::test::make_mock_interface(mock);
+        auto engine = make_session_engine(iface);
+        engine.set_concurrent_sessions(true);
+
+        WHEN("session A claims a turn") {
+            REQUIRE(engine.try_begin_turn("A"));
+
+            THEN("a second claim on A is refused") {
+                CHECK_FALSE(engine.try_begin_turn("A"));
+            }
+            AND_THEN("a claim on B proceeds concurrently") {
+                CHECK(engine.try_begin_turn("B"));
+                CHECK(engine.active_run_count() == 2);
+                engine.end_turn("B");
+            }
+            engine.end_turn("A");
+            AND_THEN("releasing A leaves nothing running") {
+                CHECK(engine.active_run_count() == 0);
+                CHECK_FALSE(engine.is_running());
+            }
+        }
+    }
+}
+
+SCENARIO("gh#158: the kill switch restores handle-wide serialization",
+         "[concurrency][gh158][2.13.0]") {
+    GIVEN("an engine with concurrent_sessions turned OFF") {
+        // The default moved to ON once the decision-#66 audit completed,
+        // so what needs a test is the escape hatch: `concurrent_sessions:
+        // false` must reproduce v2.12.0 exactly, which is the whole reason
+        // the key survives as a kill switch rather than being deleted.
+        entropic::test::MockInference mock;
+        auto iface = entropic::test::make_mock_interface(mock);
+        auto engine = make_session_engine(iface);
+        engine.set_concurrent_sessions(false);
+
+        WHEN("session A claims a turn") {
+            REQUIRE(engine.try_begin_turn("A"));
+
+            THEN("a DIFFERENT key is refused too — v2.12.0 semantics") {
+                CHECK_FALSE(engine.try_begin_turn("B"));
+            }
+            engine.end_turn("A");
+        }
+    }
+}
+
+SCENARIO("gh#158: concurrent sessions are ON by default",
+         "[concurrency][gh158][2.13.0]") {
+    GIVEN("an engine left at the shipped default") {
+        entropic::test::MockInference mock;
+        auto iface = entropic::test::make_mock_interface(mock);
+        auto engine = make_session_engine(iface);
+
+        WHEN("session A claims a turn") {
+            REQUIRE(engine.try_begin_turn("A"));
+
+            THEN("a different key proceeds without any opt-in") {
+                CHECK(engine.concurrent_sessions());
+                CHECK(engine.try_begin_turn("B"));
+                CHECK(engine.active_run_count() == 2);
+                engine.end_turn("B");
+            }
+            AND_THEN("the same key is still refused") {
+                CHECK_FALSE(engine.try_begin_turn("A"));
+            }
+            engine.end_turn("A");
+        }
+    }
+}
+
+SCENARIO("gh#158: eight threads racing two keys yield exactly two winners",
+         "[concurrency][gh158][2.13.0]") {
+    GIVEN("an engine with per-session concurrency enabled") {
+        entropic::test::MockInference mock;
+        auto iface = entropic::test::make_mock_interface(mock);
+        auto engine = make_session_engine(iface);
+        engine.set_concurrent_sessions(true);
+
+        std::atomic<int> winners{0};
+        std::atomic<bool> go{false};
+
+        WHEN("four threads claim 'A' and four claim 'B' simultaneously") {
+            std::vector<std::thread> threads;
+            for (int i = 0; i < 8; ++i) {
+                threads.emplace_back([&, i] {
+                    while (!go.load()) { /* tighten the race */ }
+                    if (engine.try_begin_turn(i < 4 ? "A" : "B")) {
+                        winners.fetch_add(1);
+                    }
+                });
+            }
+            go.store(true);
+            for (auto& t : threads) { t.join(); }
+
+            THEN("exactly one per key wins") {
+                CHECK(winners.load() == 2);
+                CHECK(engine.active_run_count() == 2);
+            }
+        }
+    }
+}
+
+SCENARIO("gh#158: interrupt_session stops exactly one run",
+         "[concurrency][gh158][2.13.0]") {
+    GIVEN("two concurrent runs, A and B") {
+        entropic::test::MockInference mock;
+        auto iface = entropic::test::make_mock_interface(mock);
+        auto engine = make_session_engine(iface);
+        engine.set_concurrent_sessions(true);
+
+        REQUIRE(engine.try_begin_turn("A"));
+        REQUIRE(engine.try_begin_turn("B"));
+
+        WHEN("A is interrupted by key") {
+            engine.interrupt_session("A");
+
+            THEN("only A's run carries the interrupt") {
+                CHECK(engine.session_interrupted("A"));
+                CHECK_FALSE(engine.session_interrupted("B"));
+            }
+        }
+
+        WHEN("the handle-wide interrupt fires") {
+            engine.interrupt();
+
+            THEN("both runs carry it") {
+                CHECK(engine.session_interrupted("A"));
+                CHECK(engine.session_interrupted("B"));
+            }
+        }
+
+        engine.end_turn("A");
+        engine.end_turn("B");
+    }
+}
+
+// ── gh#158 audit: the per-handle state a turn touches (v2.13.0) ──
+
+/**
+ * @brief Build a message list of the given size for token counting.
+ * @param n Number of messages.
+ * @return Messages with distinct content.
+ * @utility
+ * @version 2.13.0
+ */
+static std::vector<entropic::Message> make_messages(int n) {
+    std::vector<entropic::Message> out;
+    out.reserve(static_cast<size_t>(n));
+    for (int i = 0; i < n; ++i) {
+        entropic::Message m;
+        m.role = "user";
+        m.content = "message number " + std::to_string(i)
+                  + " with enough text to be worth counting";
+        out.push_back(std::move(m));
+    }
+    return out;
+}
+
+SCENARIO("gh#158: token counting is safe from two concurrent runs",
+         "[concurrency][gh158][2.13.0]") {
+    GIVEN("one TokenCounter, the shape AgentEngine holds it in") {
+        // The engine owns exactly ONE TokenCounter, shared by the
+        // CompactionManager and by every context_usage() call. Before the
+        // gh#158 audit, count_message() wrote a memo into an unsynchronized
+        // unordered_map from a const method — so two runs counting at the
+        // same time inserted into the same map concurrently. That is not a
+        // wrong number; it is a corrupted heap.
+        entropic::TokenCounter counter(8192);
+        auto messages = make_messages(40);
+
+        WHEN("8 threads count the same messages repeatedly") {
+            std::atomic<int> mismatches{0};
+            const int expected = counter.count_messages(messages);
+            std::vector<std::thread> threads;
+            for (int t = 0; t < kThreads; ++t) {
+                threads.emplace_back([&] {
+                    for (int i = 0; i < kIterations; ++i) {
+                        if (counter.count_messages(messages) != expected) {
+                            mismatches.fetch_add(1);
+                        }
+                        auto pct = counter.usage_percent(messages);
+                        (void)pct;
+                    }
+                });
+            }
+            for (auto& th : threads) { th.join(); }
+
+            THEN("every thread agrees, and nothing was corrupted") {
+                CHECK(mismatches.load() == 0);
+                CHECK(counter.count_messages(messages) == expected);
+            }
+        }
+
+        WHEN("counters race against a cache invalidation") {
+            std::atomic<int> mismatches{0};
+            const int expected = counter.count_messages(messages);
+            std::vector<std::thread> threads;
+            for (int t = 0; t < 4; ++t) {
+                threads.emplace_back([&] {
+                    for (int i = 0; i < kIterations; ++i) {
+                        if (counter.count_messages(messages) != expected) {
+                            mismatches.fetch_add(1);
+                        }
+                    }
+                });
+                threads.emplace_back([&] {
+                    for (int i = 0; i < kIterations; ++i) {
+                        counter.clear_cache();
+                    }
+                });
+            }
+            for (auto& th : threads) { th.join(); }
+
+            THEN("counting is unaffected by invalidation") {
+                CHECK(mismatches.load() == 0);
+            }
+        }
+    }
+}
+
+SCENARIO("gh#158: two concurrent runs accumulate metrics safely",
+         "[concurrency][gh158][2.13.0]") {
+    GIVEN("one engine driving two sessions on different tiers") {
+        entropic::test::MockInference mock;
+        auto iface = entropic::test::make_mock_interface(mock);
+        auto engine = make_session_engine(iface);
+        engine.set_concurrent_sessions(true);
+
+        WHEN("two runs finish repeatedly while a third thread reads "
+             "entropic_metrics_json's two sources") {
+            // per_tier_metrics_ is an unordered_map written at the END of
+            // every run and copied by entropic_metrics_json. A rehash under
+            // the reader's copy is undefined behaviour, and last_metrics_ is
+            // a multi-field struct assigned wholesale — an unlocked reader
+            // gets a torn snapshot. Both are handle-wide; only the run guard
+            // kept them apart before gh#158.
+            constexpr int kRuns = 60;
+            std::atomic<bool> done{false};
+            std::atomic<int> reads{0};
+            std::atomic<int> negative{0};
+
+            std::thread reader([&] {
+                while (!done.load()) {
+                    auto per_tier = engine.per_tier_metrics();
+                    auto last = engine.last_loop_metrics();
+                    if (last.iterations < 0 || last.tool_calls < 0) {
+                        negative.fetch_add(1);
+                    }
+                    // Structural corruption signal: the two runners only
+                    // ever produce these two keys, so any other key, or a
+                    // third entry, means the copy read a map that was
+                    // rehashing under it.
+                    if (per_tier.size() > 2) { negative.fetch_add(1); }
+                    for (const auto& [tier, m] : per_tier) {
+                        if ((tier != "alpha" && tier != "beta")
+                                || m.iterations < 0) {
+                            negative.fetch_add(1);
+                        }
+                    }
+                    reads.fetch_add(1);
+                }
+            });
+
+            std::vector<std::thread> runners;
+            for (int t = 0; t < 2; ++t) {
+                runners.emplace_back([&, t] {
+                    const std::string tier =
+                        t == 0 ? "alpha" : "beta";
+                    for (int i = 0; i < kRuns; ++i) {
+                        entropic::Message m;
+                        m.role = "user";
+                        m.content = "go";
+                        engine.run({m}, tier);
+                    }
+                });
+            }
+            for (auto& th : runners) { th.join(); }
+            done.store(true);
+            reader.join();
+
+            THEN("both tiers are present and no reader saw garbage") {
+                auto per_tier = engine.per_tier_metrics();
+                CHECK(per_tier.count("alpha") == 1);
+                CHECK(per_tier.count("beta") == 1);
+                CHECK(negative.load() == 0);
+                CHECK(reads.load() > 0);
+            }
+        }
+    }
+}
+
+// ── gh#158: external MCP tool execution (v2.13.0) ───────
+
+/**
+ * @brief Transport stub that records ids and can answer the wrong one.
+ *
+ * Stands in for a stdio pipe without spawning a child. `stale_reply`
+ * reproduces the state a real pipe is left in when a request is ABANDONED
+ * (timeout, or a per-session interrupt tripping `request_cancelled()`
+ * mid-read): the server's answer arrives late and is the first line the
+ * NEXT request reads.
+ *
+ * @version 2.13.0
+ */
+class ScriptedTransport : public entropic::Transport {
+public:
+    /**
+     * @brief Open the stub transport.
+     * @return Always true.
+     * @utility
+     * @version 2.13.0
+     */
+    bool open() override { return true; }
+
+    /**
+     * @brief Close the stub transport.
+     * @utility
+     * @version 2.13.0
+     */
+    void close() override {}
+
+    /**
+     * @brief Whether the stub is connected.
+     * @return Always true.
+     * @utility
+     * @version 2.13.0
+     */
+    bool is_connected() const override { return true; }
+
+    /**
+     * @brief Answer a JSON-RPC request, recording the id it carried.
+     * @param request_json The request line.
+     * @param timeout_ms Ignored.
+     * @return A JSON-RPC response line.
+     * @utility
+     * @version 2.13.0
+     */
+    std::string send_request(const std::string& request_json,
+                             uint32_t /*timeout_ms*/) override {
+        auto req = nlohmann::json::parse(request_json);
+        const int id = req.value("id", -1);
+        {
+            std::lock_guard<std::mutex> lock(mutex_);
+            ids_.push_back(id);
+        }
+        // A desynced pipe hands back the PREVIOUS request's whole reply —
+        // its id AND its body — because that is the line still sitting in
+        // the pipe from a request that was abandoned.
+        const int answered = stale_reply ? id - 1 : id;
+        nlohmann::json resp;
+        resp["jsonrpc"] = "2.0";
+        resp["id"] = answered;
+        if (req.value("method", "") == "tools/list") {
+            resp["result"]["tools"] = nlohmann::json::array();
+        } else {
+            resp["result"]["content"] = nlohmann::json::array(
+                {{{"type", "text"},
+                  {"text", payload_for(answered)}}});
+        }
+        return resp.dump();
+    }
+
+    /**
+     * @brief Every id this transport was asked to answer.
+     * @return Copy of the recorded id list.
+     * @utility
+     * @version 2.13.0
+     */
+    std::vector<int> ids() const {
+        std::lock_guard<std::mutex> lock(mutex_);
+        return ids_;
+    }
+
+    /// @brief When true, answer request N with id N-1 (a desynced pipe).
+    bool stale_reply = false;
+
+    /**
+     * @brief The body this transport returns for a given request id.
+     * @param id Request id.
+     * @return Deterministic payload text naming that id.
+     * @utility
+     * @version 2.13.0
+     */
+    static std::string payload_for(int id) {
+        return "RESULT-FOR-REQUEST-" + std::to_string(id);
+    }
+
+private:
+    mutable std::mutex mutex_;    ///< Guards ids_
+    std::vector<int> ids_;        ///< Ids seen, in arrival order
+};
+
+SCENARIO("gh#158: a response that answers another request is refused",
+         "[concurrency][gh158][mcp][2.13.0]") {
+    GIVEN("an external client whose pipe is one reply behind") {
+        auto transport = std::make_unique<ScriptedTransport>();
+        auto* raw = transport.get();
+        raw->stale_reply = true;
+        entropic::ExternalMCPClient client("srv", std::move(transport));
+
+        WHEN("a tool is called") {
+            auto envelope = client.execute("read_file", "{}");
+            auto parsed = nlohmann::json::parse(envelope);
+
+            THEN("the other request's payload is NOT returned as a result") {
+                // This is the cross-session leak in its smallest form: the
+                // body is real content that belongs to a DIFFERENT call, so
+                // a caller has no way to tell it apart from its own.
+                const auto text = parsed.value("result", std::string{});
+                const auto ids = raw->ids();
+                REQUIRE(ids.size() == 1);
+                CHECK(text.find(
+                    ScriptedTransport::payload_for(ids[0] - 1))
+                        == std::string::npos);
+            }
+            AND_THEN("it is reported as an error, not silently dropped") {
+                CHECK(parsed.value("is_error", false));
+            }
+        }
+    }
+}
+
+SCENARIO("gh#158: concurrent tool calls on one client get distinct ids",
+         "[concurrency][gh158][mcp][2.13.0]") {
+    GIVEN("one external client, as ServerManager shares it per handle") {
+        auto transport = std::make_unique<ScriptedTransport>();
+        auto* raw = transport.get();
+        entropic::ExternalMCPClient client("srv", std::move(transport));
+
+        WHEN("8 threads execute tools through it simultaneously") {
+            // ServerManager holds ONE ExternalMCPClient per server and every
+            // run routes through it, so two keyed runs call execute() on the
+            // same object. next_id_ was a plain int: `next_id_++` from two
+            // threads is a data race, and two requests sharing an id defeats
+            // the pairing check that now guards the result.
+            constexpr int kCalls = 200;
+            std::atomic<int> wrong_payload{0};
+            std::vector<std::thread> threads;
+            for (int t = 0; t < kThreads; ++t) {
+                threads.emplace_back([&] {
+                    for (int i = 0; i < kCalls; ++i) {
+                        auto envelope = client.execute("echo", "{}");
+                        auto parsed = nlohmann::json::parse(envelope);
+                        if (parsed.value("is_error", false)) {
+                            wrong_payload.fetch_add(1);
+                        }
+                    }
+                });
+            }
+            for (auto& th : threads) { th.join(); }
+
+            THEN("every request carried a unique id") {
+                auto ids = raw->ids();
+                REQUIRE(ids.size()
+                        == static_cast<size_t>(kThreads * kCalls));
+                std::sort(ids.begin(), ids.end());
+                auto dup = std::adjacent_find(ids.begin(), ids.end());
+                CHECK(dup == ids.end());
+            }
+            AND_THEN("no call was answered by someone else's response") {
+                CHECK(wrong_payload.load() == 0);
+            }
+        }
+    }
+}
+
+SCENARIO("gh#158: an unkeyed context read during a starting run cannot abort",
+         "[concurrency][gh158][2.13.0]") {
+    GIVEN("two sessions starting turns while a host polls context") {
+        // This is the v2.13.0 GPU gate's SIGABRT, reduced. The gate's third
+        // gh#158 scenario polls `entropic_metrics_json` +
+        // `entropic_context_usage` while two keyed runs decode; the process
+        // aborted with
+        //
+        //     terminate called after throwing an instance of
+        //       'std::out_of_range'  what():  _Map_base::at
+        //
+        // `entropic_context_usage` calls the UNKEYED `get_messages()`, which
+        // resolves `active_session_key()`. A polling thread never bound a
+        // session, so it falls back to the handle-wide member — the one a
+        // starting run had just written. `set_active_session` published that
+        // key BEFORE inserting `conversations_[key]`, so between the two
+        // statements the poller named a key that was not yet in the map and
+        // `.at()` threw out of a C entry point.
+        //
+        // The write/read pair on that member was also unsynchronized (a
+        // std::string, not an atomic), and the read of `conversations_` took
+        // no lock at all while the runs inserted into it.
+        entropic::test::MockInference mock;
+        auto iface = entropic::test::make_mock_interface(mock);
+        auto engine = make_session_engine(iface);
+        engine.set_concurrent_sessions(true);
+
+        WHEN("a poller reads context while two runners rebind sessions") {
+            constexpr int kRuns = 400;
+            std::atomic<bool> done{false};
+            std::atomic<int> reads{0};
+            std::atomic<int> threw{0};
+
+            std::thread poller([&] {
+                while (!done.load()) {
+                    try {
+                        (void)engine.message_count();
+                        (void)engine.get_messages().size();
+                        reads.fetch_add(1);
+                    } catch (const std::exception&) {
+                        threw.fetch_add(1);
+                    }
+                }
+            });
+
+            // Wait for the poller to complete ONE cycle before the runners
+            // start. Without this the detector is a coin flip: 800
+            // `set_active_session` calls take microseconds, so on a loaded
+            // box (the full CPU suite runs ~24 test binaries at once) the
+            // poller could be scheduled for the first time only after
+            // `done` was already set — 0 reads, 0 overlap, and the
+            // liveness CHECK below failing on a suite that had found
+            // nothing wrong. Reproduced at roughly 1 run in 3.
+            //
+            // It STRENGTHENS the scenario: the poller is now demonstrably
+            // live for the whole of the runner loop instead of for an
+            // unknown fraction of it. `threw` is in the wait condition so
+            // a poller that throws on its very first read — the abort this
+            // scenario exists to catch — fails the test instead of hanging
+            // the harness.
+            while (reads.load() == 0 && threw.load() == 0) {
+                std::this_thread::yield();
+            }
+
+            std::vector<std::thread> runners;
+            for (int t = 0; t < 2; ++t) {
+                runners.emplace_back([&, t] {
+                    const std::string key =
+                        t == 0 ? "m-alpha" : "m-bravo";
+                    for (int i = 0; i < kRuns; ++i) {
+                        engine.set_active_session(
+                            key + std::to_string(i));
+                    }
+                });
+            }
+            for (auto& th : runners) { th.join(); }
+            done.store(true);
+            poller.join();
+
+            THEN("not one read threw") {
+                // A one-way detector: it can only fail when the window is
+                // real. `.at()` on an absent key is the abort the gate hit.
+                INFO("reads: " << reads.load());
+                CHECK(threw.load() == 0);
+                CHECK(reads.load() > 0);
             }
         }
     }

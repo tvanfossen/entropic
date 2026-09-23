@@ -88,6 +88,33 @@ bool is_regex_meta(char c) {
 
 } // namespace
 
+/**
+ * @brief Directory names never walked, by name alone (gh#161).
+ *
+ * `.git` alone is tens of thousands of entries on a large repository
+ * and holds nothing a workspace search may return; the other three are
+ * the same story for dependency and cache trees. Before gh#161 the
+ * DISCOVERY walk honoured none of them — it walked the whole tree
+ * looking for `.gitignore` files, contradicting its own comment — while
+ * the glob/grep walk kept an identical list privately in
+ * filesystem.cpp. One list, one owner.
+ *
+ * @param name Bare directory name.
+ * @return true when the directory must never be descended into.
+ * @req REQ-MCP-022
+ * @version 2.13.0
+ */
+bool IgnoreMatcher::is_skipped_dir_name(const std::string& name) {
+    static const std::vector<std::string> kSkipDirs = {
+        ".git", "node_modules", "__pycache__", ".venv"
+    };
+    bool skipped = false;
+    for (const auto& skip : kSkipDirs) {
+        if (name == skip) { skipped = true; }
+    }
+    return skipped;
+}
+
 // ── Pattern compilation ──────────────────────────────────
 
 namespace {
@@ -246,6 +273,27 @@ void strip_flags(std::string& body, IgnoreMatcher::Rule& rule) {
 }
 
 /**
+ * @brief Canonicalise an anchor base to the form a relative path
+ *        prefix takes: no `./`, no trailing slash, "" for the root.
+ *
+ * The base string is now BOTH the regex prefix source and the key of
+ * the bucket index (gh#161) — "sub", "sub/" and "./sub" have to reduce
+ * to one spelling or a rule silently lands in a bucket nothing queries.
+ *
+ * @param base Raw base, relative to the workspace root.
+ * @return Normalised base.
+ * @utility
+ * @version 2.13.0
+ */
+std::string normalize_base(const std::string& base) {
+    std::string out = base;
+    if (out.rfind("./", 0) == 0) { out.erase(0, 2); }
+    if (out == ".") { out.clear(); }
+    while (!out.empty() && out.back() == '/') { out.pop_back(); }
+    return out;
+}
+
+/**
  * @brief Build a regex prefix from a non-root anchor base.
  *
  * Escapes regex metacharacters in the base path (paths shouldn't
@@ -314,13 +362,13 @@ std::regex compile_or_never(const std::string& src,
  *         regexes, so a trailing-slash pattern matches the directory
  *         and its descendants but never a same-named file.
  * @req REQ-MCP-022
- * @version 2.1.4
+ * @version 2.13.0
  */
 IgnoreMatcher::Rule IgnoreMatcher::compile_pattern(
     const std::string& pattern, const std::string& base) {
     Rule rule;
     rule.original = pattern;
-    rule.base = base;
+    rule.base = normalize_base(base);
 
     std::string body = pattern;
     strip_flags(body, rule);
@@ -330,7 +378,7 @@ IgnoreMatcher::Rule IgnoreMatcher::compile_pattern(
         || body.find('/') != std::string::npos;
 
     std::string regex_body = pattern_to_regex(body);
-    std::string base_prefix = make_base_prefix(base);
+    std::string base_prefix = make_base_prefix(rule.base);
     std::string anchor_left = anchored
         ? ("^" + base_prefix)
         : ("^" + base_prefix + "(?:.*/)?");
@@ -345,6 +393,23 @@ IgnoreMatcher::Rule IgnoreMatcher::compile_pattern(
 // ── Public API ───────────────────────────────────────────
 
 /**
+ * @brief Append a rule and index it under its anchor base (gh#161).
+ *
+ * The index stores POSITIONS in the ordered rule set, never copies, so
+ * a bucketed query still sees the global source order — the property
+ * last-match-wins depends on.
+ *
+ * @param rule Compiled rule; moved into the rule set.
+ * @req REQ-MCP-022
+ * @version 2.13.0
+ */
+void IgnoreMatcher::push_rule(Rule&& rule) {
+    std::string base = rule.base;
+    rules_.push_back(std::move(rule));
+    by_base_[base].push_back(rules_.size() - 1);
+}
+
+/**
  * @brief Add a pattern programmatically.
  *
  * Comments and blank lines are skipped here as well as on the file
@@ -353,13 +418,13 @@ IgnoreMatcher::Rule IgnoreMatcher::compile_pattern(
  * @param pattern Gitignore-syntax line.
  * @param base Directory the rule is anchored at, relative to the root.
  * @req REQ-MCP-022
- * @version 2.1.4
+ * @version 2.13.0
  */
 void IgnoreMatcher::add_pattern(const std::string& pattern,
                                 const fs::path& base) {
     std::string trimmed = trim(pattern);
     if (trimmed.empty() || trimmed[0] == '#') { return; }
-    rules_.push_back(compile_pattern(trimmed, to_slash(base)));
+    push_rule(compile_pattern(trimmed, to_slash(base)));
 }
 
 /**
@@ -372,7 +437,7 @@ void IgnoreMatcher::add_pattern(const std::string& pattern,
  * @param base Directory the file's rules are anchored at, relative to
  *             the workspace root ("" for the root file).
  * @req REQ-MCP-022
- * @version 2.1.4
+ * @version 2.13.0
  */
 void IgnoreMatcher::load_file(const fs::path& path,
                               const std::string& base) {
@@ -383,7 +448,7 @@ void IgnoreMatcher::load_file(const fs::path& path,
     while (std::getline(in, line)) {
         std::string trimmed = trim(line);
         if (trimmed.empty() || trimmed[0] == '#') { continue; }
-        rules_.push_back(compile_pattern(trimmed, base));
+        push_rule(compile_pattern(trimmed, base));
         ++loaded;
     }
     std::string base_label = base.empty() ? std::string("<root>") : base;
@@ -402,10 +467,12 @@ void IgnoreMatcher::load_file(const fs::path& path,
  * @param root Workspace root to load from; a missing or non-directory
  *             root leaves the matcher empty and is logged.
  * @req REQ-MCP-022
- * @version 2.3.7
+ * @version 2.13.0
  */
 void IgnoreMatcher::load(const fs::path& root) {
     rules_.clear();
+    by_base_.clear();
+    reset_regex_evals();
     if (!fs::exists(root) || !fs::is_directory(root)) {
         logger->warn("IgnoreMatcher::load: root does not exist: {}",
                      root.string());
@@ -427,25 +494,17 @@ void IgnoreMatcher::load(const fs::path& root) {
  * @param canonical_root Canonical project root.
  * @param root_gi The root .gitignore (skipped during the scan).
  * @req REQ-MCP-022
- * @version 2.3.7
+ * @version 2.13.0
  */
 void IgnoreMatcher::load_nested_gitignores(
     const fs::path& canonical_root, const fs::path& root_gi) {
-    // Recursively discover .gitignore files in subdirectories. We skip
-    // the root one (already loaded) and directories the accumulated
-    // rule set already excludes (avoids descending into node_modules
-    // just to find an irrelevant .gitignore).
     try {
-        auto it = fs::recursive_directory_iterator(
+        fs::recursive_directory_iterator it(
             canonical_root,
             fs::directory_options::skip_permission_denied);
-        for (auto& entry : it) {
-            if (!entry.is_regular_file()) { continue; }
-            if (entry.path().filename() != ".gitignore") { continue; }
-            if (entry.path() == root_gi) { continue; }
-            auto rel_dir = fs::relative(entry.path().parent_path(),
-                                        canonical_root);
-            load_file(entry.path(), to_slash(rel_dir));
+        const fs::recursive_directory_iterator end;
+        for (; it != end; ++it) {
+            visit_discovery_entry(it, canonical_root, root_gi);
         }
     } catch (const std::exception& e) {
         logger->warn("Recursive gitignore scan aborted: {}", e.what());
@@ -453,11 +512,188 @@ void IgnoreMatcher::load_nested_gitignores(
 }
 
 /**
+ * @brief Handle one entry of the discovery walk: prune or load.
+ *
+ * gh#161 made the pruning real. The pre-2.13.0 comment claimed the
+ * scan skipped excluded directories; it skipped nothing, so a repo
+ * vendoring boost/opencv/pcl walked every entry in the tree and loaded
+ * ~200 vendored `.gitignore` files at startup — and again on every
+ * `set_working_dir`.
+ *
+ * Two prunes, both matching git: a directory on the hardcoded skip
+ * list is never entered, and neither is a directory the rules loaded
+ * SO FAR already exclude — git cannot re-include anything below an
+ * excluded directory, so a `.gitignore` down there is unreachable by
+ * construction and reading it would be pure cost.
+ *
+ * @param[in,out] it Walk position; recursion is disabled on it to prune.
+ * @param canonical_root Canonical project root.
+ * @param root_gi The root `.gitignore`, already loaded.
+ * @req REQ-MCP-022
+ * @version 2.13.0
+ */
+void IgnoreMatcher::visit_discovery_entry(
+    fs::recursive_directory_iterator& it,
+    const fs::path& canonical_root, const fs::path& root_gi) {
+    const auto& entry = *it;
+    if (entry.is_directory()) {
+        if (prunes_discovery(entry.path(), canonical_root)) {
+            it.disable_recursion_pending();
+        }
+        return;
+    }
+    if (entry.path().filename() != ".gitignore"
+        || entry.path() == root_gi) {
+        return;
+    }
+    auto rel_dir = fs::relative(entry.path().parent_path(),
+                                canonical_root);
+    load_file(entry.path(), to_slash(rel_dir));
+}
+
+/**
+ * @brief Whether the discovery walk must not descend into a directory.
+ *
+ * Two prunes, both matching git (gh#161): the hardcoded skip list, and
+ * any directory the rules loaded SO FAR already exclude — git cannot
+ * re-include anything below an excluded directory, so a `.gitignore`
+ * down there is unreachable by construction.
+ *
+ * @param dir Directory being considered.
+ * @param canonical_root Canonical project root.
+ * @return true when the directory must not be descended into.
+ * @req REQ-MCP-022
+ * @version 2.13.0
+ */
+bool IgnoreMatcher::prunes_discovery(
+    const fs::path& dir, const fs::path& canonical_root) const {
+    if (is_skipped_dir_name(dir.filename().string())) { return true; }
+    auto rel = to_slash(fs::relative(dir, canonical_root));
+    return !rel.empty() && is_ignored(rel, true);
+}
+
+// ── Bucketed matching (gh#161) ───────────────────────────
+
+namespace {
+
+/// Index type mirroring IgnoreMatcher::by_base_.
+using BaseIndex =
+    std::unordered_map<std::string, std::vector<std::size_t>>;
+
+/// Sentinel for "no rule left to examine".
+constexpr std::size_t kNoRule = static_cast<std::size_t>(-1);
+
+/**
+ * @brief One anchor base's rule indices, consumed newest-first.
+ * @dg_internal
+ * @version 2.13.0
+ */
+struct BucketCursor {
+    const std::vector<std::size_t>* indices; ///< Ascending indices
+    std::size_t remaining;                   ///< Unexamined count
+};
+
+/**
+ * @brief Gather the buckets that can possibly match `rel_path`.
+ *
+ * A rule anchored at base B compiles to `^B/…`, so it can only match a
+ * path of which `B/` is a prefix. The candidate bases are therefore
+ * exactly the root ("") plus every ancestor-directory prefix of the
+ * path — the prefix ending at each `/`. Everything else in the rule
+ * set is provably irrelevant and is never touched.
+ *
+ * @param index Base → rule indices.
+ * @param rel_path Forward-slash path relative to the workspace root.
+ * @param[out] out Cursors for the applicable buckets.
+ * @utility
+ * @version 2.13.0
+ */
+void collect_buckets(const BaseIndex& index, const std::string& rel_path,
+                     std::vector<BucketCursor>& out) {
+    auto take = [&](const std::string& base) {
+        auto found = index.find(base);
+        if (found != index.end() && !found->second.empty()) {
+            out.push_back({&found->second, found->second.size()});
+        }
+    };
+    take("");
+    for (std::size_t i = 0; i < rel_path.size(); ++i) {
+        if (rel_path[i] == '/') { take(rel_path.substr(0, i)); }
+    }
+}
+
+/**
+ * @brief Pop the highest unexamined rule index across all buckets.
+ *
+ * Descending global order is what lets the scan stop at the FIRST
+ * match: last-match-wins means the last matching rule in source order
+ * decides, so the first match found walking backwards IS the decision
+ * and no rule before it can change the answer.
+ *
+ * @param cursors Bucket cursors, mutated in place.
+ * @return The next rule index, or kNoRule when every bucket is spent.
+ * @utility
+ * @version 2.13.0
+ */
+std::size_t pop_highest(std::vector<BucketCursor>& cursors) {
+    std::size_t best = kNoRule;
+    BucketCursor* from = nullptr;
+    for (auto& cursor : cursors) {
+        if (cursor.remaining == 0) { continue; }
+        std::size_t candidate = (*cursor.indices)[cursor.remaining - 1];
+        if (from == nullptr || candidate > best) {
+            best = candidate;
+            from = &cursor;
+        }
+    }
+    if (from != nullptr) { --from->remaining; }
+    return best;
+}
+
+/**
+ * @brief Test one rule against a path, counting the regexes it runs.
+ *
+ * `re_under` is tried first because a descendant match settles the
+ * question on its own; `re_exact` is skipped entirely when a dir_only
+ * rule meets a regular file, because an exact match could not have
+ * counted anyway.
+ *
+ * @param rule Compiled rule.
+ * @param rel_path Path relative to the workspace root.
+ * @param is_dir Whether the path names a directory.
+ * @param[in,out] evals Instrumentation counter (gh#161).
+ * @return true when the rule matches the path.
+ * @utility
+ * @version 2.13.0
+ */
+bool rule_matches(const IgnoreMatcher::Rule& rule,
+                  const std::string& rel_path, bool is_dir,
+                  std::atomic<std::uint64_t>& evals) {
+    evals.fetch_add(1, std::memory_order_relaxed);
+    bool matched = std::regex_match(rel_path, rule.re_under);
+    // For dir_only rules an exact match only counts when the path is
+    // itself a directory — a regular file named like a `dir/` pattern
+    // is NOT excluded.
+    if (!matched && (!rule.dir_only || is_dir)) {
+        evals.fetch_add(1, std::memory_order_relaxed);
+        matched = std::regex_match(rel_path, rule.re_exact);
+    }
+    return matched;
+}
+
+} // namespace
+
+/**
  * @brief Test a path against the rule set (last-match-wins for negation).
  *
- * Matching is path-relative, never filename-only, and every rule is
- * evaluated so a later negation can re-include what an earlier rule
- * excluded — negation is order-sensitive by construction.
+ * Matching is path-relative, never filename-only, and negation stays
+ * order-sensitive by construction. gh#161 changed HOW that order is
+ * walked, never WHAT it means: the scan visits only the buckets on the
+ * path's own ancestry, in descending global rule order, and stops at
+ * the first match — which is by definition the last matching rule in
+ * source order. Before, every rule in the workspace was evaluated
+ * twice for every path: 5,061 rules against 187,855 files is the 87 s
+ * glob the issue reported.
  *
  * @param rel_path Path relative to the workspace root, forward-slashed.
  * @param is_dir Whether the path names a directory — a `dir/` pattern
@@ -466,22 +702,19 @@ void IgnoreMatcher::load_nested_gitignores(
  * @return true when the LAST matching rule excludes the path; false
  *         when it re-includes it or nothing matched.
  * @req REQ-MCP-022
- * @version 2.1.4
+ * @version 2.13.0
  */
 bool IgnoreMatcher::is_ignored(const std::string& rel_path,
                                bool is_dir) const {
+    std::vector<BucketCursor> cursors;
+    collect_buckets(by_base_, rel_path, cursors);
+
     bool ignored = false;
-    for (const auto& rule : rules_) {
-        bool match_under = std::regex_match(rel_path, rule.re_under);
-        bool match_exact = std::regex_match(rel_path, rule.re_exact);
-        // For dir_only rules, an exact match only counts when the path
-        // is itself a directory (a regular file with the same name as
-        // a `dir/` pattern is NOT excluded). re_under always counts —
-        // any descendant inherits the parent's exclusion.
-        bool exact_counts = match_exact
-            && (!rule.dir_only || is_dir);
-        if (match_under || exact_counts) {
-            ignored = !rule.negate;
+    for (std::size_t idx = pop_highest(cursors); idx != kNoRule;
+         idx = pop_highest(cursors)) {
+        if (rule_matches(rules_[idx], rel_path, is_dir, regex_evals_)) {
+            ignored = !rules_[idx].negate;
+            break;
         }
     }
     return ignored;

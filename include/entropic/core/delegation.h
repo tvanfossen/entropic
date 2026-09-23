@@ -184,7 +184,8 @@ public:
         LoopContext& parent_ctx,
         const std::string& target_tier,
         const std::string& task,
-        std::optional<int> max_turns = std::nullopt);
+        std::optional<int> max_turns = std::nullopt,
+        const std::vector<ContextRef>& context = {});
 
     /**
      * @brief Resume a prior delegation with pre-loaded conversation history.
@@ -211,7 +212,8 @@ public:
         const std::string& target_tier,
         const std::string& task,
         std::vector<Message> seed_history,
-        std::optional<int> max_turns = std::nullopt);
+        std::optional<int> max_turns = std::nullopt,
+        const std::vector<ContextRef>& context = {});
 
     /**
      * @brief Run a multi-stage delegation pipeline sequentially.
@@ -227,9 +229,44 @@ public:
         LoopContext& parent_ctx,
         const std::vector<std::string>& stages,
         const std::string& task,
-        std::vector<DelegationResult>& stage_log);
+        std::vector<DelegationResult>& stage_log,
+        const std::vector<ContextRef>& context = {});
 
 private:
+    /**
+     * @brief Mint a delegation id no sibling can collide with (gh#160).
+     * @param prefix Depth-derived stem ("d1", "d1r", "pipeline").
+     * @return Unique id when a sandbox manager is configured, `prefix`
+     *         verbatim when it is not (isolation off = ids unchanged).
+     * @version 2.13.0
+     */
+    std::string mint_delegation_id(const std::string& prefix);
+
+    /**
+     * @brief Directory a finishing delegation restores the tools to.
+     * @param parent_ctx Context of the loop that issued the delegation.
+     * @return The parent's active root (its own sandbox, when nested),
+     *         else the project root.
+     * @version 2.13.0
+     */
+    std::filesystem::path restore_root_for(
+        const LoopContext& parent_ctx) const;
+
+    /**
+     * @brief Render seeded file references as a `[CONTEXT]` block (gh#162).
+     *
+     * References only — path, optional line range, optional note. The
+     * child opens the files itself; inlining excerpts here would copy the
+     * parent's context into the child's, which is the cost delegation
+     * exists to avoid.
+     *
+     * @param context Seeded references (may be empty).
+     * @return Block text ending in a blank line, or "" when empty.
+     * @version 2.13.0
+     */
+    static std::string format_context_block(
+        const std::vector<ContextRef>& context);
+
     /**
      * @brief Build a fresh LoopContext for the child delegation.
      * @param parent_ctx Parent context.
@@ -242,7 +279,8 @@ private:
     LoopContext build_child_context(
         const LoopContext& parent_ctx,
         const ChildContextInfo& info,
-        const std::string& task);
+        const std::string& task,
+        const std::vector<ContextRef>& context = {});
 
     /**
      * @brief Build a resumed child context (gh#32, v2.1.6).
@@ -307,10 +345,12 @@ private:
      * @param child_ctx Child context to execute.
      * @param target_tier Tier name.
      * @param task Task description.
-     * @param max_turns Optional turn limit.
+     * @param max_turns Optional turn limit the model supplied. gh#182
+     *        (v2.13.0): carried onto `child_ctx.delegated_max_turns`, so
+     *        it bounds the child loop instead of only being recorded.
      * @return DelegationResult.
      * @req REQ-DELEG-002
-     * @version 1.8.6
+     * @version 2.13.0
      */
     DelegationResult run_child(
         LoopContext& child_ctx,

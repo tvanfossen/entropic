@@ -54,7 +54,8 @@ set_target_properties(c4core PROPERTIES CXX_VISIBILITY_PRESET default)
 
 # ── llama.cpp ────────────────────────────────────────────
 # v1.8.2: Build llama.cpp as part of the inference backend.
-# Submodule pinned at b8420.
+# Submodule pinned at b11009 (fb27a525d, 2026-09-16). v2.13.0 bumped it
+# from b9886; see design decision #60 in docs/architecture-cpp.md.
 set(LLAMA_BUILD_TESTS OFF CACHE BOOL "" FORCE)
 set(LLAMA_BUILD_EXAMPLES OFF CACHE BOOL "" FORCE)
 set(LLAMA_BUILD_SERVER OFF CACHE BOOL "" FORCE)
@@ -89,14 +90,22 @@ add_subdirectory(llama.cpp EXCLUDE_FROM_ALL)
 # only links ggml+llama (its sibling CLI executables link `common`
 # but are never built thanks to EXCLUDE_FROM_ALL).
 #
-# LLAMA_INSTALL_VERSION is set in llama.cpp/CMakeLists.txt but does
-# not propagate up out of that subdirectory scope. mtmd's CMakeLists
-# uses it for set_target_properties(VERSION ...), so we mirror the
-# upstream construction here.
-if (NOT DEFINED LLAMA_BUILD_NUMBER)
-    set(LLAMA_BUILD_NUMBER 0)
+# llama.cpp's version variables are set in llama.cpp/CMakeLists.txt but
+# do not propagate up out of that subdirectory scope. mtmd's CMakeLists
+# uses them for set_target_properties(VERSION/SOVERSION ...), so we
+# mirror the upstream construction here.
+#
+# b11009: mtmd switched from the single LLAMA_INSTALL_VERSION to
+# LLAMA_VERSION_BASE + LLAMA_VERSION_MAJOR. An undefined VERSION property
+# is not an error in CMake — it silently produces an unversioned target —
+# so this mirror has to be updated by hand on every pin bump. Values are
+# read from extern/llama.cpp/CMakeLists.txt lines 6-9.
+if (NOT DEFINED LLAMA_VERSION_MAJOR)
+    set(LLAMA_VERSION_MAJOR 0)
+    set(LLAMA_VERSION_MINOR 4)
+    set(LLAMA_VERSION_PATCH 1)
+    set(LLAMA_VERSION_BASE "${LLAMA_VERSION_MAJOR}.${LLAMA_VERSION_MINOR}.${LLAMA_VERSION_PATCH}")
 endif()
-set(LLAMA_INSTALL_VERSION 0.0.${LLAMA_BUILD_NUMBER})
 add_subdirectory(
     llama.cpp/tools/mtmd
     ${CMAKE_BINARY_DIR}/extern/llama-mtmd-build

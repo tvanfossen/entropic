@@ -20,6 +20,9 @@
 #include "llama_cpp_sampler.h"
 #include "llama_cpp_tokenizer.h"
 #include "session_pool_util.h"
+#include "batch_kv_util.h"   // gh#158: batch sequence plan
+#include "context_fit.h"     // v2.13.0: prompt-vs-context admission gate
+#include "expert_offload_buft.h"  // gh#153 #42(iii): expert-tensor offload
 #include "warm_keep_util.h"  // gh#96: common_prefix_len / warm_keep_cut
 #include "tool_call_markers.h"  // gh#103: family-aware tool-call close marker
 #include "batch_util.h"  // gh#98: batch_shared_prefix_len / batch_is_viable
@@ -38,6 +41,7 @@
 #include <nlohmann/json.hpp>
 
 #include <cmath>
+#include <cstdlib>  // std::atoi — GGUF expert_count arrives as a string
 #include <cstring>
 #include <optional>
 #include <stdexcept>
@@ -98,20 +102,6 @@ bool check_stop_sequences(
         }
     }
     return false;
-}
-
-/**
- * @brief Create a prefill-failed GenerationResult.
- * @return GenerationResult with error fields populated.
- * @utility
- * @version 1.10.4
- */
-GenerationResult prefill_error() {
-    GenerationResult r;
-    r.error_code = ENTROPIC_ERROR_GENERATE_FAILED;
-    r.error_message = "Prefill decode failed";
-    r.finish_reason = "error";
-    return r;
 }
 
 /**
@@ -274,26 +264,118 @@ llama_split_mode parse_split_mode(const std::string& s) {
 }
 
 /**
+ * @brief Map entropic's mmap+mlock intent onto llama.cpp's `load_mode` enum.
+ *
+ * The b11009 pin replaced the two independent booleans
+ * `llama_model_params::use_mmap` / `::use_mlock` with a single
+ * `llama_load_mode` enum. Entropic always wanted mmap on (the WARM→ACTIVE
+ * reload of design decision #19 depends on the file staying in page
+ * cache), with mlock driven by `ModelConfig::use_mlock` — so the faithful
+ * mapping is `MMAP_MLOCK` / `MMAP`, never `AUTO`.
+ *
+ * `AUTO` is deliberately NOT used: it additionally probes every backend
+ * device for `caps.mmap_support` and silently downgrades to a full read
+ * when one says no (`llama-model.cpp:1444`). That probe did not exist at
+ * the b9886 pin, so `AUTO` would be a behaviour change; explicit `MMAP`
+ * reproduces the old unconditional `use_mmap = true` exactly.
+ *
+ * @param use_mlock Whether to lock the model's pages in RAM.
+ * @return `LLAMA_LOAD_MODE_MMAP_MLOCK` when locking, else
+ *         `LLAMA_LOAD_MODE_MMAP`.
+ * @utility
+ * @version 2.13.0
+ */
+llama_load_mode mmap_load_mode(bool use_mlock) {
+    return use_mlock ? LLAMA_LOAD_MODE_MMAP_MLOCK : LLAMA_LOAD_MODE_MMAP;
+}
+
+/// @brief Whole-file tier-model loads performed in this process (gh#148).
+/// Relaxed atomic: the add costs nothing beside a multi-second file load,
+/// so the counter is compiled in unconditionally rather than behind a test
+/// macro that would let the instrumented and shipped paths diverge.
+std::atomic<std::uint64_t> g_model_file_loads{0};
+
+/**
+ * @brief Load a tier model from file, counting the load (gh#148).
+ *
+ * Every whole-file load of a TIER model goes through here, so the counter
+ * cannot drift from the call sites. The MTP head loads directly — it is a
+ * separate GGUF with its own lifecycle (see `model_file_loads`).
+ *
+ * @param path GGUF path.
+ * @param mparams Load parameters (n_gpu_layers decides the residency).
+ * @return Loaded model, or nullptr.
+ * @utility
+ * @version 2.13.0
+ */
+llama_model* load_tier_model(const char* path,
+                             const llama_model_params& mparams) {
+    g_model_file_loads.fetch_add(1, std::memory_order_relaxed);
+    return llama_model_load_from_file(path, mparams);
+}
+
+/**
  * @brief Build llama_model_params for GPU model load.
  *
  * Extracted (gh#23 v2.3.18) to keep `load_gpu_model` under the knots
  * ABC gate as new MVP-10 model-load knobs land (`split_mode`,
  * `main_gpu`, `offload_kqv`, `rope_freq_*`).
  *
+ * @param cfg Tier config.
+ * @param moe Expert-tensor overrides. Borrowed, NOT copied: llama.cpp keeps
+ *            the raw pointer and dereferences its `const char*` patterns
+ *            throughout tensor placement, so this object must outlive the
+ *            `llama_model_load_from_file` call the params are handed to.
+ *            Empty when `cpu_moe_layers == 0`, in which case `data()` is
+ *            nullptr and the assignment below is a no-op against
+ *            `llama_model_default_params()`.
  * @utility
- * @version 2.3.18
+ * @version 2.13.0
  */
-llama_model_params build_load_mparams(const entropic::ModelConfig& cfg) {
+llama_model_params build_load_mparams(
+    const entropic::ModelConfig& cfg,
+    const entropic::ExpertOffloadOverrides& moe) {
     llama_model_params m = llama_model_default_params();
     m.n_gpu_layers = cfg.gpu_layers;
-    m.use_mmap = true;
-    m.use_mlock = cfg.use_mlock;
+    m.load_mode = mmap_load_mode(cfg.use_mlock);
     m.split_mode = parse_split_mode(cfg.split_mode);
     // gh#23 MVP item 7 (v2.3.19): main_gpu. Effective when split_mode
     // is "none" (pin) or "row" (small-tensor placement). 0 keeps
     // pre-v2.3.19 load bit-for-bit.
     m.main_gpu = cfg.main_gpu;
+    // gh#153 #42(iii) (v2.13.0, EXPERIMENTAL): routed-expert tensors to the
+    // host so attention and its KV keep the VRAM. nullptr when off.
+    m.tensor_buft_overrides = moe.data();
     return m;
+}
+
+/**
+ * @brief `<arch>.expert_count` from a loaded model's GGUF metadata.
+ *
+ * There is no `llama_model_n_expert` at this pin, and hparams are not
+ * exposed, so this reads the same metadata key llama.cpp itself parses
+ * (`LLM_KV_EXPERT_COUNT`, `"%s.expert_count"`) through the string KV map
+ * `llama_model_meta_val_str` serves. Absent on a dense model, which is
+ * exactly the signal the expert-offload refusal needs.
+ *
+ * @param model Loaded model.
+ * @return Declared expert count, or 0 when the model declares none.
+ * @utility
+ * @version 2.13.0
+ */
+int model_expert_count(const llama_model* model) {
+    char arch[64] = {0};
+    if (llama_model_meta_val_str(model, "general.architecture",
+                                 arch, sizeof(arch)) < 0) {
+        return 0;
+    }
+    const std::string key = std::string(arch) + ".expert_count";
+    char value[32] = {0};
+    if (llama_model_meta_val_str(model, key.c_str(),
+                                 value, sizeof(value)) < 0) {
+        return 0;
+    }
+    return std::atoi(value);
 }
 
 } // anonymous namespace
@@ -309,30 +391,44 @@ llama_model_params build_load_mparams(const entropic::ModelConfig& cfg) {
  * @param config Validated model config.
  * @return true on success.
  * @dg_internal
- * @version 2.7.6
+ * @version 2.13.0 [reviewed]
  */
 bool LlamaCppBackend::do_load(const ModelConfig& config) {
     llama_model_params mparams = llama_model_default_params();
     mparams.n_gpu_layers = 0;
-    mparams.use_mmap = true;
-    mparams.use_mlock = config.use_mlock;
+    mparams.load_mode = mmap_load_mode(config.use_mlock);
 
-    model_ = llama_model_load_from_file(config.path.c_str(), mparams);
+    model_ = load_tier_model(config.path.c_str(), mparams);
     if (!model_) {
         last_error_ = "llama_model_load_from_file failed: " + config.path.string();
         return false;
     }
 
-    vocab_ = llama_model_get_vocab(model_);
-    is_recurrent_ = llama_model_is_recurrent(model_);
-    is_hybrid_ = llama_model_is_hybrid(model_);  // gh#97: attn + recurrent/SSM
-    // v2.3.10: wire the Tokenizer seam now that vocab_ is valid.
-    // Lifetime: tokenizer_ borrows vocab_; do_unload resets
-    // tokenizer_ BEFORE freeing the model so the borrow never dangles.
-    tokenizer_ = std::make_unique<LlamaCppTokenizer>(vocab_);
+    bind_model_handles();
     logger->info("Model loaded (CPU): {} tokens in vocab, recurrent={}",
               llama_vocab_n_tokens(vocab_), is_recurrent_);
     return true;
+}
+
+/**
+ * @brief Bind vocab, tokenizer and arch flags to the loaded `model_`.
+ *
+ * Every successful tier-model load ends here (gh#148), so no path can
+ * refresh the vocab and leave `is_recurrent_` / `is_hybrid_` stale —
+ * which `load_gpu_model` and `reload_model_cpu_only` both did until
+ * v2.13.0, relying on `do_load` having set them first.
+ *
+ * Lifetime: tokenizer_ borrows vocab_; do_unload resets tokenizer_ BEFORE
+ * freeing the model so the borrow never dangles.
+ *
+ * @dg_internal
+ * @version 2.13.0
+ */
+void LlamaCppBackend::bind_model_handles() {
+    vocab_ = llama_model_get_vocab(model_);
+    is_recurrent_ = llama_model_is_recurrent(model_);
+    is_hybrid_ = llama_model_is_hybrid(model_);  // gh#97: attn + recurrent/SSM
+    tokenizer_ = std::make_unique<LlamaCppTokenizer>(vocab_);
 }
 
 /**
@@ -420,10 +516,24 @@ llama_context_params build_cparams(const entropic::ModelConfig& cfg) {
  *
  * @return true on success.
  * @dg_internal
- * @version 2.3.7
+ * @version 2.13.0
  */
 bool LlamaCppBackend::do_activate() {
     if (!load_gpu_model()) { return false; }
+    return finish_activation();
+}
+
+/**
+ * @brief Context + sampler + mmproj — the tail both activation paths share.
+ *
+ * Split out of `do_activate` in v2.13.0 (gh#148) so the one-read cold path
+ * and the WARM promotion cannot drift apart.
+ *
+ * @return true on success.
+ * @dg_internal
+ * @version 2.13.0
+ */
+bool LlamaCppBackend::finish_activation() {
     if (!create_inference_context()) { return false; }
     // v2.3.10: wire the Sampler seam once ctx_ / vocab_ are live.
     // Lifetime: factory borrows ctx_ + vocab_; do_deactivate /
@@ -433,6 +543,108 @@ bool LlamaCppBackend::do_activate() {
         ctx_, vocab_);
     init_mmproj_if_configured();
     return true;
+}
+
+/**
+ * @brief COLD → ACTIVE in ONE whole-file read (gh#148).
+ *
+ * The base class default is `do_load` + `do_activate`: the first reads the
+ * whole GGUF with `n_gpu_layers = 0`, the second frees that model and reads
+ * the whole GGUF again with the configured split. Nothing consumed the CPU
+ * placement in between — it was a full read of a file that can be 13 GB,
+ * for nothing. This reads it once, with the placement the config asked for.
+ *
+ * WARM → ACTIVE still reloads (design decision #19): llama.cpp binds
+ * offloading to the model load, so a model already in host RAM cannot
+ * re-place its layers without being read again. That is what `keep_warm`
+ * pays for, and it is untouched.
+ *
+ * v2.13.0 (gh#153 #42(iii)): also carries the EXPERIMENTAL expert-tensor
+ * overrides, whose owning holder must outlive the load call below.
+ *
+ * @param config Validated model config.
+ * @return true on success; sets last_error_ on failure.
+ * @req REQ-INFER-002
+ * @req REQ-INFER-027
+ * @version 2.13.0 [reviewed]
+ */
+bool LlamaCppBackend::do_load_active(const ModelConfig& config) {
+    // Outlives the load below — llama.cpp borrows the pattern strings.
+    const ExpertOffloadOverrides moe(config.cpu_moe_layers,
+                                     ggml_backend_cpu_buffer_type());
+    llama_model_params mparams = build_load_mparams(config, moe);
+
+    model_ = load_tier_model(config.path.c_str(), mparams);
+    if (model_ == nullptr) {
+        // llama.cpp returns null with no error string — the reason (OOM,
+        // CUDA init failure, GGUF parse error) is only in ggml's log stream.
+        last_error_ = "Failed to load model into target residency "
+                      "(path=" + config.path.string()
+                    + ", gpu_layers=" + std::to_string(config.gpu_layers)
+                    + ") — check llama_ggml.log in the engine's log_dir "
+                      "for the underlying llama.cpp/CUDA error";
+        return false;
+    }
+
+    bind_model_handles();
+    if (!expert_offload_admits(config)) { return false; }
+    logger->info("Model loaded into target residency: gpu_layers={}, "
+                 "{} tokens in vocab, recurrent={}",
+                 config.gpu_layers, llama_vocab_n_tokens(vocab_),
+                 is_recurrent_);
+    return finish_activation();
+}
+
+/**
+ * @brief Refuse a loaded model that cannot honour `cpu_moe_layers`
+ *        (gh#153 #42(iii), v2.13.0, EXPERIMENTAL).
+ *
+ * The two refusals that need GGUF metadata — a dense model, and a count
+ * beyond the block count — and therefore cannot be made by
+ * `expert_offload_conflict_reason` at configure time, because entropic reads
+ * no GGUF metadata before loading. Failing here costs one wasted load and is
+ * still the right trade: the alternative is a configuration that quietly
+ * placed nothing and an operator who measures the technique instead of their
+ * mistake.
+ *
+ * Frees the model on refusal, leaving the backend in the same clean,
+ * recoverable state a failed load leaves it in.
+ *
+ * @param config Tier config carrying `cpu_moe_layers`.
+ * @return true to proceed; false with `last_error_` set.
+ * @dg_internal
+ * @req REQ-INFER-027
+ * @version 2.13.0
+ */
+bool LlamaCppBackend::expert_offload_admits(const ModelConfig& config) {
+    const int n_layer = llama_model_n_layer(model_);
+    const std::string why = expert_offload_load_refusal(
+        config.cpu_moe_layers, n_layer, model_expert_count(model_));
+    if (why.empty()) {
+        if (config.cpu_moe_layers > 0) {
+            // The engagement signal. A knob that silently places nothing
+            // measures as "the technique does not help", so say what was
+            // asked for and point at the numbers that prove it landed:
+            // llama.cpp's own `load_tensors:` buffer-size lines shift from
+            // the device buffer to CPU_Mapped, and at DEBUG it names every
+            // tensor it overrode.
+            logger->info("[expert-offload] EXPERIMENTAL: experts of the "
+                         "first {} of {} layers -> host; attention, KV, "
+                         "router, dense/shared FFN and norms follow "
+                         "gpu_layers={}. Confirm placement in "
+                         "llama_ggml.log ('load_tensors:' buffer sizes).",
+                         config.cpu_moe_layers, n_layer, config.gpu_layers);
+        }
+        return true;
+    }
+
+    last_error_ = "cpu_moe_layers refused: " + why;
+    logger->error("{}", last_error_);
+    tokenizer_.reset();
+    llama_model_free(model_);
+    model_ = nullptr;
+    vocab_ = nullptr;
+    return false;
 }
 
 /**
@@ -449,11 +661,18 @@ bool LlamaCppBackend::do_activate() {
  * it. Freeing first removes the simultaneity (and the duplicate model
  * metadata/buffers) without changing the load contract.
  *
+ * v2.13.0 (gh#153 #42(iii)): also carries the EXPERIMENTAL expert-tensor
+ * overrides, whose owning holder must outlive the load call below.
+ *
  * @dg_internal
- * @version 2.7.0
+ * @req REQ-INFER-027
+ * @version 2.13.0 [reviewed]
  */
 bool LlamaCppBackend::load_gpu_model() {
-    llama_model_params mparams = build_load_mparams(config());
+    // Outlives the load below — llama.cpp borrows the pattern strings.
+    const ExpertOffloadOverrides moe(config().cpu_moe_layers,
+                                     ggml_backend_cpu_buffer_type());
+    llama_model_params mparams = build_load_mparams(config(), moe);
 
     if (!config().tensor_split.empty()) {
         // TODO: parse tensor_split string into float array for multi-GPU
@@ -471,7 +690,7 @@ bool LlamaCppBackend::load_gpu_model() {
         vocab_ = nullptr;
     }
 
-    model_ = llama_model_load_from_file(config().path.c_str(), mparams);
+    model_ = load_tier_model(config().path.c_str(), mparams);
     if (model_ == nullptr) {
         // llama.cpp returns null with no error string — the actual
         // reason (OOM, CUDA init failure, GGUF parse error, etc.) only
@@ -486,9 +705,8 @@ bool LlamaCppBackend::load_gpu_model() {
         return false;
     }
 
-    vocab_ = llama_model_get_vocab(model_);
-    tokenizer_ = std::make_unique<LlamaCppTokenizer>(vocab_);
-    return true;
+    bind_model_handles();
+    return expert_offload_admits(config());
 }
 
 /**
@@ -628,7 +846,7 @@ bool LlamaCppBackend::setup_mtp_draft(const std::string& head_path, int n_max) {
 /**
  * @brief Load the MTP head GGUF + create its shared-KV context (gh#106).
  * @dg_internal
- * @version 2.9.1
+ * @version 2.13.0
  */
 bool LlamaCppBackend::build_mtp_head(const std::string& head_path) {
     if (ctx_ == nullptr) {
@@ -644,7 +862,7 @@ bool LlamaCppBackend::build_mtp_head(const std::string& head_path) {
     }
     llama_model_params mparams = llama_model_default_params();
     mparams.n_gpu_layers = config().gpu_layers;  // head is tiny — follow target
-    mparams.use_mmap = true;
+    mparams.load_mode = LLAMA_LOAD_MODE_MMAP;    // mmap, never mlock (was use_mmap=true)
     mtp_draft_model_ = llama_model_load_from_file(head_path.c_str(), mparams);
     if (mtp_draft_model_ != nullptr) {
         llama_context_params cparams = build_cparams(config());
@@ -723,18 +941,16 @@ void LlamaCppBackend::do_deactivate() {
  * success rebinds model_/vocab_/tokenizer_; on failure leaves model_ null
  * (recoverable — the next activate reloads from scratch).
  * @dg_internal
- * @version 2.9.0
+ * @version 2.13.0 [reviewed]
  */
 void LlamaCppBackend::reload_model_cpu_only() {
     llama_model_params mparams = llama_model_default_params();
     mparams.n_gpu_layers = 0;
-    mparams.use_mmap = true;
-    mparams.use_mlock = config().use_mlock;
+    mparams.load_mode = mmap_load_mode(config().use_mlock);
 
-    model_ = llama_model_load_from_file(config().path.c_str(), mparams);
+    model_ = load_tier_model(config().path.c_str(), mparams);
     if (model_ != nullptr) {
-        vocab_ = llama_model_get_vocab(model_);
-        tokenizer_ = std::make_unique<LlamaCppTokenizer>(vocab_);
+        bind_model_handles();
     } else {
         // VRAM is released, but the warm-reload failed: leave the handle
         // null (state stays recoverable — the next activate reloads from
@@ -744,6 +960,25 @@ void LlamaCppBackend::reload_model_cpu_only() {
                       "(path={}); backend left unloaded until next activate",
                       config().path.string());
     }
+}
+
+/**
+ * @brief Whole-file tier-model loads in this process (gh#148). See header.
+ * @return Cumulative count.
+ * @utility
+ * @version 2.13.0
+ */
+std::uint64_t LlamaCppBackend::model_file_loads() {
+    return g_model_file_loads.load(std::memory_order_relaxed);
+}
+
+/**
+ * @brief Reset the whole-file load counter (gh#148, test surface).
+ * @utility
+ * @version 2.13.0
+ */
+void LlamaCppBackend::reset_model_file_loads() {
+    g_model_file_loads.store(0, std::memory_order_relaxed);
 }
 
 /**
@@ -1643,7 +1878,7 @@ std::unique_ptr<Sampler> LlamaCppBackend::create_sampler(
  * @param tokens Input token sequence.
  * @return true on success.
  * @dg_internal
- * @version 2.12.0-rc1
+ * @version 2.13.0
  */
 bool LlamaCppBackend::run_prefill(const std::vector<llama_token>& tokens) {
     // gh#144 (v2.12.0): clear only this session's sequence when a pool is
@@ -1655,6 +1890,8 @@ bool LlamaCppBackend::run_prefill(const std::vector<llama_token>& tokens) {
         llama_memory_seq_rm(llama_get_memory(ctx_),
                             static_cast<llama_seq_id>(active_slot_), -1, -1);
     } else {
+        // gh#158: instrumented, see kv_full_clear_count().
+        ++kv_full_clear_count_;
         llama_memory_clear(llama_get_memory(ctx_), true);
     }
 
@@ -1873,18 +2110,30 @@ static void fill_batch_cell(llama_batch& b, int k, llama_token tok,
  * @brief Build per-request sampler chains + KV sequence ids (gh#98).
  * @return false if any sampler chain could not be built.
  * @dg_internal
- * @version 2.8.0
+ * @version 2.13.0
  */
 bool LlamaCppBackend::prepare_batch_seqs(
     std::vector<BatchSeq>& seqs,
     const std::vector<GenerationParams>& params) {
+    // gh#158 (v2.13.0): EVERY arm gets a temp sequence, arm 0 included. It
+    // used to take sequence 0 — which is a SESSION slot — so a batch wrote
+    // over whatever session slot 0 held before it had cleared anything at
+    // all. The plan below then refuses any id that would still land inside
+    // the session range.
+    std::vector<int> minted;
+    minted.reserve(seqs.size());
     for (std::size_t i = 0; i < seqs.size(); ++i) {
         seqs[i].sampler = create_sampler(params[i]);
         auto* ls = dynamic_cast<LlamaCppSampler*>(seqs[i].sampler.get());
         if (ls == nullptr) { return false; }
         seqs[i].chain = ls->native_chain();
-        seqs[i].seq_id = (i == 0) ? 0 : allocate_temp_seq_id();
         seqs[i].max_tokens = params[i].max_tokens;
+        minted.push_back(static_cast<int>(allocate_temp_seq_id()));
+    }
+    const auto plan = plan_batch_kv(
+        seqs.size(), derive_pool_geometry(config()).temp_seq_base, minted);
+    for (std::size_t i = 0; i < seqs.size() && i < plan.seq_ids.size(); ++i) {
+        seqs[i].seq_id = static_cast<llama_seq_id>(plan.seq_ids[i]);
     }
     return true;
 }
@@ -1892,17 +2141,22 @@ bool LlamaCppBackend::prepare_batch_seqs(
 /**
  * @brief Prefill the shared prefix into seq 0 and seq_cp it to the others.
  * @dg_internal
- * @version 2.8.0
+ * @version 2.13.0
  */
 bool LlamaCppBackend::prefill_shared_and_fanout(
     std::vector<BatchSeq>& seqs, const std::vector<llama_token>& seq0,
     std::size_t shared) {
     std::vector<llama_token> prefix(
         seq0.begin(), seq0.begin() + static_cast<long>(shared));
-    if (!decode_tokens_from(prefix, 0)) { return false; }  // into seq 0
+    // gh#158: into the batch's OWN lead sequence, never into `active_slot_`
+    // (which decode_tokens_from targets) and never into sequence 0.
+    const llama_seq_id lead = seqs[0].seq_id;
+    if (!decode_tokens_into_slot(prefix, 0, static_cast<int>(lead))) {
+        return false;
+    }
     auto* mem = llama_get_memory(ctx_);
     for (std::size_t i = 1; i < seqs.size(); ++i) {
-        llama_memory_seq_cp(mem, 0, seqs[i].seq_id, 0,
+        llama_memory_seq_cp(mem, lead, seqs[i].seq_id, 0,
                             static_cast<llama_pos>(shared));
     }
     for (auto& s : seqs) { s.pos = static_cast<int>(shared); }
@@ -2026,11 +2280,17 @@ std::vector<GenerationResult> LlamaCppBackend::build_batch_results(
 /**
  * @brief Release every batch sequence's temp seq_id (seq 0 excluded, gh#98).
  * @dg_internal
- * @version 2.8.0
+ * @version 2.13.0
  */
 void LlamaCppBackend::release_temp_seqs(std::vector<BatchSeq>& seqs) {
-    for (std::size_t i = 1; i < seqs.size(); ++i) {
-        if (seqs[i].seq_id != 0) { release_temp_seq_id(seqs[i].seq_id); }
+    // gh#158 (v2.13.0): arm 0 now holds a temp id too (it used to be hard
+    // sequence 0, a session slot), so every arm is released — and each one's
+    // cells are dropped, which is what replaces the whole-cache clear.
+    auto* mem = ctx_ != nullptr ? llama_get_memory(ctx_) : nullptr;
+    for (auto& s : seqs) {
+        if (s.seq_id == 0) { continue; }
+        if (mem != nullptr) { llama_memory_seq_rm(mem, s.seq_id, -1, -1); }
+        release_temp_seq_id(s.seq_id);
     }
 }
 
@@ -2043,7 +2303,7 @@ void LlamaCppBackend::release_temp_seqs(std::vector<BatchSeq>& seqs) {
  * prefilled once); `last_gen_decode_calls_` holds the batched step count.
  *
  * @dg_internal
- * @version 2.12.0
+ * @version 2.13.0
  */
 std::vector<GenerationResult> LlamaCppBackend::run_batched_decode(
     const std::vector<std::vector<llama_token>>& toks,
@@ -2061,8 +2321,12 @@ std::vector<GenerationResult> LlamaCppBackend::run_batched_decode(
     int max_steps = 0;
     for (const auto& p : params) { max_steps = std::max(max_steps, p.max_tokens); }
 
-    llama_memory_clear(llama_get_memory(ctx_), true);
-    invalidate_all_resident_kv();
+    // gh#158 (v2.13.0): this used to open with
+    // `llama_memory_clear(mem, true)` + `invalidate_all_resident_kv()` — the
+    // WHOLE cache, so a batch on session A wiped session B's resident prefix
+    // and B's next turn paid a silent cold prefill. The batch now owns only
+    // its own temp sequences and drops exactly those in release_temp_seqs,
+    // so no session slot is touched at either end.
     last_prefill_tokens_ = 0;
     last_gen_decode_calls_ = 0;
 
@@ -2074,7 +2338,6 @@ std::vector<GenerationResult> LlamaCppBackend::run_batched_decode(
                   : std::vector<GenerationResult>(
                         n, batch_error_result("batch prefill"));
     release_temp_seqs(seqs);
-    invalidate_all_resident_kv();
     logger->info("gh#98 batch: requests={} prefix.tokens_shared={} "
                  "prefix.tokens_saved={} total_prefill_tokens={} gen_decodes={}",
                  n, shared, shared * (n - 1), last_prefill_tokens_,
@@ -2380,6 +2643,77 @@ bool LlamaCppBackend::prefill_and_cache_prefix(
 }
 
 /**
+ * @brief Number of definitions in a staged MCP tool-list JSON array.
+ * @param tools_json Staged tool JSON ("" when no tools are staged).
+ * @return Element count; 0 when absent or malformed.
+ * @utility
+ * @version 2.13.0
+ */
+static int staged_tool_count(const std::string& tools_json) {
+    if (tools_json.empty()) { return 0; }
+    auto arr = nlohmann::json::parse(tools_json, nullptr, false);
+    return arr.is_array() ? static_cast<int>(arr.size()) : 0;
+}
+
+/**
+ * @brief Refuse this turn when its prompt cannot fit the tier context.
+ *
+ * See the header. The measurement is only taken on the refusal path — the
+ * common case costs one integer comparison. `tool_tokens` and
+ * `system_tokens` are tokenized from the STAGED JSON and the system
+ * message rather than from the render, so they are attributions for the
+ * operator, not an exact decomposition of `tokens`; the total and the
+ * context_length are exact, and those are the two the decision rests on.
+ *
+ * @param tokens Rendered + tokenized prompt for this turn.
+ * @param system_prompt System prompt text extracted from the messages.
+ * @return true when the turn was refused (no decode may follow).
+ * @req REQ-INFER-026
+ * @version 2.13.0
+ */
+bool LlamaCppBackend::refuse_over_context(
+    const std::vector<llama_token>& tokens,
+    const std::string& system_prompt)
+{
+    ContextFit fit;
+    fit.prompt_tokens = static_cast<int>(tokens.size());
+    fit.context_length = config().context_length;
+    if (!context_fit_overflows(fit)) {
+        prefill_refusal_.clear();
+        return false;
+    }
+    fit.tool_bytes = active_tools_json_.size();
+    fit.tool_count = staged_tool_count(active_tools_json_);
+    fit.tool_tokens =
+        static_cast<int>(tokenize(active_tools_json_, false).size());
+    fit.system_tokens =
+        static_cast<int>(tokenize(system_prompt, false).size());
+    prefill_refusal_ = context_overflow_message(fit);
+    logger->error("{}", prefill_refusal_);
+    return true;
+}
+
+/**
+ * @brief Build the error result for a prefill that did not run.
+ * @return GenerationResult carrying the typed refusal when one was
+ *         recorded, else the generic decode failure.
+ * @req REQ-INFER-026
+ * @version 2.13.0
+ */
+GenerationResult LlamaCppBackend::prefill_error() const {
+    GenerationResult r;
+    r.finish_reason = "error";
+    if (!prefill_refusal_.empty()) {
+        r.error_code = ENTROPIC_ERROR_EVAL_CONTEXT_FULL;
+        r.error_message = prefill_refusal_;
+        return r;
+    }
+    r.error_code = ENTROPIC_ERROR_GENERATE_FAILED;
+    r.error_message = "Prefill decode failed";
+    return r;
+}
+
+/**
  * @brief Run prefill with prompt cache integration (perf-instrumented wrapper).
  *
  * Resets the llama perf counters, dispatches to the cache-aware prefill
@@ -2387,13 +2721,18 @@ bool LlamaCppBackend::prefill_and_cache_prefix(
  * count (gh#96). Thin wrapper so the dispatch body stays under the knots
  * SLOC gate.
  *
+ * v2.13.0: the context-admission gate runs FIRST. Every text decode path
+ * reaches this function directly after tokenizing its render, so this is
+ * the earliest place that holds both the prompt size and the tier's
+ * context_length — and the last place before a token is decoded.
+ *
  * @param tokens Full token sequence.
  * @param system_prompt System prompt text for cache key.
  * @param messages Original messages (for prefix boundary).
  * @param params Generation parameters.
- * @return true on success.
+ * @return true on success; false on refusal or decode failure.
  * @dg_internal
- * @version 2.12.0
+ * @version 2.13.0
  */
 bool LlamaCppBackend::run_prefill_cached(
     const std::vector<llama_token>& tokens,
@@ -2410,6 +2749,24 @@ bool LlamaCppBackend::run_prefill_cached(
     // across the state-restore boundary, so we count the decodes directly.)
     last_prefill_tokens_ = 0;
     last_input_tokens_ = static_cast<int>(tokens.size());  // gh#97
+    // v2.13.0: a prompt that cannot fit is refused HERE, before llama_decode
+    // is called even once. Proceeding is what produced the release-gate
+    // symptom: chunked decode failures every turn, a cache restore that
+    // could not land, and an empty-turn allowance spent on a prompt no
+    // retry could shrink.
+    if (refuse_over_context(tokens, system_prompt)) {
+        return false;
+    }
+    // A prefill without a context cannot succeed, and saying so is cheaper
+    // than dereferencing null inside llama_get_memory further down. Both
+    // branches below reach llama.cpp, so the check belongs here rather than
+    // in either one. Production never arrives un-ACTIVE (the base class
+    // gates generate()); this is what lets the CPU unit tier drive the
+    // decode path at all.
+    if (ctx_ == nullptr) {
+        logger->error("Prefill requested with no context (not ACTIVE)");
+        return false;
+    }
     auto t_pre = entropic::log::now();
     bool ok;
     if (is_hybrid_ || is_recurrent_) {
@@ -2528,6 +2885,24 @@ void LlamaCppBackend::invalidate_resident_kv() {
 }
 
 /**
+ * @brief Drop one session's resident KV and release its slot (gh#165).
+ *
+ * @param session_key Session whose KV to drop.
+ * @req REQ-LOOP-010
+ * @version 2.13.0
+ */
+void LlamaCppBackend::forget_session_kv(const std::string& session_key) {
+    const int slot = residency_.forget_session(session_key);
+    if (slot == kNoSessionSlot) { return; }
+    if (ctx_ != nullptr) {
+        llama_memory_seq_rm(llama_get_memory(ctx_),
+                            static_cast<llama_seq_id>(slot), -1, -1);
+    }
+    logger->info("Session '{}' KV dropped from slot {} (context restored)",
+                 session_key, slot);
+}
+
+/**
  * @brief Drop EVERY slot's warm-keep record (gh#144, v2.12.0).
  *
  * For the paths that still clear the whole context unconditionally
@@ -2535,7 +2910,7 @@ void LlamaCppBackend::invalidate_resident_kv() {
  * bookkeeping thinks it does.
  * @utility
  * @dg_internal
- * @version 2.12.0
+ * @version 2.13.0
  */
 void LlamaCppBackend::invalidate_all_resident_kv() {
     residency_.invalidate_all();
@@ -2646,7 +3021,7 @@ std::vector<Message> strip_image_parts(
  * @return Messages with content flattened to marker-substituted text,
  *         or empty vector if any image fails to load.
  * @dg_internal
- * @version 2.9.0
+ * @version 2.13.0
  */
 std::vector<Message> substitute_image_markers(
     const std::vector<Message>& messages,
@@ -2671,8 +3046,14 @@ std::vector<Message> substitute_image_markers(
             }
             ::mtmd_bitmap* bm = nullptr;
             if (!p.image_path.empty()) {
+                // b11009 added a trailing `mtmd_helper_init_opt` carrying
+                // video decode params. `_default()` is the behaviour-
+                // preserving value for a still image; the returned
+                // wrapper's `video_ctx` is null on that path, so only
+                // `.bitmap` needs owning.
                 bm = mtmd_helper_bitmap_init_from_file(
-                    ctx, p.image_path.c_str(), /*placeholder=*/false).bitmap;
+                    ctx, p.image_path.c_str(), /*placeholder=*/false,
+                    mtmd_helper_init_opt_default()).bitmap;
             }
             if (bm == nullptr) { return {}; }
             bitmaps_out.push_back(bm);
@@ -2694,13 +3075,14 @@ std::vector<Message> substitute_image_markers(
  * stays with the caller (mtmd_tokenize borrows for the call).
  *
  * @dg_internal
- * @version 2.1.8
+ * @version 2.13.0
  */
 entropic_error_t LlamaCppBackend::mtmd_prefill(
     const std::string& prompt,
     const std::vector<::mtmd_bitmap*>& bitmaps,
     std::string& err_msg)
 {
+    ++kv_full_clear_count_;  // gh#158: see kv_full_clear_count()
     llama_memory_clear(llama_get_memory(ctx_), true);
     ::mtmd_input_text mt{prompt.c_str(), true, true};
     auto* chunks = mtmd_input_chunks_init();
@@ -3180,7 +3562,7 @@ namespace {
  * @param tool_grammar_lazy Whether that grammar arms on a trigger.
  * @param generation_prompt Render prefill, required by the TOOL_CALLS type.
  * @req REQ-INFER-008
- * @version 2.10.5
+ * @version 2.13.0
  * @dg_internal
  */
 static void apply_grammar_source(
@@ -3208,7 +3590,10 @@ static void apply_grammar_source(
             "tool schemas constrain, or unstage tools to use your grammar.");
     }
     const auto source = resolve_grammar_source(params.grammar, tool_grammar);
-    if (source == GrammarSource::request) {
+    // gh#154: ask the predicate, not the enum value. `tier` is a
+    // request-side source that differs only in REPORTING, and comparing
+    // against `request` alone would silently stop applying it.
+    if (is_request_grammar(source)) {
         cps.grammar = common_grammar(COMMON_GRAMMAR_TYPE_USER, params.grammar);
     } else if (source == GrammarSource::tool_call) {
         // TOOL_CALLS, not USER: common_grammar_needs_prefill() is true for this
@@ -3503,14 +3888,14 @@ static bool spec_decode_both(SpeculativeRunState& state) {
  * @brief Trigger draft generation via common_speculative_draft.
  * @return Number of draft tokens proposed.
  * @dg_internal
- * @version 2.1.11
+ * @version 2.13.0
  */
 static int spec_run_draft(SpeculativeRunState& state) {
     auto& dp = common_speculative_get_draft_params(
         state.spec, state.seq_id);
     dp.drafting = true;
     dp.n_max = -1;
-    dp.n_past = state.n_past;
+    dp.pos0 = state.n_past;   // b11009 renamed n_past -> pos0 (same meaning)
     dp.id_last = state.id_last;
     dp.prompt = &state.prompt_tgt;
     dp.result = &state.draft;
@@ -4171,13 +4556,13 @@ namespace {
  * tokens land in state.draft.
  * @return Number of draft tokens proposed.
  * @dg_internal
- * @version 2.9.0
+ * @version 2.13.0
  */
 int mtp_run_draft(SpeculativeRunState& state, int n_max) {
     auto& dp = common_speculative_get_draft_params(state.spec, state.seq_id);
     dp.drafting = true;
     dp.n_max = n_max;
-    dp.n_past = state.n_past;
+    dp.pos0 = state.n_past;   // b11009 renamed n_past -> pos0 (same meaning)
     dp.id_last = state.id_last;
     dp.prompt = &state.prompt_tgt;
     dp.result = &state.draft;

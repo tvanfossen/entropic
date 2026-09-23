@@ -26,21 +26,25 @@ Before tagging:
 
 1. **All planned proposals merged to `develop`**, with the implementation
    logs in each proposal pointing at landed commits.
-2. **`feature/v2.1.0-*` branches merged** to `develop`. Workstream A
-   (engine bug bundle), B (release infrastructure), C (cleanup) all closed.
-3. **Versions in sync**:
-   - `CMakeLists.txt:project(entropic VERSION x.y.z)`
-   - `pyproject.toml:version = "x.y.z"`
+2. **Every feature branch for this version merged** to `develop`, with each
+   issue's implementation-log comment pointing at the landed commits.
+3. **`VERSION` bumped.** Since v2.1.2 (#4) that is the whole edit —
+   `CMakeLists.txt:10` and `pyproject.toml:64` both read the repo-root
+   `VERSION` file, so there is no second place to keep in sync.
 4. **`RELEASE_NOTES.md` drafted** (see template below).
 5. **CI green** on `develop` head — `gh run list --branch develop --limit 3`
    should show the latest workflow run as "completed / success".
-6. **Re-run model tests AFTER the VERSION bump rebuild.** Surfaced in
-   v2.2.0 (model test #683): the `version-match` assertion compares
-   `entropic_version()` against the on-disk VERSION file, so any model-
-   test pass collected via `inv test --model --no-build` from a build
-   produced *before* the VERSION bump will fail this assertion. Always
-   re-run `inv build` and `inv test --model` after bumping VERSION; do
-   not reuse the pre-bump build artifacts.
+6. **Re-run model tests AFTER the VERSION bump rebuild**, so the captured
+   `model-results-vX.Y.Z.json` is stamped with the version it audits.
+   The harness writes `entropic_version()` into the results JSON from the
+   binary that ran, so results collected before the bump carry the *old*
+   version string and the release's audit record then disagrees with the
+   release.
+   No test asserts this. The v2.2.0-era `version-match` assertion this step
+   used to cite (model test #683) no longer exists anywhere in `tests/`, so
+   a stale-version artifact is reported as a clean 87/87 pass — the
+   mislabelling is silent and only a reader of the JSON catches it. Check
+   `"version"` in the artifact against `VERSION` before attaching it.
 7. **Verify the pip wrapper covers every ENTROPIC_EXPORT** added since
    the last minor. As of v2.2.1 this is mechanical: `inv gen-bindings
    --check` runs in pre-commit and fails loud on drift. The check is

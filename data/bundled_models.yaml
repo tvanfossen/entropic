@@ -229,6 +229,29 @@ gemma4_a4b_qat_mmproj:
   # License: Gemma Terms of Use. Unique `name` avoids the
   # `mmproj-F16.gguf` filename collision pattern.
 
+gemma4_a4b_iq2:
+  name: gemma-4-26B-A4B-it-UD-IQ2_M
+  url: https://huggingface.co/unsloth/gemma-4-26B-A4B-it-GGUF/resolve/main/gemma-4-26B-A4B-it-UD-IQ2_M.gguf
+  size_gb: 10.0
+  adapter: gemma4
+  description: Gemma 4 26B-A4B at ~2.5 bits — the quant that FITS an 11 GiB card whole. NOT QAT (no QAT IQ2 exists upstream).
+  provider: unsloth
+  family: gemma4
+  size_label: a4b
+  quant: UD-IQ2_M
+  # License: Gemma Terms of Use (https://ai.google.dev/gemma/terms).
+  # WHY this entry exists (v2.13.0, gh#153): every A4B figure we have was
+  # taken partially offloaded, because the QAT Q4 trunk is 14.25 GB against
+  # an 11 GiB card — 18.7 tok/s whole-layer, 22.6 with experts on the host,
+  # and MTP worth ~nothing until enough of the model is resident. At
+  # 9.33 GiB this one fits ENTIRELY, which is the regime where MTP paid
+  # +42.8% on E4B. It is the "make it fit" lever against the "place it
+  # better" lever, measured on the same card.
+  # COST: ~2.5 bits/weight and NOT quantization-aware-trained, so the QAT
+  # fidelity of gemma4_a4b_qat is gone. Structured output (tool calls) is
+  # what degrades first at this bit depth — speed without that is not a win.
+  mmproj_key: gemma4_a4b_mmproj
+
 mtp_a4b:
   name: mtp-gemma-4-26B-A4B-it
   url: https://huggingface.co/unsloth/gemma-4-26B-A4B-it-qat-GGUF/resolve/main/mtp-gemma-4-26B-A4B-it.gguf

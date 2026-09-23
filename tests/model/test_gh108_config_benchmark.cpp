@@ -1756,3 +1756,38 @@ TEST_CASE("gh#153 MTP vs plain decode throughput — four arms, Gemma 4 26B-A4B 
     gh153::run_four_arm_bench(
         {"a4b_experts", "gemma4_a4b_qat", "mtp_a4b", "30", 256, 4, 30});
 }
+
+TEST_CASE("gh#153 MTP vs plain decode throughput — four arms, Gemma 4 26B-A4B "
+          "at IQ2_M, the quant that fits an 11 GiB card whole",
+          "[.][model][gh153][benchmark][mtp-a4b-iq2]") {
+    // The "make it fit" lever against [mtp-a4b]'s "place it better" one, on
+    // the same card, same prompt, same arms, same floor.
+    //
+    // Every A4B figure before this one was taken PARTIALLY resident, because
+    // the QAT Q4 trunk is 14.25 GB against 11 GiB: 18.7 tok/s whole-layer
+    // (#42(b)), 18.2 with every expert on the host, 22.6 once VRAM bought
+    // experts back (#75). MTP was worth ~nothing in all of them, while it is
+    // worth +42.8 % on a fully resident E4B (#42(a)). #74's rule says the
+    // resident FRACTION is what governs that — so the test of the rule is a
+    // model of this class that fits ENTIRELY.
+    //
+    // UD-IQ2_M is 9.33 GiB, so `gpu_layers: -1` prices as `Offload::full`
+    // against a ~10.8 GiB budget and the gh#148 admission gate ADMITS it —
+    // the opposite of the -1/99 trap the experts case documents, and the
+    // reason this case can say -1 where that one must not.
+    //
+    // Because it is fully resident the engine selects the STRICT rule: MTP
+    // must CLEAR the same-config floor, exactly as the E4B case is judged.
+    // That is the point. If MTP pays here, the resident-fraction rule is
+    // vindicated on a MoE and not only across two different models; if it
+    // does not, #42's hypothesis needs the MoE-routing half after all, and
+    // this case is the evidence for that.
+    //
+    // NOT QAT: no QAT IQ2 exists upstream (the QAT repo ships Q4_K_XL only),
+    // so this trades QAT fidelity for residency. ~2.5 bits/weight on a model
+    // that is already sparse degrades STRUCTURED OUTPUT first, which a tok/s
+    // figure cannot see — a fast number here is a reason to check tool-call
+    // formatting, not a reason to ship the quant.
+    gh153::run_four_arm_bench(
+        {"a4b_iq2", "gemma4_a4b_iq2", "mtp_a4b", "-1", 256, 4});
+}

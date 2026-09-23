@@ -321,6 +321,8 @@ add_bench_entry(test-gh108-config-benchmark
     test-gh108-config-benchmark-mtp-a4b "[mtp-a4b]")
 add_bench_entry(test-gh108-config-benchmark
     test-gh108-config-benchmark-mtp-a4b-experts "[mtp-a4b-experts]")
+add_bench_entry(test-gh108-config-benchmark
+    test-gh108-config-benchmark-mtp-a4b-iq2 "[mtp-a4b-iq2]")
 
 # gh#108 (v2.9.3) follow-up: multi-turn tool-calling agentic benchmark,
 # E4B Q8 baseline vs E4B Q4_K_XL+MTP+flash+q4KV, through the orchestrator

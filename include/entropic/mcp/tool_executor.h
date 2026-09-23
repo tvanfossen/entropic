@@ -493,6 +493,49 @@ private:
         const LoopContext& ctx, const ToolCall& call) const;
 
     /**
+     * @brief Refuse a call whose exact arguments have already failed
+     *        @c max_identical_failures times.
+     *
+     * The sibling above counts consecutive calls by tool NAME, so a
+     * single call repeating with identical arguments registers as one
+     * name and never reaches that threshold; its counter also resets per
+     * delegation, since each child gets a fresh LoopContext. Duplicate
+     * detection cannot see it either, because record_tool_call keeps
+     * error results out of the cache on purpose (v1.8.5).
+     *
+     * Found by the v2.13.0 gate: a delegated child re-issued one
+     * byte-identical refused read four times and the test died on its
+     * 120s timeout with the iteration cap never binding.
+     *
+     * @param ctx Loop context (read-only).
+     * @param call Tool call about to be dispatched.
+     * @return PreconditionCheck with rejection + kind=rejected_anti_spiral
+     *         when the repeat budget is spent; default-constructed
+     *         otherwise.
+     * @req REQ-MCP-016
+     * @dg_internal
+     * @version 2.13.0
+     */
+    PreconditionCheck check_repeated_failure(
+        const LoopContext& ctx, const ToolCall& call) const;
+
+    /**
+     * @brief Run both pre-dispatch spiral blocks in order.
+     *
+     * Grouped so check_call_preconditions states one pre-dispatch step
+     * rather than two, and so a third spiral rule lands here instead of
+     * growing that function past its complexity budget.
+     *
+     * @param ctx Loop context (read-only).
+     * @param call Tool call about to be dispatched.
+     * @return The first rejection of the two, or default-constructed.
+     * @dg_internal
+     * @version 2.13.0
+     */
+    PreconditionCheck check_spiral_blocks(
+        const LoopContext& ctx, const ToolCall& call) const;
+
+    /**
      * @brief Truncate @p content in-place if it exceeds the byte cap.
      *
      * Reads loop_config_.max_tool_result_bytes; when 0, no-op. When

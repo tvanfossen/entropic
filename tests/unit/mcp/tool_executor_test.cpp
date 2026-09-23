@@ -155,6 +155,65 @@ private:
     EnumTool tool_; ///< The tool
 };
 
+/**
+ * @brief Tool that always throws, counting how often it was dispatched.
+ *
+ * Models the real shape from the v2.13.0 gate: FilesystemServer's
+ * resolve_path THROWS on an outside-root refusal, MCPServerBase's barrier
+ * turns that into an error result, and the model re-issues the identical
+ * call. The counter is the assertion that matters — message text can be
+ * satisfied by a guard that still dispatches.
+ * @version 2.13.0
+ */
+class FailTool : public ToolBase {
+public:
+    /**
+     * @brief Construct with a trivial schema.
+     * @version 2.13.0
+     */
+    FailTool() : ToolBase(ToolDefinition{
+        "always_fails",
+        "Always fails",
+        R"({"type":"object","properties":{"path":{"type":"string"}}})"
+    }) {}
+
+    int calls = 0; ///< Times execute() actually ran.
+
+    /**
+     * @brief Execute: always throw, as a refused path does.
+     * @param args_json Arguments (unused).
+     * @return Never returns.
+     * @version 2.13.0
+     */
+    ServerResponse execute(const std::string& /*args_json*/) override {
+        ++calls;
+        throw std::runtime_error(
+            "outside_root_approval_required: Path escapes project root");
+    }
+};
+
+/**
+ * @brief Test server wrapping FailTool, exposing its dispatch count.
+ * @version 2.13.0
+ */
+class FailServer : public MCPServerBase {
+public:
+    /**
+     * @brief Construct and register tool.
+     * @version 2.13.0
+     */
+    FailServer() : MCPServerBase("fail") { register_tool(&tool_); }
+
+    /**
+     * @brief How many times the tool actually ran.
+     * @return Dispatch count.
+     * @version 2.13.0
+     */
+    int dispatches() const { return tool_.calls; }
+private:
+    FailTool tool_; ///< The always-failing tool
+};
+
 // ── Helper ───────────────────────────────────────────────
 
 /**
@@ -1749,6 +1808,99 @@ SCENARIO("gh#168: a non-zero return still cancels, modification or not",
                 auto content = run_with_pre_mod(spec);
                 CHECK(content.find("denied") != std::string::npos);
                 CHECK(content != "staged");
+            }
+        }
+    }
+}
+
+// ── Repeated identical FAILURE guard (v2.13.0) ───────────
+
+SCENARIO("A call that fails identically is refused rather than retried "
+         "forever",
+         "[tool_executor][anti-spiral][2.13.0]") {
+    GIVEN("an executor and a tool whose every dispatch throws") {
+        PermissionsConfig perms;
+        ServerManager mgr(perms, "/tmp/test");
+        auto owned = std::make_unique<FailServer>();
+        auto* srv = owned.get();
+        mgr.register_server(std::move(owned));
+        mgr.initialize();
+
+        LoopConfig lc;
+        lc.auto_approve_tools = true;
+        EngineCallbacks cb;
+        ToolExecutor executor(mgr, lc, cb);
+
+        HookRegistry reg;
+        std::vector<HookEvent> events;
+        reg.register_hook(ENTROPIC_HOOK_POST_TOOL_CALL,
+                          record_hook_cb, &events, 0);
+        attach_registry(executor, reg);
+
+        // The v2.13.0 gate's test-e7-delegation: a delegated child issued
+        // filesystem.read_file with byte-identical arguments FOUR times,
+        // was refused identically every time, and nothing stopped it —
+        // errors are deliberately excluded from the duplicate cache, and
+        // the anti-spiral block counts tool NAME against a threshold well
+        // above four. The run died on its 120s timeout.
+        WHEN("the same call with the same arguments is issued four times") {
+            LoopContext ctx;
+            std::vector<Message> last;
+            for (int i = 0; i < 4; ++i) {
+                ToolCall call = make_call("fail.always_fails");
+                call.id = "call-" + std::to_string(i);
+                call.arguments["path"] = "/outside/notes.md";
+                last = executor.process_tool_calls(ctx, {call});
+            }
+
+            THEN("the tool stops being dispatched at the threshold") {
+                INFO("dispatches: " << srv->dispatches());
+                CHECK(srv->dispatches() == 2);
+            }
+            AND_THEN("the third attempt is refused pre-dispatch") {
+                REQUIRE(events.size() == 4);
+                auto post3 = nlohmann::json::parse(events[2].context_json);
+                CHECK(post3.at("result_kind").get<std::string>()
+                      == "rejected_anti_spiral");
+            }
+            // REQ-MCP-015: a bare failure teaches the model nothing. The
+            // refusal has to name the tool, say how many times it failed,
+            // and say the failure is not transient — otherwise "try again"
+            // stays the model's most plausible next move.
+            AND_THEN("the refusal names the tool and the repeat count") {
+                REQUIRE(last.size() == 1);
+                INFO(last[0].content);
+                CHECK(last[0].content.find("always_fails")
+                      != std::string::npos);
+                // TWO, not three: two attempts actually ran and failed.
+                // The third is refused without dispatching, so claiming
+                // three failures would overstate what was observed.
+                CHECK(last[0].content.find("2 times")
+                      != std::string::npos);
+                CHECK(last[0].content.find("identical arguments")
+                      != std::string::npos);
+                CHECK(last[0].content.find("not transient")
+                      != std::string::npos);
+                CHECK(last[0].content.find("different approach")
+                      != std::string::npos);
+            }
+        }
+
+        // Regression guard on the v1.8.5 intent that record_tool_call
+        // documents: "a transient failure does not permanently poison the
+        // call". One failure must still be retryable, or this fix has
+        // traded an unbounded retry for no retry at all.
+        WHEN("the same failing call is issued only twice") {
+            LoopContext ctx;
+            for (int i = 0; i < 2; ++i) {
+                ToolCall call = make_call("fail.always_fails");
+                call.id = "retry-" + std::to_string(i);
+                call.arguments["path"] = "/outside/notes.md";
+                executor.process_tool_calls(ctx, {call});
+            }
+
+            THEN("the retry is still dispatched") {
+                CHECK(srv->dispatches() == 2);
             }
         }
     }

@@ -598,7 +598,7 @@ std::string ToolExecutor::tool_call_key(const ToolCall& call) {
  * @param call Tool call.
  * @param result Raw ServerResponse envelope (or bare text).
  * @req REQ-MCP-015
- * @version 1.8.5
+ * @version 2.13.0
  */
 void ToolExecutor::record_tool_call(
     LoopContext& ctx,
@@ -611,11 +611,20 @@ void ToolExecutor::record_tool_call(
         text = j.value("result", result);
     } catch (...) {}
 
-    // Don't cache error results
+    auto key = tool_call_key(call);
+
+    // Don't cache error results — but do COUNT them (v2.13.0). Caching the
+    // text would poison a transient failure for the rest of the turn,
+    // which v1.8.5 rightly avoided; counting bounds the repeat without
+    // taking the retry away. check_repeated_failure reads this.
     if (text.find("Error:") == 0 || text.find("error:") == 0) {
+        ctx.failed_tool_calls[key]++;
         return;
     }
-    auto key = tool_call_key(call);
+    // A success clears the failure history for this exact call: whatever
+    // was wrong is no longer wrong, and a later failure deserves its own
+    // retry rather than inheriting a spent budget.
+    ctx.failed_tool_calls.erase(key);
     ctx.recent_tool_calls[key] = text;
 }
 
@@ -836,15 +845,11 @@ std::optional<Message> ToolExecutor::check_schema(
  *         or rejected_duplicate — so hook consumers branch on an enum
  *         rather than on engine-authored prose.
  * @req REQ-MCP-012
- * @version 2.5.2
+ * @version 2.13.0
  */
 PreconditionCheck ToolExecutor::check_call_preconditions(
     LoopContext& ctx, const ToolCall& call) {
-    // Issue #14 (v2.1.4): anti-spiral hard block fires FIRST. Cheaper
-    // than schema/auth checks and short-circuits a tool that the
-    // engine has decided to refuse, regardless of whether the call
-    // would otherwise pass other preconditions.
-    PreconditionCheck pc = check_anti_spiral_hard_block(ctx, call);
+    PreconditionCheck pc = check_spiral_blocks(ctx, call);
     if (pc.rejection.has_value()) {
         return pc;
     }
@@ -1306,6 +1311,76 @@ PreconditionCheck ToolExecutor::check_anti_spiral_hard_block(
         pc.kind = ToolResultKind::rejected_anti_spiral;
     }
     return pc;
+}
+
+/**
+ * @brief Refuse a call whose exact arguments already failed repeatedly.
+ *
+ * Counts per tool_call_key (name + sorted arguments), so it sees what
+ * the sibling above cannot: ONE call repeating against an identical
+ * error. That registers as a single tool name, stays under the
+ * consecutive threshold, and its counter resets per delegation anyway.
+ * Duplicate detection cannot see it either — record_tool_call keeps
+ * error results out of the cache on purpose (v1.8.5).
+ *
+ * @param ctx Loop context (read-only).
+ * @param call Tool call about to be dispatched.
+ * @return Rejection with kind rejected_anti_spiral once the repeat
+ *         budget is spent; default-constructed otherwise.
+ * @req REQ-MCP-016
+ * @req REQ-MCP-015
+ * @version 2.13.0
+ */
+PreconditionCheck ToolExecutor::check_repeated_failure(
+    const LoopContext& ctx, const ToolCall& call) const {
+    PreconditionCheck pc;
+    auto it = ctx.failed_tool_calls.find(tool_call_key(call));
+    if (it == ctx.failed_tool_calls.end()) {
+        return pc;
+    }
+    int failures = it->second;
+    if (failures + 1 >= loop_config_.max_identical_failures) {
+        std::string text =
+            "[repeated-failure] tool '" + call.name + "' has already failed "
+            + std::to_string(failures)
+            + " times with identical arguments; the failure is not "
+              "transient. Change the arguments, try a different approach, "
+              "or report that the task cannot be completed this way.";
+        pc.rejection = create_denied_message(call, text);
+        // Deliberately the EXISTING kind, not a new one: repeating a call
+        // that keeps failing IS a spiral, and the nine result_kind strings
+        // are a consumer contract (sassafras-class reads them). A tenth
+        // kind would be a breaking change for a case this one describes.
+        pc.kind = ToolResultKind::rejected_anti_spiral;
+    }
+    return pc;
+}
+
+/**
+ * @brief Run both pre-dispatch spiral blocks in order.
+ *
+ * Grouped so check_call_preconditions states one pre-dispatch step
+ * rather than two, and so a third spiral rule lands here instead of
+ * growing that function past its complexity budget.
+ *
+ * @param ctx Loop context (read-only).
+ * @param call Tool call about to be dispatched.
+ * @return The first rejection of the two, or default-constructed.
+ * @req REQ-MCP-016
+ * @version 2.13.0
+ */
+PreconditionCheck ToolExecutor::check_spiral_blocks(
+    const LoopContext& ctx, const ToolCall& call) const {
+    // Both fire BEFORE schema/auth/dispatch (Issue #14, v2.1.4): they are
+    // cheaper than those checks and short-circuit a tool the engine has
+    // already decided to refuse. They are siblings, not duplicates — one
+    // counts a tool NAME repeating, the other one exact call repeating
+    // against an identical error, and neither sees the other's case.
+    PreconditionCheck pc = check_anti_spiral_hard_block(ctx, call);
+    if (pc.rejection.has_value()) {
+        return pc;
+    }
+    return check_repeated_failure(ctx, call);
 }
 
 /**

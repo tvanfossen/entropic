@@ -130,6 +130,20 @@ struct LoopConfig {
     /// effectively disable the hard block while keeping the soft
     /// advisory warning. (#14, v2.1.4)
     int max_consecutive_same_tool_hard_block = -1;
+    /// @brief How many times one EXACT call (tool + sorted arguments) may
+    /// fail before the engine refuses it pre-dispatch.
+    ///
+    /// Distinct from the two thresholds above, which count consecutive
+    /// calls by tool NAME and so cannot see a single call repeating with
+    /// identical arguments — and which reset per delegation, since each
+    /// child gets a fresh LoopContext.
+    ///
+    /// 3 tolerates the retry that v1.8.5 deliberately allows (a genuinely
+    /// transient failure gets a second attempt) and refuses the third. A
+    /// third identical attempt against an identical error is not a retry,
+    /// it is a spiral: nothing about the call or the world has changed.
+    /// (v2.13.0, from the gate's test-e7-delegation timeout)
+    int max_identical_failures = 3;
     /// @brief gh#64: cap on N consecutive failed delegations targeting
     /// the same tier. When the lead re-delegates to a target that has
     /// just failed `max_consecutive_failed_delegations` times in a row,
@@ -366,6 +380,16 @@ struct LoopContext {
     std::vector<std::string> child_conversation_ids;       ///< Spawned child IDs
     std::string active_phase = "default";                  ///< Active inference phase
     std::unordered_map<std::string, std::string> recent_tool_calls; ///< Duplicate detection cache (v1.8.5)
+    /// @brief How often each exact call (tool + sorted args) has FAILED.
+    ///
+    /// v2.13.0: `record_tool_call` deliberately keeps error results out of
+    /// `recent_tool_calls` so a transient failure does not poison the call
+    /// for the rest of the turn (v1.8.5). Correct for one retry, but it
+    /// left the retry count unbounded — a delegated child re-issued one
+    /// byte-identical refused read four times and died on its timeout.
+    /// Counted separately so the transient retry survives and only the
+    /// repeat is bounded.
+    std::unordered_map<std::string, int> failed_tool_calls;
     std::optional<PendingDelegation> pending_delegation;  ///< Stored by dir_delegate (v1.8.6)
     std::optional<PendingPipeline> pending_pipeline;      ///< Stored by dir_pipeline (v1.8.6)
     int effective_max_iterations = -1;           ///< Per-identity override (-1 = LoopConfig, P3-18)

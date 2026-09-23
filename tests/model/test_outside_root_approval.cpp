@@ -150,6 +150,15 @@ SCENARIO("outside-root optional: a real model's reads outside its root "
         // One reader plus the completion the tier owes (explicit_completion
         // derives true for a FacadeProject tier — see gh#166's test).
         lead.allowed_tools = {"filesystem.read_file", "entropic.complete"};
+        // Turn 3 asks for a one-word recall, which is prose, not a tool
+        // call. Under the derived explicit_completion contract the engine
+        // answered that prose with "your previous response contained no
+        // tool call ... Retry." three times, exhausted the empty-turn
+        // allowance, failed the turn, and `final_answer` then read the
+        // model's argument with the nudge instead of its answer — the trap
+        // TierSpec::explicit_completion documents. The approver behaviour
+        // under test needs no completion contract, so drop it.
+        lead.explicit_completion = false;
         auto* h = project.setup({lead});
         INFO("setup: " << project.setup_failure());
         REQUIRE(h != nullptr);

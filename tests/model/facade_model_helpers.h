@@ -67,6 +67,30 @@ struct TierSpec {
     int n_parallel = 1;
     bool enable_thinking = false;     ///< Identity enable_thinking frontmatter
 
+    /// @brief Identity `temperature` frontmatter. Production default (0.7).
+    ///
+    /// v2.13.0: `identity.h:60` defaults to 0.7 and a FacadeProject tier
+    /// wrote no `temperature:` key, so every facade scenario runs the
+    /// PRODUCTION sampler while every orchestrator-driven model test uses
+    /// `test_gen_params()` — temperature 0, seed 42. That asymmetry looks
+    /// like the obvious cause when a facade assertion on a specific token
+    /// passes one gate run and fails the next.
+    ///
+    /// It is NOT sufficient, and this default stays at 0.7 because of what
+    /// measuring it showed: pinned to 0, test-outside-root-approval and
+    /// test-gh169-gh181-budget-carry still failed their first attempt and
+    /// still needed a retry. Greedy decode is not reproducible run-to-run
+    /// on this hardware (two identical cold prefills diverge), so
+    /// temperature 0 buys no determinism here — it only trades sampling
+    /// for greedy's own failure mode, repetition, in scenarios that were
+    /// authored and are green at 0.7.
+    ///
+    /// The knob exists so a scenario that genuinely wants greedy can say
+    /// so. Changing the default would destabilise ~20 passing facade
+    /// scenarios to chase a determinism that this GPU does not offer.
+    /// @version 2.13.0
+    float temperature = 0.7f;
+
     /// @brief Identity `allowed_tools` frontmatter (gh#121). Empty = all.
     ///
     /// A configured handle stages EVERY registered tool by default: 27 of
@@ -278,7 +302,8 @@ private:
         std::string fm = "---\ntype: identity\nversion: 1\nname: " + t.name
                        + "\nfocus:\n  - act in character\n"
                        + "enable_thinking: "
-                       + (t.enable_thinking ? "true" : "false") + "\n";
+                       + (t.enable_thinking ? "true" : "false") + "\n"
+                       + "temperature: " + std::to_string(t.temperature) + "\n";
         if (!t.grammar_name.empty()) { fm += "grammar: " + t.grammar_name + "\n"; }
         if (t.explicit_completion.has_value()) {
             fm += std::string("explicit_completion: ")

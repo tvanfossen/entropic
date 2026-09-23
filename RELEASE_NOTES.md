@@ -19,6 +19,17 @@ changes a consumer meets without editing a single config key. Those lead.
 Every item here changes what an unmodified consumer sees. Nothing in this
 section requires a config edit to reach you.
 
+- **A tool call that fails three times with identical arguments is now
+  refused before dispatch.** Failures are counted per exact call (tool name +
+  sorted arguments); the third identical attempt against an identical error
+  comes back as a `rejected_anti_spiral` result carrying corrective text
+  instead of running the tool again. A success clears that call's history, and
+  a call that fails *once* is still retried — the transient-retry behaviour is
+  unchanged. This reuses the existing `rejected_anti_spiral` kind rather than
+  adding a tenth `result_kind`, so the nine strings consumers parse are
+  untouched. Tune with `max_identical_failures` (default 3). Found by this
+  release's own gate, where a delegated child re-issued one refused read four
+  times and the test died on its timeout. (gh#160 fallout)
 - **`concurrent_sessions` now defaults to `true`.** A run is guarded per
   session key, not per handle. Two callers on two sessions no longer serialize
   behind one another, and `ENTROPIC_ERROR_ALREADY_RUNNING` now means "this
@@ -219,13 +230,31 @@ fraction**, not on which test is running.
 
 ## Verification
 
-The release gate ran at `e4382f5`, the head of this release:
+The full model gate ran twice, and the second run is the one that counts —
+the first was collected before the version bump, so its audit record carried
+the *previous* version string. Both numbers are given because the difference
+between them is the point.
 
-- **Model suite: 87 passed, 0 failed, 0 skipped, 3 flaky** (`test-e7-delegation`,
-  `test-gh169-gh181-budget-carry`, `test-outside-root-approval`; each passed on
-  retry), on a GTX 1080 Ti. Attached to this release as
-  `model-results-v2.13.0.json`.
-- **CPU suite: 1924/1924.** Pre-commit clean.
+- **Model suite at `89efc2a`: 85 passed, 2 failed, 0 skipped, 3 flaky**, on a
+  GTX 1080 Ti. Attached as `model-results-v2.13.0.json`, which from this
+  release also records `built_version` — what the tested build actually
+  carried, as distinct from what the tree claimed.
+  - `test-e7-delegation` **timed out** (3 attempts, ~120 s each). Root-caused
+    to a delegated child re-issuing one byte-identical refused read four times
+    with nothing stopping it, and fixed in this release — see the
+    repeated-failure entry above. Re-verified on GPU afterwards: it passes,
+    though still on a retry.
+  - `test-gh165-restore` failed one assertion of 28 — the model echoing a
+    remembered word from a restored conversation. The restore itself is
+    verified by the other 27. That assertion only became real this release
+    (before, the helper returned the whole transcript, so it matched the
+    test's own seed and could not fail), and an E2B-class lead satisfies it
+    about two times in three. It is a known-marginal assertion, not a broken
+    feature.
+- **The engine fix for `test-e7-delegation` landed AFTER that gate run.** It
+  is covered by the CPU suite and by a GPU re-run of that one test, not by a
+  full model gate. Anyone re-cutting this release should run one.
+- **CPU suite: 1925/1925.** Pre-commit clean.
 - **ThreadSanitizer: 36/36 with zero warnings** over the gh#158 / gh#160 /
   gh#166 concurrency scenarios — the suite that found the `TodoTool` heap
   corruption.

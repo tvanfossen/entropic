@@ -6,6 +6,269 @@ GitHub's 125,000-char release-body limit for `gh release create --notes-file`.
 
 ---
 
+# entropic v2.10.0
+
+Minor release — **MTP grammar + streaming support, tool-call robustness, and
+filesystem/pipeline polish.**
+
+## Highlights
+
+- **MTP grammar (gh#108)**: tiers with `speculative.mtp: true` and a static
+  GBNF grammar now work correctly. `to_common_sampling` propagates
+  `params.grammar` to the MTP sampler chain; the loader rejection and the
+  orchestrator routing gate are removed.
+- **MTP streaming (gh#108)**: `speculative.mtp: true` is now compatible with
+  streaming calls. `generate_streaming` wraps `on_token` with `StreamThinkFilter`
+  for incremental thinking-channel stripping, and calls `apply_adapter_parse` on
+  return — matching the non-streaming path.
+- **MTP head guard (gh#107)**: using a Gemma-4 MTP head GGUF on the classical
+  separate-draft path now fails loud with `INCOMPATIBLE_CONFIG` instead of
+  crashing in `fattn.cu`. Message names `speculative.mtp: true` as the fix.
+- **Lenient tool-call parse (gh#127)**: fenced JSON blocks containing only an
+  arguments object (no `name` key) are now matched against registered tool
+  schemas and synthesized into a `ToolCall` when exactly one schema matches.
+- **Pipeline stage validation (gh#129)**: `PipelineTool` rejects unknown stage
+  names at emission time with an `invalid_stage` error, instead of silently
+  passing them to `DelegationManager` and failing per-stage.
+- **Per-stage pipeline output (gh#125)**: pipeline context messages now include
+  per-stage `{tier, task}` summaries in addition to the final result.
+- **`read_file` guidance (gh#124)**: not-found errors now name `list_directory`
+  as the corrective action.
+- **`glob` path matching (gh#126)**: `**/*.cpp` and similar patterns now match
+  root-level files and path-relative entries; `**` maps to `.*` (cross-directory)
+  while bare `*` maps to `[^/]*` (single segment).
+- **UTF-8 safety (gh#132)**: `CompleteTool::execute`, `serialize_batch_results`,
+  and `entropic_validation_last_result` sanitize output before JSON serialization.
+
+## Engine bug fixes
+
+- gh#132: `type_error.316` on malformed model output in `CompleteTool::execute`
+- gh#127: tool-call lost when model emits arguments-only fence (no `name` key)
+- gh#129: silent per-stage failure on unknown tier names in `pipeline` tool
+- gh#126: `glob("**/*.cpp")` returned nothing for root-level and path-relative files
+- gh#124: `read_file` not-found error provided no recovery guidance
+- gh#107: crash (`GGML_ABORT` in `fattn.cu`) when MTP head GGUF routed to classical draft path
+- gh#108: MTP sampler did not enforce GBNF grammar constraints
+- gh#108: MTP streaming emitted raw `<think>` tokens and skipped `apply_adapter_parse`
+
+## New features
+
+- gh#125: pipeline output includes per-stage tier + task summary
+- gh#107: `looks_like_mtp_head(n_layer)` + `mtp_head_classical_path_error` in `mtp_envelope.h`
+
+## Breaking changes
+
+- Loader no longer rejects `speculative.mtp: true` + static grammar combination
+  (was: validation error at parse time). Existing configs that relied on this
+  gate as a safety net may now route to MTP with grammar applied.
+- `mtp_unsupported_reason` always returns `""` — all three guards (temperature,
+  grammar, streaming) are removed. Direct callers asserting non-empty for any
+  condition should update their tests.
+
+## Distribution
+
+- CPU tarball: `entropic-2.10.0-linux-x86_64-cpu.tar.gz` (sha256 in companion file)
+- CUDA tarball: `entropic-2.10.0-linux-x86_64-cuda.tar.gz` (sha256 in companion file)
+- Python wrapper: `pip install entropic-engine==2.10.0` then `entropic install-engine`
+
+# entropic v2.9.8
+
+Patch — **completes the gh#111 UTF-8 fix that v2.9.7 left half-done.**
+`entropic_run` still threw `nlohmann::json::type_error 316` mid-turn in a
+lead→delegate turn under MTP, at the exact site named (but not patched) in the
+v2.9.7 notes: `fire_delegate_complete_hook`'s `j.dump()` on a raw child summary.
+
+## Why v2.9.7 missed it
+
+v2.9.7 sanitized the hook-plugin *return* boundaries (`fire_post_generate_hook`,
+`fire_complete_hook`, `fire_post_tool_hook`) — but only on the branch where a
+plugin **revises** content (`out != nullptr`). On the headless path (no
+content-revising `POST_GENERATE` hook) that branch never runs, so the raw
+summary sailed straight into the dump.
+
+Root cause: the summary reaches `fire_delegate_complete_hook` via the child's
+**last-assistant-content fallback** in `extract_summary`, not the tool-arg path.
+That content comes from `AgentEngine::parse_tool_calls`, whose backend callback
+re-derives `*cleaned` / `*tool_calls_json` from the model's **raw** generation —
+a channel entirely separate from the content sanitize at
+`response_generator.cpp:470`. A split multi-byte UTF-8 codepoint (routine under
+MTP speculative decode, when a character splits across the draft/target token
+boundary) therefore survives into the message and, downstream, into the
+delegate-complete hook's `j.dump()`.
+
+## The fix (one boundary, not scattered sinks)
+
+Sanitize **both** outputs of the tool-call parse channel at the single seam
+where they cross into engine-owned state — `AgentEngine::parse_tool_calls`
+(`src/core/engine.cpp`):
+
+```cpp
+std::string cleaned_str = mcp::sanitize_utf8(cleaned ? cleaned : raw_content);
+std::string tc_str      = mcp::sanitize_utf8(tc_json ? tc_json : "[]");
+```
+
+This is the tool-call-channel sibling of the existing content sanitize. It
+closes every downstream `json::dump()` at once: the assistant message /
+delegation-summary fallback (`cleaned_str`) and the tool-call args
+(`tc_str` → `CompleteTool` / directive JSON). Documented in the boundary-policy
+table in `include/entropic/mcp/utf8_sanitize.h`.
+
+Secondary benefit: `tc_str` sanitize also stops MTP from **silently dropping** a
+tool call — a raw arg previously failed `nlohmann::json::parse` and the model's
+directive (e.g. `entropic.complete`) was discarded.
+
+## Tests (red-first)
+
+Added to `tests/unit/core/engine_test.cpp`, each proven to FAIL on the
+unmodified v2.9.7 code and PASS with the fix:
+- **Delegation reproduction** — drives a real lead→child delegation whose child
+  produces raw content; without the fix this throws
+  `type_error.316 ... byte at index 9: 0x28` out of `fire_delegate_complete_hook`
+  (the exact reported crash).
+- **Content channel** — a backend parse returning raw cleaned content is
+  sanitized before it becomes a message.
+- **Tool-call survival** — a raw-arg tool call is preserved and dispatched, not
+  silently dropped.
+
+Also fixes `tasks.py`'s model-test runner to honor each test's CMake `TIMEOUT`
+(carried from the develop branch; was a source of false model-test failures).
+
+No `interfaces/i_*.h` touched.
+
+---
+
+# entropic v2.9.7
+
+Patch — **UTF-8 sanitize gap at the hook-plugin return boundary** (gh#3
+recurrence, gh#111). `entropic_run()` could throw `nlohmann::json::type_error
+316` mid-agentic-turn in a lead→researcher delegation, immediately after
+generation completed.
+
+## The bug
+
+The v2.1.1 fix for gh#3 established a boundary-of-ownership UTF-8 sanitize
+policy covering four boundaries: MCP tool-result inbound, llama.cpp stream
+inbound, audit-log inbound, and C-API outbound. It missed a class of
+boundary: **a hook plugin's returned content crossing back into the
+engine.** Three call sites accepted a hook's output verbatim, with no
+sanitize call before the bytes could re-enter engine state and later reach
+an unguarded `nlohmann::json::dump()`:
+
+- `fire_post_generate_hook` (`src/core/engine.cpp`) — POST_GENERATE hook
+  revision. In a delegation, unsanitized content here became the child
+  loop's summary, which `fire_delegate_complete_hook` dumps directly.
+- `fire_complete_hook` (`src/core/engine.cpp`) — ON_COMPLETE hook feedback,
+  injected into a `Message`.
+- `ToolExecutor::fire_post_tool_hook` (`src/mcp/tool_executor.cpp`) —
+  POST_TOOL_CALL hook transform, applied to the tool-result `Message`.
+
+v2.9.6/gh#110 made MTP reachable from the agent loop's *batch* dispatch path
+for the first time — exactly the path (`generate_batch` →
+`fire_post_generate_hook` → delegation summary) that exercises the first
+gap, which is why the recurrence surfaced now rather than earlier.
+
+## The fix
+
+- All three call sites now sanitize a hook's returned bytes via
+  `mcp::sanitize_utf8` before they re-enter engine state, matching the
+  treatment already given to MCP tool results.
+- Documented the hook-plugin boundary in
+  `include/entropic/mcp/utf8_sanitize.h`'s policy table; corrected prior text
+  that incorrectly listed hook contexts as "interior/trusted."
+- Added regression coverage in `tests/unit/core/engine_test.cpp` and
+  `tests/unit/mcp/tool_executor_test.cpp` exercising all three hook points
+  with malformed UTF-8, asserting the sanitized content JSON-dumps without
+  throwing.
+
+## Deferred
+
+`src/storage/backend.cpp`'s SQLite message-load path reads `content` off the
+column with no sanitize before a later `.dump()` — same class of gap as the
+(already-fixed) audit-replay path, for the SQLite backend. Not the confirmed
+root cause of this crash; fixing it cleanly needs `entropic-storage` to gain
+access to the sanitizer (currently only linked into `entropic-core`). Tracked
+separately, not blocking this release.
+
+---
+
+# entropic v2.9.6
+
+Patch — **MTP/speculative decoding is now reachable through the agent loop**
+(gh#110). v2.9.0–v2.9.4 proved MTP correct and fast when the orchestrator is
+called directly, but every agent-loop turn (`entropic_run` and friends) with
+`speculative.mtp` enabled failed loud — the kernel never ran.
+
+## The bug (two independent gates)
+
+1. `build_loop_config()` hardcoded `LoopConfig::stream_output = true`, so the
+   agent loop always streamed. The streaming path unconditionally binds a
+   non-empty `on_token` callback, and `LlamaCppBackend::mtp_guard` derives its
+   "is this a streaming call" check as `static_cast<bool>(on_token)` — a bound
+   callback is indistinguishable from "this is streaming," so every agent-loop
+   MTP call tripped `mtp_unsupported_reason`'s streaming rejection and
+   returned `ENTROPIC_ERROR_SPECULATIVE_INCOMPATIBLE_CONFIG`, every time.
+2. Even with streaming disabled, the batch path's cancel-aware bridge
+   (`inference_.generate_cancellable`, always wired in production) calls an
+   orchestrator overload that deliberately bypasses `run_generate_dispatch` —
+   batch-with-cancel only ever ran plain decode, never speculative.
+
+Existing MTP tests never caught this because they call
+`orchestrator->generate()` directly — shaped like the agent loop's traffic,
+but never actually routed through `AgentEngine`/`ResponseGenerator`/the
+facade.
+
+## The fix
+
+- New `generation.stream_output` config key (default `true`, no behavior
+  change for existing consumers) threads through `build_loop_config()`,
+  making batch mode reachable from config.
+- `dispatch_batch_generate` now prefers the dispatching (non-cancellable)
+  `generate` entry point over the cancel-aware one whenever speculative
+  decoding is enabled, so the batch path actually reaches
+  `run_generate_dispatch` → MTP. v1 tradeoff, documented not hidden: a
+  speculative batch turn is not cancellable mid-decode.
+
+To use MTP from the agent loop: set `generation.stream_output: false` +
+`inference.speculative.{enabled,mtp}: true`.
+
+## Tests
+
+- `test_gh110_mtp_agent_loop.cpp` — drives the real `entropic_create` →
+  `entropic_configure_dir` → `entropic_run` path (not a direct orchestrator
+  call) and asserts on the backend's own `"Speculative: generated=..."` log
+  line, the only MTP-engagement signal that crosses the C-ABI boundary.
+  Verified on real hardware (RTX PRO 4000 Blackwell, gemma-4-E2B-it-Q8_0 +
+  MTP head): the kernel engaged across multiple turns of the same
+  conversation (`accept_rate` 0.08–0.14).
+
+No `interfaces/i_*.h` touched.
+
+# entropic v2.9.5
+
+Patch — **turn/run entry points now log to `session.log` with the console
+sink disabled** (gh#109). `entropic_run`, `entropic_run_as`,
+`entropic_run_batch`, `entropic_run_streaming`, `entropic_run_messages`, and
+`entropic_run_messages_streaming` never entered a `HandleLogScope`, so the
+thread-local handle id stayed unset for the whole turn and
+`HandleAwareSink` silently dropped every log line emitted during
+generation. Consumers running with `console_logging: false` (e.g. a TUI
+that keeps stderr clean for its own paint) got zero turn diagnostics —
+`session.log` stopped at "configure complete" and never logged another
+line, even on failure.
+
+These six entry points intentionally skip the full `HandleApiLock` so a
+long-running turn doesn't block `entropic_interrupt()` called from another
+thread — but dropping the lock also dropped the log scope bundled inside
+it. Fix enters a bare `HandleLogScope` (no `api_mutex`) at the top of each
+instead; `run_turn`/`run_streaming` execute synchronously on the calling
+thread with no internal logging worker threads, so a single scope per
+entry point is sufficient — no change to the interrupt/cancel contract.
+
+Adds a regression test (`facade_integration_test.cpp`) that configures a
+handle via `entropic_configure_dir` with `console_logging: false`, runs a
+turn, and asserts `session.log` grows with `[core.*]`-style content —
+locking in that every run entry point holds a log scope.
+
 # entropic v2.9.4
 
 Patch — **MTP works with `temperature>0` and grammar-constrained tiers**

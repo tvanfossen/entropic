@@ -40,11 +40,18 @@ Before tagging:
    binary that ran, so results collected before the bump carry the *old*
    version string and the release's audit record then disagrees with the
    release.
-   No test asserts this. The v2.2.0-era `version-match` assertion this step
-   used to cite (model test #683) no longer exists anywhere in `tests/`, so
-   a stale-version artifact is reported as a clean 87/87 pass — the
-   mislabelling is silent and only a reader of the JSON catches it. Check
-   `"version"` in the artifact against `VERSION` before attaching it.
+   The assertion this step has always cited is real and still present —
+   `tests/unit/api/api_version_test.cpp`, "Library version matches the
+   canonical VERSION file", which reads `VERSION` at test time and compares
+   it to `entropic_version()`. It is a **unit** test, so it only fires on a
+   run that includes the unit lane: `inv test --model --model-only` skips
+   it, and that is the invocation used to collect the results JSON in long
+   bounded windows. A stale-version artifact therefore passes 87/87 and the
+   mislabelling is silent on that path.
+
+   Check `"version"` in the artifact against `VERSION` before attaching it,
+   or run one un-filtered `inv test --model` (no `--model-only`) so the
+   assertion runs against the same build directory the model tests used.
 7. **Verify the pip wrapper covers every ENTROPIC_EXPORT** added since
    the last minor. As of v2.2.1 this is mechanical: `inv gen-bindings
    --check` runs in pre-commit and fails loud on drift. The check is

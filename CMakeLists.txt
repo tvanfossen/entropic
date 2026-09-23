@@ -14,6 +14,19 @@ project(entropic
     DESCRIPTION "Entropic inference engine"
 )
 
+# v2.13.0: file(STRINGS) reads VERSION at configure time but does NOT make
+# it a dependency of the generated build system, so an existing build
+# directory never reconfigured after a bump — it kept compiling the old
+# string into entropic_config.h while VERSION on disk said otherwise.
+# v2.13.0 shipped its model-results JSON stamped "2.12.2" for exactly this
+# reason: build/dev had been reconfigured for other work and picked the
+# bump up, build/full had not. The api_version_test assertion catches the
+# divergence, but only on a run that includes the unit lane, and the
+# results JSON is collected with --model-only. Naming VERSION here makes
+# the bump reconfigure every build directory that sees it.
+set_property(DIRECTORY APPEND PROPERTY CMAKE_CONFIGURE_DEPENDS
+             "${CMAKE_SOURCE_DIR}/VERSION")
+
 set(CMAKE_CXX_STANDARD 20)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 set(CMAKE_CXX_EXTENSIONS OFF)

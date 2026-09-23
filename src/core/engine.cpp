@@ -318,16 +318,34 @@ void AgentEngine::apply_identity_overrides(LoopContext& ctx) {
 
 /**
  * @brief Resolve effective max_iterations, honouring per-identity override.
+ *
+ * gh#182 (v2.13.0): a delegated child also carries the `max_turns` the
+ * MODEL asked for on `entropic.delegate`. The two bounds are resolved
+ * here, and the STRICTER wins — a model may LOWER the operator's limit,
+ * never raise it. `delegated_max_turns < 1` is "the argument was
+ * omitted" and leaves this function exactly as it was.
+ *
+ * Why the resolver and not the two writers: `apply_identity_overrides`
+ * runs at loop entry and `DelegationManager::run_child` sets the child's
+ * request before that, so folding one into the other would make the
+ * outcome depend on their order. Taking the min at READ time cannot.
+ *
  * @param ctx Loop context.
- * @return Per-identity override if set (>=0), otherwise LoopConfig default.
+ * @return Per-identity override if set (>=0), otherwise LoopConfig
+ *         default, clamped down by a child's max_turns when it carries one.
  * @req REQ-IDEN-001
  * @req REQ-LOOP-002
- * @version 2.0.6-rc16
+ * @req REQ-DELEG-002
+ * @version 2.13.0
  */
 int AgentEngine::resolve_max_iterations(const LoopContext& ctx) const {
-    return ctx.effective_max_iterations >= 0
+    int operator_limit = ctx.effective_max_iterations >= 0
         ? ctx.effective_max_iterations
         : loop_config_.max_iterations;
+    if (ctx.delegated_max_turns < 1) {
+        return operator_limit;
+    }
+    return std::min(operator_limit, ctx.delegated_max_turns);
 }
 
 /**

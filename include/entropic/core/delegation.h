@@ -345,10 +345,12 @@ private:
      * @param child_ctx Child context to execute.
      * @param target_tier Tier name.
      * @param task Task description.
-     * @param max_turns Optional turn limit.
+     * @param max_turns Optional turn limit the model supplied. gh#182
+     *        (v2.13.0): carried onto `child_ctx.delegated_max_turns`, so
+     *        it bounds the child loop instead of only being recorded.
      * @return DelegationResult.
      * @req REQ-DELEG-002
-     * @version 1.8.6
+     * @version 2.13.0
      */
     DelegationResult run_child(
         LoopContext& child_ctx,

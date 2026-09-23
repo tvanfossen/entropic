@@ -17,7 +17,7 @@
         "type": "integer",
         "minimum": 1,
         "maximum": 30,
-        "description": "Maximum number of turns the delegate can use (optional)"
+        "description": "Maximum number of turns the delegate can use (optional). The child's loop stops at this many iterations and hands back whatever it has produced so far, marked partial. It can only TIGHTEN the limit the operator configured for that tier — a value larger than the tier's own bound leaves that bound in place. Omit it unless the task genuinely has a small, known turn budget."
       },
       "context": {
         "type": "array",

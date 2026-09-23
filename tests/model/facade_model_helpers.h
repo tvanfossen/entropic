@@ -98,16 +98,21 @@ struct TierSpec {
 
     /// @brief Identity `max_iterations` frontmatter (E6). -1 = absent.
     ///
-    /// The per-tier loop cap. It is the ONLY way a facade test can make a
-    /// DELEGATION CHILD hit the iteration cap: `LoopConfig::max_iterations`
-    /// is engine-wide, and a child loop reads its override through
-    /// `AgentEngine::run_loop` -> `apply_identity_overrides` ->
-    /// `get_tier_param(tier, "max_iterations")`, which the facade answers
-    /// from this frontmatter field (`populate_tier_info`,
-    /// src/facade/entropic.cpp). Note that `entropic.delegate`'s own
-    /// `max_turns` argument does NOT cap the child — it only reaches the
-    /// storage record — so a scenario that needs a capped child must set
-    /// this.
+    /// The per-tier loop cap, and the only bound a FIXTURE controls:
+    /// `LoopConfig::max_iterations` is engine-wide, and a child loop reads
+    /// its override through `AgentEngine::run_loop` ->
+    /// `apply_identity_overrides` -> `get_tier_param(tier,
+    /// "max_iterations")`, which the facade answers from this frontmatter
+    /// field (`populate_tier_info`, src/facade/entropic.cpp).
+    ///
+    /// gh#182 (v2.13.0): `entropic.delegate`'s own `max_turns` argument is
+    /// no longer inert — it now bounds the child too, and
+    /// `AgentEngine::resolve_max_iterations` takes the STRICTER of the two.
+    /// So this field sets a CEILING the model cannot raise, but a lead that
+    /// passes a small `max_turns` can still cut its child shorter than the
+    /// fixture intends. A scenario whose subject is the iteration cap
+    /// should tell its lead not to pass the argument (see `make_lead` in
+    /// test_gh169_gh181_budget_carry.cpp) rather than assume it is ignored.
     /// @version 2.13.0
     int max_iterations = -1;
 

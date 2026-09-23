@@ -906,10 +906,13 @@ void DelegationManager::complete_storage_record(
  * @param child_ctx Child context to execute.
  * @param target_tier Tier name.
  * @param task Task description.
- * @param max_turns Optional turn limit.
+ * @param max_turns Optional turn limit the MODEL asked for (gh#182). It
+ *        is recorded AND carried onto the child context, where
+ *        AgentEngine::resolve_max_iterations resolves it against the
+ *        operator's limit and keeps the stricter of the two.
  * @return DelegationResult.
  * @req REQ-DELEG-002
- * @version 2.0.6-rc18
+ * @version 2.13.0
  */
 DelegationResult DelegationManager::run_child(
     LoopContext& child_ctx,
@@ -928,6 +931,19 @@ DelegationResult DelegationManager::run_child(
 
     auto delegation_id = create_storage_record(
         child_ctx, target_tier, task, max_turns);
+
+    // gh#182 (v2.13.0): until now `max_turns` reached the storage row and
+    // stopped — `run_child_fn_` takes no limit, so an argument the model is
+    // SHOWN in delegate.json (minimum 1, maximum 30) and allowed to set
+    // bounded nothing. Carrying it on the child context is what lets
+    // AgentEngine::resolve_max_iterations see it; that resolver takes the
+    // stricter of this and the operator's own limit, so a request larger
+    // than the tier or engine allows still cannot raise the bound.
+    if (max_turns.has_value() && *max_turns > 0) {
+        child_ctx.delegated_max_turns = *max_turns;
+        logger->info("Child loop bound requested by model: tier={} "
+                     "max_turns={}", target_tier, *max_turns);
+    }
 
     logger->info("Running child loop: tier={} depth={} msgs={} "
                  "system_hash={:016x}",

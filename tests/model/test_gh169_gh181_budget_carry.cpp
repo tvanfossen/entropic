@@ -254,6 +254,16 @@ void expect_carried_handback(DelegateCapture& cap, const std::string& marker,
  * the sentence the recall assertion reads instead of on an argument with the
  * empty-turn nudge (the 964eee7 finding).
  *
+ * Every lead is also told NOT to pass `max_turns`. Since gh#182 that argument
+ * BOUNDS the child (`AgentEngine::resolve_max_iterations` takes the stricter
+ * of it and the operator's limit), and the model picks its value freely from
+ * the 1..30 the schema advertises. A lead that chose 1 would stop the gh#169
+ * child before it read the file, and one that chose 2 or 3 would make the
+ * ITERATION cap fire in the gh#181 scenario where the THINKING-BUDGET cut is
+ * the subject — both failures of the fixture, not of the engine. The bound
+ * each scenario is about therefore comes from `eng.max_iterations` alone, as
+ * it did when the argument was inert.
+ *
  * @param body Identity prose for this scenario's dispatcher.
  * @return A TierSpec named "lead".
  * @utility
@@ -265,7 +275,9 @@ entropic::test::facade::TierSpec make_lead(const std::string& body) {
     lead.gguf_key = "gemma4_e2b_qat";
     lead.adapter = "gemma4";
     lead.context_length = 4096;
-    lead.identity_body = body;
+    lead.identity_body = body
+        + " When you call entropic.delegate, pass only target and task. "
+          "Never set max_turns.";
     lead.allowed_tools = {"entropic.delegate"};
     lead.explicit_completion = false;
     return lead;
@@ -331,9 +343,10 @@ SCENARIO("gh#169: an iteration-capped delegate hands its parent the audit it "
         eng.allowed_tools = {"filesystem.read_file"};
         eng.explicit_completion = true;
         // Three iterations: read, report, and one more turn under the nudge.
-        // `entropic.delegate`'s own `max_turns` argument cannot express this
-        // — it reaches the storage record and nothing else — so the cap has
-        // to come from the child tier's identity.
+        // The cap comes from the child tier's identity, which is the bound a
+        // FIXTURE controls. Since gh#182 `entropic.delegate`'s own
+        // `max_turns` can lower it further, which is why `make_lead` tells
+        // every lead here not to pass one.
         eng.max_iterations = 3;
 
         auto* h = project.setup({lead, eng}, "lead");

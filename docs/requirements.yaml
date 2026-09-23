@@ -1662,7 +1662,23 @@
 
     opened and completed around the child run; todo state is saved,
 
-    replaced with a fresh list, and restored. The summary is extracted
+    replaced with a fresh list, and restored. A `max_turns` supplied by
+
+    the MODEL on entropic.delegate BOUNDS the child loop (gh#182): it is
+
+    carried on LoopContext::delegated_max_turns and resolved against the
+
+    operator''s own limit by AgentEngine::resolve_max_iterations, which
+
+    takes the STRICTER of the two — a model may lower the tier or engine
+
+    limit, never raise it, and a value < 1 means the argument was omitted
+
+    and leaves the bound exactly where it was. A child stopped that way
+
+    hits the ordinary iteration cap, so it keeps REQ-LOOP-002''s
+
+    hand-back and terminal_reason "budget_exhausted". The summary is extracted
 
     preferring the explicit completion summary, falling back to the last
 
@@ -1707,6 +1723,14 @@
 
     exception is contained and treated as REJECT.
 
+    Given a delegation carrying max_turns = 2 and an operator limit of 6,
+
+    When the child loop runs, Then it stops at 2 iterations; given
+
+    max_turns above the operator limit, Then the operator limit still
+
+    governs; given max_turns omitted, Then the bound is unchanged.
+
     '
   verified_by: 'TEST_CASE "execute_delegation returns error for unknown tier";
 
@@ -1738,7 +1762,9 @@
 
     /home/tvanfossen/Projects/entropic/tests/unit/core/delegation_manager_test.cpp;
 
-    SCENARIO "resume_delegation failure paths surface typed errors" —
+    SCENARIO "resume_delegation failure paths surface typed errors";
+
+    "gh#182: a model-supplied max_turns bounds the delegated child" —
 
     /home/tvanfossen/Projects/entropic/tests/unit/core/engine_test.cpp
 
@@ -4722,7 +4748,13 @@
 
     reaches a terminal state, when iterations reach the effective
 
-    max_iterations (per-identity override, else LoopConfig), or when
+    max_iterations (per-identity override, else LoopConfig; tightened
+
+    further for a delegated child by the max_turns the model supplied on
+
+    entropic.delegate, gh#182 — the stricter of the two always wins and
+
+    the model can only lower the operator''s limit), or when
 
     consecutive duplicate tool-call attempts reach 3. If the loop exits
 

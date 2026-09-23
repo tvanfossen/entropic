@@ -370,6 +370,19 @@ struct LoopContext {
     std::optional<PendingPipeline> pending_pipeline;      ///< Stored by dir_pipeline (v1.8.6)
     int effective_max_iterations = -1;           ///< Per-identity override (-1 = LoopConfig, P3-18)
     int effective_max_tool_calls_per_turn = -1;  ///< Per-identity override (-1 = LoopConfig, P3-18)
+    /// @brief gh#182 (v2.13.0): the `max_turns` the MODEL asked for when it
+    /// issued this child's `entropic.delegate` call. -1 (or any value < 1)
+    /// means the argument was omitted, which leaves the bound exactly where
+    /// it was before this field existed.
+    ///
+    /// Deliberately NOT folded into `effective_max_iterations`: that field
+    /// is the OPERATOR's setting (identity frontmatter, else LoopConfig),
+    /// and the two are resolved together by `resolve_max_iterations`, which
+    /// takes the STRICTER. Keeping them apart is what makes "a model may
+    /// lower a bound, never raise one" a property of the resolver rather
+    /// than of the order in which two writers happened to run.
+    /// @version 2.13.0
+    int delegated_max_turns = -1;
     /// @brief One-shot reminder text consumed by the next per-turn
     /// system prompt assembly. Engine populates after a rejected
     /// validation; ResponseGenerator emits as a "[engine] previous

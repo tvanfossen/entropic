@@ -3577,3 +3577,279 @@ SCENARIO("gh#181: the parent relay receives the hard-cut child's real work",
         }
     }
 }
+
+// ── gh#182 (v2.13.0): entropic.delegate's max_turns bounds the child ──
+//
+// `data/tools/entropic/delegate.json` advertises `max_turns` to the MODEL
+// (integer, minimum 1, maximum 30, "Maximum number of turns the delegate
+// can use"). The value reached `DelegationManager::run_child`, went into
+// the `delegations` storage row, and stopped there: the child was
+// dispatched through `run_child_fn_`, which takes no limit, so its bound
+// came from `LoopConfig::max_iterations` or the child tier's identity
+// frontmatter and NOTHING the model asked for. An argument the model is
+// shown and allowed to set, which then does nothing, is worse than one
+// that is absent — the model believes it has scoped the work.
+//
+// The bound is now the STRICTER of the two: a model may LOWER the
+// operator's limit, never raise it.
+
+namespace gh182 {
+
+/// @brief What one injected `entropic.delegate` call carried.
+/// @version 2.13.0
+struct CappedInjector {
+    int max_turns = -1;  ///< The model-supplied argument (-1 = omitted).
+    bool fired = false;  ///< One delegation per run.
+};
+
+/**
+ * @brief Tool executor that injects one delegation carrying max_turns.
+ * @param ctx Loop context (pending_delegation set as a side effect).
+ * @param ud CappedInjector pointer.
+ * @return One tool message, so the iteration counts as tool-bearing.
+ * @internal
+ * @version 2.13.0
+ */
+static std::vector<Message> inject_capped_delegation(
+    LoopContext& ctx,
+    const std::vector<ToolCall>& /*calls*/,
+    void* ud) {
+    auto* inj = static_cast<CappedInjector*>(ud);
+    if (!inj->fired) {
+        inj->fired = true;
+        ctx.pending_delegation = PendingDelegation{
+            "eng", "audit the depot manifest", inj->max_turns};
+    }
+    Message m;
+    m.role = "tool";
+    m.content = "injected delegation";
+    return {m};
+}
+
+/// @brief The child tier's own identity override (-1 = the tier sets none).
+/// @version 2.13.0
+struct TierCap {
+    int eng_max_iterations = -1;  ///< `max_iterations` frontmatter for "eng".
+};
+
+/**
+ * @brief get_tier_param over a TierCap — answers max_iterations for "eng".
+ * @param tier Tier being asked about.
+ * @param param Parameter name.
+ * @param ud TierCap pointer.
+ * @return The override as a string, or "" when the tier sets none.
+ * @internal
+ * @version 2.13.0
+ */
+static std::string tier_param(const std::string& tier,
+                              const std::string& param,
+                              void* ud) {
+    auto* cap = static_cast<TierCap*>(ud);
+    if (tier == "eng" && param == "max_iterations"
+        && cap->eng_max_iterations >= 0) {
+        return std::to_string(cap->eng_max_iterations);
+    }
+    return "";
+}
+
+/**
+ * @brief resolve_tier that validates every tier, so delegation proceeds.
+ * @return A valid ChildContextInfo.
+ * @internal
+ * @version 2.13.0
+ */
+static ChildContextInfo resolve_any(const std::string& /*tier*/,
+                                    void* /*ud*/) {
+    ChildContextInfo info;
+    info.valid = true;
+    info.system_prompt = "child agent";
+    return info;
+}
+
+/// @brief What one delegated run reports back to the test.
+/// @version 2.13.0
+struct Outcome {
+    int child_iterations = 0;  ///< Iterations the CHILD loop actually ran.
+    std::string carrier;       ///< The [DELEGATION …] message the parent got.
+};
+
+/**
+ * @brief The last [DELEGATION …] carrier message in a context.
+ * @param ctx Parent loop context.
+ * @return The message content, or "" when no delegation was pushed.
+ * @internal
+ * @version 2.13.0
+ */
+static std::string delegation_carrier(const LoopContext& ctx) {
+    std::string found;
+    for (auto rit = ctx.messages.rbegin();
+         rit != ctx.messages.rend() && found.empty(); ++rit) {
+        if (rit->content.rfind("[DELEGATION ", 0) == 0) {
+            found = rit->content;
+        }
+    }
+    return found;
+}
+
+/// @brief The work the child produces every turn; it never completes.
+/// @version 2.13.0
+constexpr const char* kChildWork = "audit complete: anomaly TQ-4417";
+
+/**
+ * @brief Run one parent turn that delegates to "eng" exactly once.
+ * @param max_turns The `entropic.delegate` argument (-1 = omitted).
+ * @param engine_cap LoopConfig::max_iterations (the operator's own limit).
+ * @param tier The child tier's identity override.
+ * @param cap Hook capture wired to ON_DELEGATE_COMPLETE.
+ * @return The child's iteration count and the parent's carrier message.
+ * @internal
+ * @version 2.13.0
+ */
+static Outcome delegate_once(int max_turns, int engine_cap, TierCap& tier,
+                             gh169::DelegHookCap& cap) {
+    MockInference mock;
+    mock.is_complete = false;  // the child never signals completion
+    mock.response = kChildWork;
+    // Parent's FIRST parse yields a tool call so the injector fires; every
+    // later parse falls back to "[]", so the child only narrates.
+    mock.tool_calls_queue.push_back(
+        R"([{"name":"test.mock","arguments":{}}])");
+    mock.tool_calls_json = "[]";
+    auto iface = make_mock_interface(mock);
+    LoopConfig lc;
+    lc.max_iterations = engine_cap;
+    CompactionConfig cc;
+    AgentEngine engine(iface, lc, cc);
+    engine.set_hooks(gh169::make_capturing_hooks(&cap));
+
+    TierResolutionInterface tri{};
+    tri.resolve_tier = resolve_any;
+    tri.get_tier_param = tier_param;
+    tri.user_data = &tier;
+    engine.set_tier_resolution(tri);
+
+    CappedInjector inj;
+    inj.max_turns = max_turns;
+    ToolExecutionInterface tex{};
+    tex.process_tool_calls = inject_capped_delegation;
+    tex.user_data = &inj;
+    engine.set_tool_executor(tex);
+
+    LoopContext ctx;
+    ctx.messages = make_messages();
+    ctx.locked_tier = "lead";
+    engine.run_loop(ctx);
+
+    Outcome out;
+    auto per_tier = engine.per_tier_metrics();
+    out.child_iterations = per_tier["eng"].iterations;
+    out.carrier = delegation_carrier(ctx);
+    return out;
+}
+
+/**
+ * @brief The ON_DELEGATE_COMPLETE payload, as a consumer parses it.
+ * @param cap Hook capture.
+ * @return The last hook-9 payload, or "" when it never fired.
+ * @internal
+ * @version 2.13.0
+ */
+static std::string delegate_complete_json(const gh169::DelegHookCap& cap) {
+    std::string found;
+    for (const auto& [point, json] : cap.post) {
+        if (point == ENTROPIC_HOOK_ON_DELEGATE_COMPLETE) { found = json; }
+    }
+    return found;
+}
+
+}  // namespace gh182
+
+SCENARIO("gh#182: a model-supplied max_turns bounds the delegated child",
+         "[engine][gh182][delegation][regression][2.13.0]") {
+    GIVEN("an operator limit of 6 iterations and no tier override") {
+        gh182::TierCap tier;  // the tier sets nothing
+        gh169::DelegHookCap cap;
+
+        WHEN("the model delegates with max_turns=2") {
+            auto out = gh182::delegate_once(2, 6, tier, cap);
+
+            THEN("the child stops at 2 iterations, not at the engine's 6") {
+                // RED before the fix: 6. max_turns reached the storage
+                // record and nothing else.
+                CHECK(out.child_iterations == 2);
+            }
+            AND_THEN("the capped child still hands back its real work") {
+                // gh#169/gh#181: an engine-authored terminal ANNOTATES the
+                // child's last substantive output instead of replacing it.
+                // A max_turns cap is the same terminal, so it owes the same
+                // hand-back.
+                CHECK(out.carrier.find(gh182::kChildWork)
+                      != std::string::npos);
+                CHECK(out.carrier.find("[iteration cap reached after ")
+                      != std::string::npos);
+            }
+            AND_THEN("it is still reported as a FAILED delegation") {
+                // A bounded child did not complete naturally. Consumers
+                // parse these three fields; gh#182 does not touch them.
+                CHECK(out.carrier.rfind("[DELEGATION FAILED: eng]", 0) == 0);
+                auto json = gh182::delegate_complete_json(cap);
+                REQUIRE_FALSE(json.empty());
+                auto j = nlohmann::json::parse(json);
+                CHECK(j.at("success").get<bool>() == false);
+                CHECK(j.at("target_tier").get<std::string>() == "eng");
+                CHECK(j.at("result_kind").get<std::string>()
+                      == "delegation_failed");
+            }
+        }
+    }
+
+    GIVEN("a child tier whose identity caps it at 5 iterations") {
+        gh182::TierCap tier;
+        tier.eng_max_iterations = 5;
+        gh169::DelegHookCap cap;
+
+        WHEN("the model delegates with max_turns=2") {
+            auto out = gh182::delegate_once(2, 20, tier, cap);
+
+            THEN("the stricter of the two — the model's 2 — wins") {
+                // RED before the fix: 5 (the tier's own override).
+                CHECK(out.child_iterations == 2);
+            }
+        }
+
+        WHEN("the model delegates with max_turns=30, the schema maximum") {
+            auto out = gh182::delegate_once(30, 20, tier, cap);
+
+            THEN("the operator's tier limit still holds at 5") {
+                // The model may LOWER a bound, never raise one.
+                CHECK(out.child_iterations == 5);
+            }
+        }
+    }
+
+    GIVEN("an operator limit of 4 and a model that omits max_turns") {
+        gh182::TierCap tier;
+        gh169::DelegHookCap cap;
+
+        WHEN("the delegation carries max_turns = -1") {
+            auto out = gh182::delegate_once(-1, 4, tier, cap);
+
+            THEN("nothing changes: the engine limit governs, as before") {
+                CHECK(out.child_iterations == 4);
+            }
+        }
+    }
+
+    GIVEN("a model that asks for more turns than the engine allows") {
+        gh182::TierCap tier;
+        gh169::DelegHookCap cap;
+
+        WHEN("the delegation carries max_turns=30 against an engine cap of 3") {
+            auto out = gh182::delegate_once(30, 3, tier, cap);
+
+            THEN("the engine's own limit is not raised") {
+                CHECK(out.child_iterations == 3);
+            }
+        }
+    }
+}

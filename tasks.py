@@ -690,7 +690,7 @@ def _write_results_json(test_results, duration_ms, results_file=MODEL_RESULTS_FI
 
 ## @brief Run the CPU phase (unless skipped) then the model gate.
 ## @utility
-## @version 2.12.0
+## @version 2.13.0
 def _run_model_phase(c, build_dir, ctest_args, name_filter, model_only, resume):
     """CPU tests then model tests 1:1; writes results.json, exits non-zero on failure."""
     # The CPU phase runs --parallel JOBS, and that fan-out is the peak-memory
@@ -712,7 +712,12 @@ def _run_model_phase(c, build_dir, ctest_args, name_filter, model_only, resume):
     )
 
     if results:
-        _write_results_json(results, duration_ms)
+        # build_dir is NOT optional here: this final write overwrites the
+        # incremental one, so omitting it silently replaced a recorded
+        # built_version with "unknown" — the provenance field erasing
+        # itself at the last step, which is how the v2.13.0 gate reported
+        # it. Found by reading the artifact this check exists to produce.
+        _write_results_json(results, duration_ms, MODEL_RESULTS_FILE, build_dir)
 
     if failed > 0:
         raise SystemExit(1)

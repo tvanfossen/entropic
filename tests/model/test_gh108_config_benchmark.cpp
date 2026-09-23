@@ -562,6 +562,15 @@ struct BenchModel {
     ///        YAML entirely, so every pre-existing case's config is unchanged
     ///        byte for byte and their recorded `yaml` field still matches.
     int cpu_moe_layers = 0;
+
+    /// @brief Physical micro-batch (`ModelConfig::n_ubatch`) for EVERY arm of
+    ///        this case. Same omission rule as `cpu_moe_layers`: 0 leaves the
+    ///        key out of the YAML entirely, so the three cases that do not set
+    ///        it emit byte-identical tier blocks to before this field existed
+    ///        and their recorded `yaml` still matches their measured figures.
+    ///        Non-zero is how a case that does not fit its compute buffer at
+    ///        the default 512 asks for a smaller one — see [mtp-a4b-iq2].
+    int n_ubatch = 0;
 };
 
 /// @brief One generation, as the engine recorded it.
@@ -711,6 +720,13 @@ std::string tier_yaml(const BenchModel& m, const ArmSpec& arm) {
     // silently decode on the other tier's placement.
     if (m.cpu_moe_layers > 0) {
         y += "    cpu_moe_layers: " + std::to_string(m.cpu_moe_layers) + "\n";
+    }
+    // Same reasoning, and the same all-arms-or-none rule: the head that
+    // `speculative.mtp` builds inherits the TIER's cparams (build_mtp_head →
+    // build_cparams(config())), so an arm that differed here would size its
+    // draft context differently from the arm it is compared against.
+    if (m.n_ubatch > 0) {
+        y += "    n_ubatch: " + std::to_string(m.n_ubatch) + "\n";
     }
     y += "    speculative:\n"
          "      mtp: " + std::string(arm.mtp ? "true" : "false") + "\n";
@@ -1337,6 +1353,11 @@ nlohmann::json config_json(const BenchModel& m, const RunInfo& info) {
             {"cache_type_k", info.model.cache_type_k},
             {"cache_type_v", info.model.cache_type_v},
             {"use_mlock", info.model.use_mlock},
+            // Read back from the resolved config like every field around it.
+            // `0` is llama.cpp's "match n_batch" and is what the three cases
+            // that do not set the key record — a purely ADDITIVE key, so the
+            // document stays /3: no existing field changes meaning.
+            {"n_ubatch", info.model.n_ubatch},
             {"n_draft", kNDraft},
             {"temperature", 0.0},
             {"max_tokens", m.max_tokens},
@@ -1788,6 +1809,44 @@ TEST_CASE("gh#153 MTP vs plain decode throughput — four arms, Gemma 4 26B-A4B 
     // that is already sparse degrades STRUCTURED OUTPUT first, which a tok/s
     // figure cannot see — a fast number here is a reason to check tool-call
     // formatting, not a reason to ship the quant.
+    //
+    // WHY n_ubatch: 128. The first attempt at this case (e851a7f) put the
+    // weights on the card and died allocating the compute buffer:
+    //
+    //   free      10465 MiB   the card minus a ~700 MiB desktop session
+    //   weights    9552 MiB   loaded fine
+    //   KV           84 MiB   q4_0, iSWA
+    //   compute     527 MiB   ubatch 512   <- cudaMalloc failed here
+    //
+    // On paper that is 10163 of 10465 and it STILL failed, so at least 302 MiB
+    // of real demand is invisible to those four numbers — CUDA context,
+    // allocator granularity, a desktop that grows while 9.3 GiB uploads. That
+    // 302 is a measured LOWER bound; nothing establishes its ceiling.
+    //
+    // The compute buffer is dominated by the ubatch-sized logits tensor
+    // (n_ubatch x 262144 vocab x 4 B is 512 MiB at ubatch 512, essentially the
+    // whole 527), so it scales very nearly linearly:
+    //   512 -> ~527 MiB     256 -> ~264 MiB     128 -> ~132 MiB
+    //
+    // 256 is not enough, and the term the first attempt's arithmetic left out
+    // is why: the MTP head. build_mtp_head loads it at the TIER's gpu_layers
+    // (-1, so onto the card: ~229 MiB of weights) and builds its context from
+    // the TIER's cparams, so it pays a vocab-sized buffer of its own. Against
+    // the same 10465, with the head included:
+    //   ubatch 256:  9552 + 84 + 264 + 229 + ~250 = ~10379  -> ~86 MiB spare
+    //   ubatch 128:  9552 + 84 + 132 + 229 + ~125 = ~10122  -> ~343 MiB spare
+    // 86 MiB is well under the >=302 MiB the failure already proved goes
+    // unaccounted for, so at 256 this would most likely OOM again — at the
+    // head rather than at the trunk, which is a worse failure to read. 128 is
+    // the smallest value config.h calls productive and is the first one with
+    // margin of the same order as the unexplained term.
+    //
+    // It costs the figures nothing. The prompt is ~300 tokens, so prefill is a
+    // couple more micro-batches inside a call dominated by 256 decoded tokens,
+    // and all four arms carry the same value — the floor and the effect are
+    // intra-case, so neither can move because of it.
     gh153::run_four_arm_bench(
-        {"a4b_iq2", "gemma4_a4b_iq2", "mtp_a4b", "-1", 256, 4});
+        // label, trunk, head, gpu_layers, max_tokens, measured_rounds,
+        // cpu_moe_layers (0 — every layer whole and on the card), n_ubatch.
+        {"a4b_iq2", "gemma4_a4b_iq2", "mtp_a4b", "-1", 256, 4, 0, 128});
 }

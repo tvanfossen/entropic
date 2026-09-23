@@ -3853,3 +3853,145 @@ SCENARIO("gh#182: a model-supplied max_turns bounds the delegated child",
         }
     }
 }
+
+// ── gh#183 (v2.13.0): identity overrides reach a TOP-LEVEL run ──
+//
+// `AgentEngine::apply_identity_overrides` had exactly one caller,
+// `run_loop` — the entry point a DELEGATION CHILD arrives through. A
+// top-level turn goes through `run()`, which built its own LoopContext and
+// called `loop(ctx)` directly, so `max_iterations` and
+// `max_tool_calls_per_turn` in a tier's identity frontmatter applied when
+// that tier ran as a child and were silently ignored when the SAME tier ran
+// as the lead. Not a subset of behaviour: the same config, read on one path
+// and dropped on the other.
+//
+// Both entry points now share one preamble. What differs between them
+// stays differing: `run()` resets the interrupt and clears the pause
+// unconditionally (a fresh top-level turn), `run_loop` does so only when
+// `inherit_interrupt` is false — see the two gh#81 scenarios above, which
+// are the guard on that half and are deliberately NOT duplicated here.
+
+namespace gh183 {
+
+/// @brief The "lead" identity's own max_iterations (-1 = it sets none).
+/// @version 2.13.0
+struct LeadCap {
+    int lead_max_iterations = -1;  ///< `max_iterations` frontmatter.
+};
+
+/**
+ * @brief get_tier_param over a LeadCap — answers only for tier "lead".
+ * @param tier Tier being asked about.
+ * @param param Parameter name.
+ * @param ud LeadCap pointer.
+ * @return The override as a string, or "" when the tier sets none.
+ * @internal
+ * @version 2.13.0
+ */
+static std::string tier_param(const std::string& tier,
+                              const std::string& param,
+                              void* ud) {
+    auto* cap = static_cast<LeadCap*>(ud);
+    if (tier == "lead" && param == "max_iterations"
+        && cap->lead_max_iterations >= 0) {
+        return std::to_string(cap->lead_max_iterations);
+    }
+    return "";
+}
+
+}  // namespace gh183
+
+SCENARIO("gh#183: a tier's identity overrides reach a top-level run",
+         "[engine][gh183][identity][regression][2.13.0]") {
+    GIVEN("a 'lead' identity capped at 2 against an engine limit of 50") {
+        MockInference mock;
+        mock.is_complete = false;  // never finishes on its own
+        auto iface = make_mock_interface(mock);
+        LoopConfig lc;
+        lc.max_iterations = 50;
+        CompactionConfig cc;
+        AgentEngine engine(iface, lc, cc);
+
+        gh183::LeadCap cap;
+        cap.lead_max_iterations = 2;
+        TierResolutionInterface tri{};
+        tri.get_tier_param = gh183::tier_param;
+        tri.user_data = &cap;
+        engine.set_tier_resolution(tri);
+
+        WHEN("the tier runs as the LEAD, through run(messages, \"lead\")") {
+            auto out = engine.run(make_messages(), "lead");
+
+            THEN("the loop stops at the identity's 2, not the engine's 50") {
+                // RED before the fix: 50. run() never applied the override.
+                CHECK(mock.generate_call_count == 2);
+            }
+            AND_THEN("the run still ends on the cap's synthetic completion") {
+                REQUIRE_FALSE(out.empty());
+                CHECK(out.back().role == "assistant");
+                CHECK(out.back().content.find("[iteration cap reached after ")
+                      != std::string::npos);
+            }
+        }
+
+        WHEN("the same tier runs as a delegated CHILD, through run_loop") {
+            LoopContext ctx;
+            ctx.messages = make_messages();
+            ctx.locked_tier = "lead";
+            engine.run_loop(ctx, /*inherit_interrupt=*/true);
+
+            THEN("it still stops at 2 — today's behaviour, unchanged") {
+                CHECK(mock.generate_call_count == 2);
+            }
+        }
+    }
+
+    GIVEN("a 'lead' identity that sets no override at all") {
+        MockInference mock;
+        mock.is_complete = false;
+        auto iface = make_mock_interface(mock);
+        LoopConfig lc;
+        lc.max_iterations = 3;
+        CompactionConfig cc;
+        AgentEngine engine(iface, lc, cc);
+
+        gh183::LeadCap cap;  // lead_max_iterations stays -1
+        TierResolutionInterface tri{};
+        tri.get_tier_param = gh183::tier_param;
+        tri.user_data = &cap;
+        engine.set_tier_resolution(tri);
+
+        WHEN("it runs as the lead") {
+            engine.run(make_messages(), "lead");
+
+            THEN("the engine limit governs, exactly as before") {
+                CHECK(mock.generate_call_count == 3);
+            }
+        }
+    }
+}
+
+SCENARIO("gh#183: a fresh top-level run still clears a stale interrupt",
+         "[engine][gh183][interrupt][regression][2.13.0]") {
+    GIVEN("an interrupt raised before a fresh top-level run") {
+        MockInference mock;
+        auto iface = make_mock_interface(mock);
+        LoopConfig lc;
+        lc.max_iterations = 4;
+        CompactionConfig cc;
+        AgentEngine engine(iface, lc, cc);
+        engine.interrupt();
+
+        WHEN("run() executes") {
+            auto out = engine.run(make_messages());
+
+            THEN("the flag was cleared and the turn generated normally") {
+                // The preamble hoist must not hand a top-level run a
+                // child's interrupt-INHERITANCE semantics.
+                CHECK(mock.generate_call_count >= 1);
+                REQUIRE_FALSE(out.empty());
+                CHECK(out.back().role == "assistant");
+            }
+        }
+    }
+}

@@ -1,12 +1,12 @@
 [
   {
-    "req_id": "REQ-COMPACT-001",
-    "req_name": "Threshold compaction preserving task-bearing messages, snapshot first",
+    "req_id": "REQ-API-009",
+    "req_name": "Run entry-point family, result contract, and cross-thread interruptibility",
     "functions": [
       {
-        "name": "context_usage",
-        "file": "src/core/engine.cpp",
-        "version": "1.8.4"
+        "name": "try_begin_turn",
+        "file": "include/entropic/core/engine.h",
+        "version": "2.13.0"
       }
     ]
   },
@@ -15,17 +15,17 @@
     "req_name": "Fill-gated tool-result pruning and persistent context anchors",
     "functions": [
       {
+        "name": "begin_loop_preamble",
+        "file": "src/core/engine.cpp",
+        "version": "2.13.0"
+      },
+      {
         "name": "run_loop",
         "file": "src/core/engine.cpp",
-        "version": "2.13.0 [reviewed]"
+        "version": "2.13.0"
       },
       {
         "name": "run",
-        "file": "src/core/engine.cpp",
-        "version": "2.13.0 [reviewed]"
-      },
-      {
-        "name": "reinject_context_anchors",
         "file": "src/core/engine.cpp",
         "version": "2.13.0"
       },
@@ -33,11 +33,6 @@
         "name": "dir_prune",
         "file": "src/core/engine.cpp",
         "version": "1.8.4"
-      },
-      {
-        "name": "dir_anchor",
-        "file": "src/core/engine.cpp",
-        "version": "2.13.0"
       }
     ]
   },
@@ -64,11 +59,6 @@
         "name": "reject_pipeline_if_guarded",
         "file": "src/core/engine.cpp",
         "version": "2.13.0"
-      },
-      {
-        "name": "execute_pending_pipeline",
-        "file": "src/core/engine.cpp",
-        "version": "2.13.0 [reviewed]"
       }
     ]
   },
@@ -76,36 +66,6 @@
     "req_id": "REQ-DELEG-002",
     "req_name": "Delegation lifecycle from preconditions to result fold-back",
     "functions": [
-      {
-        "name": "check_delegation_preconditions",
-        "file": "src/core/delegation.cpp",
-        "version": "2.13.0"
-      },
-      {
-        "name": "execute_delegation",
-        "file": "src/core/delegation.cpp",
-        "version": "2.13.0"
-      },
-      {
-        "name": "build_resumed_child_context",
-        "file": "src/core/delegation.cpp",
-        "version": "2.13.0 [reviewed]"
-      },
-      {
-        "name": "execute_resume_delegation",
-        "file": "src/core/delegation.cpp",
-        "version": "2.13.0"
-      },
-      {
-        "name": "build_child_context",
-        "file": "src/core/delegation.cpp",
-        "version": "2.13.0 [reviewed]"
-      },
-      {
-        "name": "run_child",
-        "file": "src/core/delegation.cpp",
-        "version": "2.13.0"
-      },
       {
         "name": "resolve_max_iterations",
         "file": "src/core/engine.cpp",
@@ -117,14 +77,9 @@
         "version": "2.3.7"
       },
       {
-        "name": "dir_delegate",
+        "name": "push_delegation_result",
         "file": "src/core/engine.cpp",
-        "version": "2.13.0"
-      },
-      {
-        "name": "execute_pending_delegation",
-        "file": "src/core/engine.cpp",
-        "version": "2.13.0"
+        "version": "2.0.2"
       },
       {
         "name": "fetch_resume_payload",
@@ -169,24 +124,9 @@
     "req_name": "Sequential pipeline with forward carry and per-stage reporting",
     "functions": [
       {
-        "name": "execute_pipeline",
-        "file": "src/core/delegation.cpp",
-        "version": "2.13.0"
-      },
-      {
-        "name": "run_pipeline_stage",
-        "file": "src/core/delegation.cpp",
-        "version": "2.13.0"
-      },
-      {
         "name": "reject_pipeline_if_guarded",
         "file": "src/core/engine.cpp",
         "version": "2.13.0"
-      },
-      {
-        "name": "execute_pending_pipeline",
-        "file": "src/core/engine.cpp",
-        "version": "2.13.0 [reviewed]"
       }
     ]
   },
@@ -194,16 +134,6 @@
     "req_id": "REQ-DELEG-005",
     "req_name": "Opt-in delegation sandbox isolation, wired end to end",
     "functions": [
-      {
-        "name": "mint_delegation_id",
-        "file": "src/core/delegation.cpp",
-        "version": "2.13.0"
-      },
-      {
-        "name": "restore_root_for",
-        "file": "src/core/delegation.cpp",
-        "version": "2.13.0"
-      },
       {
         "name": "push_delegation_isolation_unsafe",
         "file": "src/core/engine.cpp",
@@ -230,11 +160,6 @@
     "req_id": "REQ-DELEG-006",
     "req_name": "Explicit delegation context, required-context tiers, resume by target",
     "functions": [
-      {
-        "name": "format_context_block",
-        "file": "src/core/delegation.cpp",
-        "version": "2.13.0"
-      },
       {
         "name": "resolve_latest_for_target",
         "file": "src/core/engine.cpp",
@@ -273,19 +198,24 @@
         "version": "2.13.0"
       },
       {
-        "name": "resolve_max_tool_calls",
+        "name": "begin_loop_preamble",
         "file": "src/core/engine.cpp",
-        "version": "2.0.6-rc16"
+        "version": "2.13.0"
+      },
+      {
+        "name": "run_loop",
+        "file": "src/core/engine.cpp",
+        "version": "2.13.0"
+      },
+      {
+        "name": "run",
+        "file": "src/core/engine.cpp",
+        "version": "2.13.0"
       },
       {
         "name": "run_turn_as",
         "file": "src/core/engine.cpp",
         "version": "2.12.0"
-      },
-      {
-        "name": "seed_system_prompt_for_tier",
-        "file": "src/core/engine.cpp",
-        "version": "2.13.0"
       }
     ]
   },
@@ -297,6 +227,11 @@
         "name": "dir_tier_change",
         "file": "src/core/engine.cpp",
         "version": "1.8.4"
+      },
+      {
+        "name": "try_auto_chain",
+        "file": "src/core/engine.cpp",
+        "version": "1.8.6"
       }
     ]
   },
@@ -316,24 +251,24 @@
     "req_name": "Agent state machine with observable, dual-channel transitions",
     "functions": [
       {
+        "name": "begin_loop_preamble",
+        "file": "src/core/engine.cpp",
+        "version": "2.13.0"
+      },
+      {
         "name": "run_loop",
         "file": "src/core/engine.cpp",
-        "version": "2.13.0 [reviewed]"
+        "version": "2.13.0"
       },
       {
         "name": "run",
         "file": "src/core/engine.cpp",
-        "version": "2.13.0 [reviewed]"
+        "version": "2.13.0"
       },
       {
         "name": "set_state",
         "file": "src/core/engine.cpp",
         "version": "2.1.10"
-      },
-      {
-        "name": "run_turn",
-        "file": "src/core/engine.cpp",
-        "version": "2.13.0"
       },
       {
         "name": "run_streaming",
@@ -354,7 +289,7 @@
       {
         "name": "run",
         "file": "src/core/engine.cpp",
-        "version": "2.13.0 [reviewed]"
+        "version": "2.13.0"
       },
       {
         "name": "finish_with_carried_output",
@@ -381,11 +316,6 @@
         "name": "dispatch_pending_or_halt",
         "file": "src/core/engine.cpp",
         "version": "2.13.0"
-      },
-      {
-        "name": "execute_pending_delegation",
-        "file": "src/core/engine.cpp",
-        "version": "2.13.0"
       }
     ]
   },
@@ -410,6 +340,11 @@
         "version": "2.13.0"
       },
       {
+        "name": "budget_units_consumed",
+        "file": "src/core/engine.cpp",
+        "version": "2.5.0"
+      },
+      {
         "name": "nudge_budget_completion",
         "file": "src/core/engine.cpp",
         "version": "2.5.0"
@@ -428,7 +363,7 @@
       {
         "name": "run_loop",
         "file": "src/core/engine.cpp",
-        "version": "2.13.0 [reviewed]"
+        "version": "2.13.0"
       },
       {
         "name": "dispatch_pending_or_halt",
@@ -446,9 +381,14 @@
         "version": "2.13.0"
       },
       {
-        "name": "set_external_reset",
+        "name": "set_external_interrupt",
         "file": "src/core/engine.cpp",
-        "version": "2.12.1"
+        "version": "2.0.6-rc16"
+      },
+      {
+        "name": "pause",
+        "file": "src/core/engine.cpp",
+        "version": "1.8.4"
       },
       {
         "name": "cancel_pause",

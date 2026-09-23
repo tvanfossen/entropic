@@ -362,13 +362,48 @@ int AgentEngine::resolve_max_tool_calls(const LoopContext& ctx) const {
 }
 
 /**
+ * @brief Everything a loop needs done to its context before it runs.
+ *
+ * gh#183 (v2.13.0): the ONE preamble both entry points share.
+ * `apply_identity_overrides` used to be called only from `run_loop` —
+ * the door a delegation CHILD comes through — so a tier's identity
+ * `max_iterations` / `max_tool_calls_per_turn` applied when that tier
+ * ran as a child and were silently ignored when the SAME tier ran as
+ * the lead through `run()`. One preamble rather than a second call
+ * site, because two copies of a setup sequence drift.
+ *
+ * What is deliberately NOT in here: the interrupt reset and the pause
+ * clear. Those are exactly what the two entries must keep doing
+ * DIFFERENTLY — `run()` is always a fresh top-level turn and resets
+ * unconditionally, while `run_loop` resets only when `inherit_interrupt`
+ * is false, so a child cannot swallow a parent interrupt raised at
+ * dispatch (gh#81). Hoisting them would hand a top-level run a child's
+ * inheritance semantics, or the reverse.
+ *
+ * @param ctx Loop context, mutated in place.
+ * @req REQ-IDEN-001
+ * @req REQ-LOOP-001
+ * @req REQ-COMPACT-002
+ * @version 2.13.0
+ */
+void AgentEngine::begin_loop_preamble(LoopContext& ctx) {
+    apply_identity_overrides(ctx);
+    reinject_context_anchors(ctx);
+    if (ctx.metrics.start_time == 0.0) {
+        ctx.metrics.start_time = now_seconds();
+    }
+    set_state(ctx, AgentState::PLANNING);
+}
+
+/**
  * @brief Run the engine loop on a pre-built context.
  * @param ctx Loop context to execute.
  * @param inherit_interrupt When true, do not reset the interrupt flag.
  * @req REQ-LOOP-001
  * @req REQ-LOOP-006
  * @req REQ-COMPACT-002
- * @version 2.13.0 [reviewed]
+ * @req REQ-IDEN-001
+ * @version 2.13.0
  */
 void AgentEngine::run_loop(LoopContext& ctx, bool inherit_interrupt) {
     // gh#158 (v2.13.0): publish THIS run's cancel token to THIS thread, so
@@ -385,12 +420,7 @@ void AgentEngine::run_loop(LoopContext& ctx, bool inherit_interrupt) {
         reset_interrupt();
         clear_pause_for_fresh_turn();
     }
-    apply_identity_overrides(ctx);
-    reinject_context_anchors(ctx);
-    if (ctx.metrics.start_time == 0.0) {
-        ctx.metrics.start_time = now_seconds();
-    }
-    set_state(ctx, AgentState::PLANNING);
+    begin_loop_preamble(ctx);  // gh#183: shared with run()
     loop(ctx);
     ctx.metrics.end_time = now_seconds();
     accumulate_per_tier(ctx);
@@ -435,7 +465,8 @@ void AgentEngine::clear_pause_for_fresh_turn() {
  * @req REQ-LOOP-001
  * @req REQ-LOOP-002
  * @req REQ-COMPACT-002
- * @version 2.13.0 [reviewed]
+ * @req REQ-IDEN-001
+ * @version 2.13.0
  */
 std::vector<Message> AgentEngine::run(std::vector<Message> messages,
                                       const std::string& tier_override) {
@@ -460,11 +491,17 @@ std::vector<Message> AgentEngine::run(std::vector<Message> messages,
 
     init_session_conversation(ctx);
 
+    // A fresh top-level turn always starts un-interrupted and un-paused;
+    // only a child loop inherits (gh#81). That asymmetry is why these two
+    // are NOT part of the shared preamble below.
     reset_interrupt();
     clear_pause_for_fresh_turn();
 
-    reinject_context_anchors(ctx);
-    set_state(ctx, AgentState::PLANNING);
+    // gh#183 (v2.13.0): the same preamble run_loop runs — which is how a
+    // tier's identity overrides finally reach a run where that tier is the
+    // LEAD and not somebody's delegate. start_time is already set above, so
+    // the preamble leaves it alone.
+    begin_loop_preamble(ctx);
 
     loop(ctx);
 

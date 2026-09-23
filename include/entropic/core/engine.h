@@ -2187,6 +2187,22 @@ private:
     void apply_identity_overrides(LoopContext& ctx);
 
     /**
+     * @brief The setup both loop entry points share (gh#183).
+     *
+     * Applies per-identity overrides, reinjects context anchors, starts
+     * the metrics clock if it is not already running and moves the
+     * context to PLANNING. Called by `run()` and by `run_loop()`; the
+     * interrupt reset and pause clear stay OUT of it, because those are
+     * precisely what a top-level turn and a delegated child must keep
+     * doing differently.
+     *
+     * @param ctx Loop context, mutated in place.
+     * @dg_internal
+     * @version 2.13.0
+     */
+    void begin_loop_preamble(LoopContext& ctx);
+
+    /**
      * @brief Resolve effective max_iterations, honouring per-identity override.
      * @param ctx Loop context.
      * @return Override if set (>=0), otherwise LoopConfig default.

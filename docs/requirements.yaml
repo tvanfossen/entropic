@@ -2347,7 +2347,27 @@
 
     are applied into the LoopContext at loop entry and take precedence
 
-    over LoopConfig; absent a resolver, tier_requires_explicit_completion
+    over LoopConfig. "Loop entry" means BOTH entry points (gh#183):
+
+    AgentEngine::run — a top-level turn locked to a tier — and
+
+    AgentEngine::run_loop — a delegated child — share one preamble,
+
+    AgentEngine::begin_loop_preamble, so a tier carries the same caps
+
+    whether it runs as the lead or as somebody''s delegate. The interrupt
+
+    reset and pause clear are NOT part of that preamble, because a fresh
+
+    top-level turn resets unconditionally while a child inherits
+
+    (REQ-LOOP-006). A lead whose tier is chosen by ROUTING rather than
+
+    named by the caller is locked after the preamble has run, so its
+
+    overrides do not apply — a known boundary, recorded in decision #80.
+
+    Absent a resolver, tier_requires_explicit_completion
 
     returns false so legacy tests without tier metadata behave as before.
 
@@ -2366,7 +2386,9 @@
 
     Given a per-identity max_iterations lower than LoopConfig, When the
 
-    loop runs, Then the identity value caps it.
+    loop runs, Then the identity value caps it — through run_loop as a
+
+    delegated child AND through run as a tier-locked top-level turn.
 
     Given set_tier_info for a name, Then has_tier reflects it and
 
@@ -2376,6 +2398,8 @@
   verified_by: 'SCENARIO "tier_requires_explicit_completion honours tier resolver";
 
     "max_iterations override caps loop before global limit";
+
+    "gh#183: a tier''s identity overrides reach a top-level run";
 
     "set_handoff_rules wires internal tier resolver trampolines";
 
@@ -2396,7 +2420,7 @@
     /home/tvanfossen/Projects/entropic/tests/unit/core/response_generator_test.cpp
 
     '
-  version: 2.10.4
+  version: 2.13.0
 - id: REQ-IDEN-002
   name: Identity lifecycle separates immutable static from dynamic identities
   module: Identity and Tiers

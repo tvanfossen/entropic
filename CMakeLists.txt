@@ -18,12 +18,20 @@ project(entropic
 # it a dependency of the generated build system, so an existing build
 # directory never reconfigured after a bump — it kept compiling the old
 # string into entropic_config.h while VERSION on disk said otherwise.
-# v2.13.0 shipped its model-results JSON stamped "2.12.2" for exactly this
-# reason: build/dev had been reconfigured for other work and picked the
-# bump up, build/full had not. The api_version_test assertion catches the
-# divergence, but only on a run that includes the unit lane, and the
-# results JSON is collected with --model-only. Naming VERSION here makes
-# the bump reconfigure every build directory that sees it.
+# Found at v2.13.0: after the bump, build/dev had been reconfigured for
+# other work and carried 2.13.0 while build/full — where the model tests
+# run — still had 2.12.2 compiled in.
+#
+# NOT the reason that release's results JSON read "2.12.2": that run simply
+# predated the bump, and its version field comes from the VERSION file
+# rather than from the build. The two were conflated when this was first
+# written. The real exposure is `inv release-check`, which reuses its build
+# directory while taking the tarball FILENAME from the VERSION file — so a
+# bump could stage entropic-<new>.tar.gz around a library reporting the old
+# version. api_version_test catches the divergence but lives in the unit
+# lane, which --model-only skips.
+#
+# Naming VERSION here makes a bump reconfigure every build directory.
 set_property(DIRECTORY APPEND PROPERTY CMAKE_CONFIGURE_DEPENDS
              "${CMAKE_SOURCE_DIR}/VERSION")
 

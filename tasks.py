@@ -153,6 +153,37 @@ def _get_version():
         return "unknown"
 
 
+## @brief Read the version string a build actually baked in.
+## @utility
+## @param build_dir CMake build directory to inspect.
+## @return Version string from the generated header, or "unknown".
+## @version 2.13.0
+def _get_built_version(build_dir):
+    """Read CONFIG_ENTROPIC_VERSION_STRING out of a build's generated header.
+
+    v2.13.0: results.json took its version from ``_get_version()`` — the
+    VERSION *file* — so the audit record reported what the tree claimed
+    rather than what the tested binary carried. Those can disagree: a build
+    directory that never reconfigured keeps the previous string. That is
+    fixed for VERSION bumps by CMAKE_CONFIGURE_DEPENDS, but the record
+    still could not *detect* the condition, and a reused build dir remains
+    reachable by other routes (a hand-edited cache, a future no-reconfigure
+    shortcut).
+
+    Comparing the file against the generated header is the non-circular
+    check: neither side is derived from the other at read time. Reading the
+    header rather than invoking the binary keeps this usable before any test
+    has run, which is where a fail-fast belongs.
+    """
+    header = Path(build_dir) / "include" / "entropic" / "entropic_config.h"
+    try:
+        text = header.read_text()
+    except OSError:
+        text = ""
+    match = re.search(r'#define\s+CONFIG_ENTROPIC_VERSION_STRING\s+"([^"]*)"', text)
+    return match.group(1) if match else "unknown"
+
+
 ## @brief Get current git HEAD sha.
 ## @utility
 ## @return Hex SHA string or "unknown".
@@ -306,7 +337,7 @@ def _skip_reason_from_log(log_path):
 ## @brief Run one model test's ctest argv with retries + a per-attempt timeout.
 ## @utility
 ## @return Tuple of (status, retries, duration_ms, skip_reason).
-## @version 2.13.0 [reviewed]
+## @version 2.13.0
 def _run_one_model_test(
     command, timeout_s=DEFAULT_MODEL_TEST_TIMEOUT_S, name="model-test", suite=MODEL_SUITE
 ):
@@ -382,7 +413,7 @@ def _run_one_model_test(
 
 ## @brief Print one roster line for a finished model test.
 ## @utility
-## @version 2.13.0 [reviewed]
+## @version 2.13.0
 def _print_model_test_line(name, status, retries, skip_reason, max_retries=MAX_MODEL_RETRIES):
     """One roster line. gh#149: a SKIP states its reason here, not just in
     the artifact — the roster is what a reader looks at first.
@@ -425,7 +456,7 @@ def _model_result_entry(name, status, retries, duration_ms, skip_reason):
 ## @brief Run model tests 1:1; a Catch2 SKIP (rc=4) is reported, not failed.
 ## @utility
 ## @return Tuple of (results list, failed count). Skips do NOT count as failures.
-## @version 2.13.0 [reviewed]
+## @version 2.13.0
 def _run_model_tests(build_dir, name_filter="", resume=False, suite=MODEL_SUITE):
     """Run model tests 1:1. Returns (results, failed_count). gh#89: a Catch2
     SKIP (GGUF/VRAM-gated or a disabled gate) reports SKIP, not PASS/FAIL.
@@ -437,6 +468,20 @@ def _run_model_tests(build_dir, name_filter="", resume=False, suite=MODEL_SUITE)
     label, the results file --resume reads and writes, and the retry budget.
     Everything else — settle, logs, incremental persistence — is shared.
     """
+    # v2.13.0: refuse before spending GPU hours on a build that is not the
+    # tree it will be recorded as. The results file is the release's audit
+    # evidence, so a run whose provenance is already wrong is worse than no
+    # run — it produces a clean-looking roster attributable to the wrong
+    # code. "unknown" is not a mismatch: a header that cannot be read means
+    # this check could not run, which is reported by `built_version` rather
+    # than blocking the suite.
+    declared, built = _get_version(), _get_built_version(build_dir)
+    if built != "unknown" and built != declared:
+        raise SystemExit(
+            f"refusing to run: VERSION says {declared} but {build_dir} was built as "
+            f"{built}. The audit record would name a tree that was never tested. "
+            f"Re-run `inv build` (a bump reconfigures since CMAKE_CONFIGURE_DEPENDS)."
+        )
     # v2.11.0: enumerate from CTEST, not from a directory glob. The glob was a
     # SECOND, DIVERGING GATE and it was wrong three ways at once:
     #   - it picked up the [.]-hidden bench binaries, which collect no tests on
@@ -502,7 +547,7 @@ def _run_model_tests(build_dir, name_filter="", resume=False, suite=MODEL_SUITE)
         # gate was simply absent. Writing incrementally costs one small file
         # write per model test, against minutes of GPU time each.
         _write_results_json(
-            results, int((time.monotonic() - t_suite) * 1000), suite["results_file"]
+            results, int((time.monotonic() - t_suite) * 1000), suite["results_file"], build_dir
         )
 
     # Counted from `results` (which includes any carried-forward passes)
@@ -598,7 +643,7 @@ def _get_lead_model_key():
 ## @brief Write a suite's results.json (model by default; bench for gh#153).
 ## @utility
 ## @version 5
-def _write_results_json(test_results, duration_ms, results_file=MODEL_RESULTS_FILE):
+def _write_results_json(test_results, duration_ms, results_file=MODEL_RESULTS_FILE, build_dir=""):
     """Write a suite's results.json — build/test-reports/model/ by default."""
     os.makedirs(os.path.dirname(results_file), exist_ok=True)
 
@@ -612,8 +657,15 @@ def _write_results_json(test_results, duration_ms, results_file=MODEL_RESULTS_FI
     flaky_count = sum(1 for t in test_results if t["retries"] > 0)
 
     data = {
-        "schema_version": 1,
+        "schema_version": 2,
         "version": _get_version(),
+        # v2.13.0: what the TESTED BUILD carries, which "version" (the
+        # VERSION file) cannot tell you. Equal on a healthy run; a
+        # disagreement means the artifact describes a build other than the
+        # tree it names, and _run_model_tests refuses before the roster
+        # starts. Recorded either way so the reader never has to trust that
+        # the refusal ran.
+        "built_version": _get_built_version(build_dir) if build_dir else "unknown",
         "git_sha": _get_git_sha(),
         "timestamp": datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ"),
         "model": _get_lead_model_key(),

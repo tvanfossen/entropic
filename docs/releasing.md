@@ -36,10 +36,17 @@ Before tagging:
    should show the latest workflow run as "completed / success".
 6. **Re-run model tests AFTER the VERSION bump rebuild**, so the captured
    `model-results-vX.Y.Z.json` is stamped with the version it audits.
-   The harness writes `entropic_version()` into the results JSON from the
-   binary that ran, so results collected before the bump carry the *old*
-   version string and the release's audit record then disagrees with the
-   release.
+   The results JSON's `version` comes from `_get_version()` — the VERSION
+   *file*, read when the run starts — so a gate collected before the bump
+   records the old version and the release's audit record then disagrees
+   with the release. That is honest reporting, not a bug, but it makes the
+   artifact useless as evidence for the version it is attached to.
+
+   Since v2.13.0 the JSON also carries `built_version`, read from the
+   tested build's generated header, and `_run_model_tests` refuses to start
+   when the two disagree. That check is what catches a build directory
+   which did not pick the bump up; `version` alone never could, because
+   both it and the filename come from the same file.
    The assertion this step has always cited is real and still present —
    `tests/unit/api/api_version_test.cpp`, "Library version matches the
    canonical VERSION file", which reads `VERSION` at test time and compares

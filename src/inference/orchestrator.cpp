@@ -1265,7 +1265,7 @@ std::pair<std::string, std::string> ModelOrchestrator::classify_task(
  * reuse simply refreshes the timestamp.
  *
  * @dg_internal
- * @version 2.2.4
+ * @version 2.13.1
  */
 void ModelOrchestrator::record_activation_reuse(
     const std::string& tier_name) {
@@ -1479,7 +1479,7 @@ void ModelOrchestrator::log_auto_placement(
  * @return true to proceed; false with `last_residency_error_` set.
  * @dg_internal
  * @req REQ-INFER-019
- * @version 2.13.0
+ * @version 2.13.1
  */
 bool ModelOrchestrator::config_admits(const std::string& tier_name) {
     auto it = config_.models.tiers.find(tier_name);
@@ -1491,9 +1491,14 @@ bool ModelOrchestrator::config_admits(const std::string& tier_name) {
 
     const uint64_t memlock = host_memlock_limit_bytes();
     bool refused = true;
-    if (mlock_refused(cfg.use_mlock, file_bytes, cfg.gpu_layers, memlock)) {
+    // v2.13.1: an expert split leaves expert weights HOST-resident while
+    // gpu_layers reports -1, so the pinned bytes are theirs, not the file's.
+    const uint64_t host_experts = host_expert_bytes_for(cfg);
+    if (mlock_refused(cfg.use_mlock, file_bytes, cfg.gpu_layers, memlock,
+                      host_experts)) {
+        const uint64_t pinned = host_experts > 0 ? host_experts : file_bytes;
         refuse_residency(tier_name, ENTROPIC_ERROR_MLOCK_LIMIT_EXCEEDED,
-            "use_mlock would pin " + std::to_string(file_bytes)
+            "use_mlock would pin " + std::to_string(pinned)
             + " bytes against an RLIMIT_MEMLOCK of "
             + std::to_string(memlock)
             + " bytes. Pinned pages cannot be reclaimed under pressure, so "
@@ -1528,6 +1533,27 @@ void ModelOrchestrator::refuse_residency(const std::string& tier_name,
     logger->error("[residency] tier '{}' refused: {}", tier_name, why);
     last_residency_error_ = code;
     last_residency_message_ = "Tier '" + tier_name + "': " + why;
+}
+
+/**
+ * @brief Expert bytes a tier's `cpu_moe_layers` leaves in host RAM.
+ *
+ * v2.13.1: read from the GGUF's tensor index, so it is the real figure
+ * rather than a fraction of a layer. Zero when the tier has no expert split
+ * or its metadata cannot be read — and zero means "no host-resident experts"
+ * to `mlock_refused`, which is the pre-v2.13.1 behaviour.
+ *
+ * @param cfg Tier config, already through `resolve_auto_gpu_layers`.
+ * @return Host-resident expert bytes, or 0.
+ * @dg_internal
+ * @version 2.13.1
+ */
+uint64_t ModelOrchestrator::host_expert_bytes_for(const ModelConfig& cfg) {
+    if (cfg.cpu_moe_layers <= 0) { return 0; }
+    const GgufShape shape = read_gguf_shape(cfg.path);
+    if (!shape.known) { return 0; }
+    return shape.expert_bytes_per_block()
+         * static_cast<uint64_t>(cfg.cpu_moe_layers);
 }
 
 /**
@@ -2681,7 +2707,7 @@ size_t ModelOrchestrator::resolve_vram_budget_bytes() {
  * @return Inputs for estimate_vram_footprint.
  * @dg_internal
  * @req REQ-INFER-019
- * @version 2.12.0
+ * @version 2.13.1
  */
 static FootprintInputs footprint_inputs_for(
     const TierConfig& tier_cfg, uint64_t weights_bytes, int vram_reserve_mb) {
@@ -2700,6 +2726,24 @@ static FootprintInputs footprint_inputs_for(
         std::error_code proj_ec;
         auto proj = std::filesystem::file_size(tier_cfg.mmproj_path, proj_ec);
         if (!proj_ec) { in.mmproj_bytes = proj; }
+    }
+    // v2.13.1: the GGUF's real shape, and what an expert split moves off the
+    // card. Without these the budget gate re-prices a placement `auto` just
+    // derived WITHOUT knowing about the split: it sees gpu_layers == -1,
+    // calls that full residency, charges the whole file, and refuses a
+    // configuration auto had already measured as fitting. Two estimators
+    // disagreeing about one tier is the defect this release exists to
+    // remove, so both go through this builder and both see the same shape.
+    const GgufShape shape = read_gguf_shape(tier_cfg.path);
+    if (shape.known) {
+        in.block_count = shape.block_count;
+        in.block_bytes = shape.block_bytes;
+        in.non_block_bytes = shape.non_block_bytes;
+        if (tier_cfg.cpu_moe_layers > 0) {
+            in.host_expert_bytes =
+                shape.expert_bytes_per_block()
+                * static_cast<uint64_t>(tier_cfg.cpu_moe_layers);
+        }
     }
     return in;
 }

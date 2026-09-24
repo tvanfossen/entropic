@@ -97,6 +97,7 @@
 #include <cctype>
 #include <filesystem>
 #include <string>
+#include <nlohmann/json.hpp>
 
 namespace {
 
@@ -143,6 +144,41 @@ std::string snapshot(entropic_handle_t h, const char* key) {
 // then matched the seed message the test itself wrote two statements
 // earlier: it could not fail, and did not — a gate run reported 28 passing
 // assertions while every turn decoded 0 characters.
+namespace {
+
+/**
+ * @brief Prefill tokens the engine reported for the most recent generation.
+ *
+ * v2.13.1: the mechanism signal for "the restored history reached the
+ * PROMPT". The byte-for-byte snapshot check above already proves the restore
+ * reached storage; only the prompt size distinguishes storage from usable
+ * context, and unlike asking the model to repeat a word it does not depend
+ * on a 2B lead complying with an instruction.
+ *
+ * @param h Engine handle.
+ * @return prefill_tokens of the last generation record, or -1 if unavailable.
+ * @internal
+ * @version 2.13.1
+ */
+int last_prefill_tokens(entropic_handle_t h) {
+    char* raw = nullptr;
+    if (entropic_metrics_json(h, &raw) != ENTROPIC_OK || raw == nullptr) {
+        return -1;
+    }
+    const std::string text(raw);
+    entropic_free(raw);
+    try {
+        const auto j = nlohmann::json::parse(text);
+        const auto it = j.find("generations");
+        if (it == j.end() || !it->is_array() || it->empty()) { return -1; }
+        return it->back().value("prefill_tokens", -1);
+    } catch (...) {
+        return -1;
+    }
+}
+
+}  // namespace
+
 using entropic::test::facade::final_answer;
 using entropic::test::facade::run_session_transcript;
 
@@ -201,6 +237,25 @@ SCENARIO("gh#165: a dropped session restored from JSON keeps answering",
                 // The load-bearing assertion: a restore that never reached
                 // the engine, or a serializer that dropped the turn, passes
                 // every unit test and fails right here.
+                //
+                // v2.13.1 ATTEMPTED to convert this to a mechanism check —
+                // prefill size for the recall turn against a control on an
+                // unseeded session — because a 2B lead obeys "repeat that
+                // exact word and nothing else" only about two times in
+                // three, and an OUTCOME at n=1 is a poor gate.
+                //
+                // That conversion is not available. `generations[].
+                // prefill_tokens` reads 0 on this path even though the
+                // engine logs real prefill (724, 483, 719, 770 tokens in the
+                // run that exposed it), and no input-token count is exposed
+                // through the C API at all. Tracked separately; until the
+                // metric is honest there is no deterministic signal for
+                // "the restored history reached the PROMPT" as distinct from
+                // "reached storage", which the byte-for-byte snapshot check
+                // above already proves.
+                //
+                // So this stays an outcome assertion, knowingly, and the
+                // retry budget is what absorbs the model's compliance rate.
                 const std::string convo = run_session_transcript(
                     h, "repo-a",
                     "Earlier I gave you one word to remember. Repeat that "

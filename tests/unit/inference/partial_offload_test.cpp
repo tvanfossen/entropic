@@ -308,3 +308,51 @@ SCENARIO("gh#148: an offload with no room for compute buffers is refused",
         }
     }
 }
+
+// ── mlock under an expert split (v2.13.1) ────────────────────
+
+SCENARIO("an expert split does not inherit the fully-offloaded mlock exemption",
+         "[inference][partial_offload][2.13.1]") {
+    GIVEN("a large model reporting gpu_layers -1 with experts host-side") {
+        // v2.13.1 made this reachable: `gpu_layers: auto` now derives expert
+        // splits and emits the -1 sentinel alongside them. The exemption
+        // exists because the host side is normally TRANSIENT under -1 —
+        // nothing stays in host RAM to pin. An expert split deliberately
+        // leaves expert weights host-RESIDENT, so exempting on the sentinel
+        // alone would skip the check for exactly the configuration it exists
+        // to catch.
+        const uint64_t file_bytes = 13ull * 1024 * 1024 * 1024;   // 13 GiB
+        const uint64_t memlock    = 4ull * 1024 * 1024 * 1024;    // 4 GiB
+        const uint64_t host_experts = 9ull * 1024 * 1024 * 1024;  // 9 GiB
+
+        WHEN("the host-resident expert bytes exceed RLIMIT_MEMLOCK") {
+            const bool refused = entropic::mlock_refused(
+                true, file_bytes, -1, memlock, host_experts);
+
+            THEN("it is refused despite the -1 sentinel") {
+                CHECK(refused);
+            }
+        }
+
+        WHEN("no experts are host-side") {
+            const bool refused = entropic::mlock_refused(
+                true, file_bytes, -1, memlock, 0);
+
+            THEN("the sentinel still exempts, as it always has") {
+                CHECK_FALSE(refused);
+            }
+        }
+
+        WHEN("the host-resident experts fit inside the limit") {
+            // Price the EXPERTS, not the file: pricing the whole file here
+            // would refuse a split that comfortably fits.
+            const uint64_t small_experts = 2ull * 1024 * 1024 * 1024;
+            const bool refused = entropic::mlock_refused(
+                true, file_bytes, -1, memlock, small_experts);
+
+            THEN("it is admitted") {
+                CHECK_FALSE(refused);
+            }
+        }
+    }
+}

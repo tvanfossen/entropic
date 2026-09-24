@@ -985,6 +985,15 @@ private:
      * @dg_internal
      * @version 2.13.1
      */
+    /**
+     * @brief Expert bytes a tier's `cpu_moe_layers` leaves in host RAM.
+     * @param cfg Tier config, post-auto-resolution.
+     * @return Host-resident expert bytes, or 0.
+     * @dg_internal
+     * @version 2.13.1
+     */
+    static uint64_t host_expert_bytes_for(const ModelConfig& cfg);
+
     void log_auto_placement(const std::string& tier_name,
                             const GgufShape& shape,
                             const AutoPlacement& placement,

@@ -1,54 +1,27 @@
 [
   {
-    "req_id": "REQ-CFG-006",
-    "req_name": "Fail-loud validation \u2014 reject bad or inert configuration at load time",
-    "functions": [
-      {
-        "name": "expert_offload_conflict_reason",
-        "file": "src/inference/expert_offload.h",
-        "version": "2.13.1"
-      }
-    ]
-  },
-  {
     "req_id": "REQ-INFER-019",
     "req_name": "Model pool dedup and VRAM residency policy govern which tier is resident",
     "functions": [
-      {
-        "name": "derive_auto_placement",
-        "file": "src/inference/auto_placement.h",
-        "version": "2.13.1"
-      },
-      {
-        "name": "read_gguf_shape",
-        "file": "src/inference/gguf_metadata.cpp",
-        "version": "2.13.1"
-      },
       {
         "name": "resolve_auto_gpu_layers",
         "file": "src/inference/orchestrator.cpp",
         "version": "2.13.1"
       },
       {
-        "name": "estimate_vram_footprint",
-        "file": "src/inference/vram_footprint.h",
-        "version": "2.13.1"
-      }
-    ]
-  },
-  {
-    "req_id": "REQ-INFER-027",
-    "req_name": "Expert-tensor offload places routed experts on the host while attention and KV stay resident (EXPERIMENTAL)",
-    "functions": [
-      {
-        "name": "expert_offload_conflict_reason",
-        "file": "src/inference/expert_offload.h",
+        "name": "config_admits",
+        "file": "src/inference/orchestrator.cpp",
         "version": "2.13.1"
       },
       {
-        "name": "expert_offload_load_refusal",
-        "file": "src/inference/expert_offload.h",
+        "name": "footprint_inputs_for",
+        "file": "src/inference/orchestrator.cpp",
         "version": "2.13.1"
+      },
+      {
+        "name": "mlock_refused",
+        "file": "src/inference/partial_offload.h",
+        "version": "2.13.0"
       }
     ]
   }

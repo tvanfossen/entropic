@@ -183,12 +183,28 @@ constexpr uint64_t kMemlockUnlimited = UINT64_MAX;
  * @version 2.13.0
  */
 inline bool mlock_refused(bool use_mlock, uint64_t file_bytes,
-                          int gpu_layers, uint64_t memlock_limit_bytes) {
+                          int gpu_layers, uint64_t memlock_limit_bytes,
+                          uint64_t host_expert_bytes = 0) {
+    // v2.13.1: `gpu_layers < 0` exempts because the host side is then
+    // TRANSIENT — nothing stays in host RAM to be pinned. An expert split
+    // breaks that premise: `cpu_moe_layers` deliberately leaves expert
+    // weights host-RESIDENT while every layer reports as offloaded, so the
+    // sentinel alone would exempt exactly the configuration the rule exists
+    // to catch. Reachable since v2.13.1, when `gpu_layers: auto` began
+    // deriving expert splits and emitting -1 alongside them.
+    const bool host_side_is_transient =
+        gpu_layers < 0 && host_expert_bytes == 0;
     const bool exempt = !use_mlock
-        || gpu_layers < 0                               // fully offloaded
+        || host_side_is_transient
         || file_bytes <= kLargeModelThresholdBytes      // never refuse small
         || memlock_limit_bytes == kMemlockUnlimited;
-    return !exempt && file_bytes > memlock_limit_bytes;
+    if (exempt) { return false; }
+    // Under an expert split it is the HOST-resident expert bytes that get
+    // pinned, not the whole file; pricing the file would refuse splits that
+    // comfortably fit the limit.
+    const uint64_t pinned =
+        host_expert_bytes > 0 ? host_expert_bytes : file_bytes;
+    return pinned > memlock_limit_bytes;
 }
 
 /**

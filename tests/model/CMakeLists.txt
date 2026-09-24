@@ -519,6 +519,11 @@ set_tests_properties(
 # empty content while advising "Raise max_tokens" on a turn that finished
 # with finish=stop, which no budget increase can fix.
 add_model_test(test-gh137-thinking-strip test_gh137_thinking_strip.cpp)
+
+# v2.13.1: `gpu_layers: auto` against a real GGUF and a real card. The CPU
+# tests feed it synthetic shapes, which proves the arithmetic and nothing
+# about whether the metadata read returns what the model actually is.
+add_model_test(test-auto-placement-real test_auto_placement_real.cpp)
 set_tests_properties(model/test-gh137-thinking-strip PROPERTIES TIMEOUT 360)
 
 # gh#164 (v2.13.0): explicit release + lazy reload, on BOTH a plain-KV and a

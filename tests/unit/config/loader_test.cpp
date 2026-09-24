@@ -393,6 +393,36 @@ SCENARIO("gh#148: gpu_layers accepts a count or the word auto",
         }
     }
 
+    GIVEN("a tier whose 'auto' arrives QUOTED, as JSON serialisation emits") {
+        // A consumer that generates config.local.yaml from JSON writes
+        // `gpu_layers: "auto"`, because a JSON string serialises quoted.
+        // parse_gpu_layers compares the extracted scalar against the bare
+        // word, so whether this works depends on the YAML reader stripping
+        // the quotes — which is worth asserting rather than assuming, since
+        // the failure is silent: an unrecognised value falls through to the
+        // int extract and the tier keeps its default.
+        auto registry = load_test_registry();
+        entropic::ParsedConfig config;
+        std::string yaml =
+            "models:\n"
+            "  lead:\n"
+            "    path: primary\n"
+            "    gpu_layers: \"auto\"\n"
+            "  default: lead\n";
+
+        WHEN("the config is parsed") {
+            auto err = entropic::config::load_config_from_string(
+                yaml, registry, config);
+
+            THEN("the quoted form opts in exactly as the bare word does") {
+                REQUIRE(err.empty());
+                REQUIRE(config.models.tiers.count("lead") == 1);
+                CHECK(config.models.tiers["lead"].gpu_layers_auto);
+                CHECK(config.models.tiers["lead"].gpu_layers == -1);
+            }
+        }
+    }
+
     GIVEN("a tier with an explicit layer count") {
         auto registry = load_test_registry();
         entropic::ParsedConfig config;

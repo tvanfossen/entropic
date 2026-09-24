@@ -53,6 +53,52 @@ cite them.
 
 ---
 
+## v2.13.1 — `gpu_layers: auto` reads the model instead of assuming it (IN PROGRESS)
+
+`auto` exists so that fitting a new model is a decision the engine makes
+rather than a number an operator tunes. v2.13.0 shipped it deciding from
+almost no information: every model priced as thirty layers, `file_bytes /
+layers` charged per layer — folding in embeddings and the output head, which
+do not move with `gpu_layers` — and a flat 2 GiB reserved for everything that
+was not weights, double-counting the `vram_reserve_mb` the real estimator
+already honoured. It knew nothing about the KV cache, the draft head, or
+experts.
+
+Measured cost, both directions: the 26B-A4B at IQ2 derived 26 of 30 layers
+for a configuration measured running at 30 of 30 with headroom to spare, and
+a 42-layer model was priced as if it had 30 — per-layer cost overstated by
+40%, clipping a model that fits.
+
+- `gguf_metadata.cpp` reads shape from a metadata-only open (`no_alloc`), so
+  a 10 GB model costs what a 1 GB one does: `block_count`, `expert_count`,
+  and per-tensor sizes
+- Expert bytes are SUMMED from tensors matching llama.cpp's own expert
+  pattern — a measurement, not a fraction of a layer
+- `auto` solves the existing footprint estimator rather than approximating
+  beside it, and the estimator can now price a PARTIAL offload exactly (it
+  previously returned "unknown", leaving the budget gate open for every
+  partially-offloaded tier, gh#142)
+- For a MoE that does not fit, experts move host-side while ALL layers stay
+  on the card, before any layer is dropped (gh#153 measured 22.62 tok/s that
+  way against 18.86 for whole-layer offload of the same model)
+- The draft/MTP head is counted; compute-buffer headroom is held back scaled
+  by `n_ubatch`, counted only as the excess over `vram_reserve_mb`
+
+**Three defects found while building it**, all of which would have shipped:
+full residency must be reported as the `-1` sentinel (a concrete count strips
+the `mlock` exemption and prices the model through the partial branch,
+under-counting); the compute allowance was itself a double-count against the
+reserve; and `footprint_inputs_for` re-priced a placement `auto` had just
+derived without knowing about the expert split, refusing a tier that fit —
+two estimators disagreeing about one tier, one call away from where the
+release removes exactly that.
+
+**Gate:** pending. Issues: [gh#192](https://github.com/tvanfossen/entropic/issues/192).
+Filed alongside: [gh#193](https://github.com/tvanfossen/entropic/issues/193)
+(the benchmark measures warm decode; real turns are cold-prefill dominated),
+[gh#194](https://github.com/tvanfossen/entropic/issues/194)
+(`generations[].prefill_tokens` reads 0).
+
 ## v2.13.0 — Multi-session hosting, workspaces, real delegation isolation (SHIPPED)
 
 Nineteen issues plus a llama.cpp bump (b9886 → b11009). The unifying

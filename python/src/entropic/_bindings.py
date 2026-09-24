@@ -103,6 +103,7 @@ class EntropicError(enum.IntEnum):
     SPECULATIVE_INCOMPATIBLE_ARCH = 52
     TIER_MODEL_TOO_LARGE = 53
     SPECULATIVE_INCOMPATIBLE_CONFIG = 54
+    MLOCK_LIMIT_EXCEEDED = 55
 
 class AgentState(enum.IntEnum):
     """Mirrors ``entropic_agent_state_t`` from the C header."""
@@ -187,6 +188,12 @@ class EntropicMcpAccessLevel(enum.IntEnum):
     READ = 1
     WRITE = 2
 
+class EntPathAccess(enum.IntEnum):
+    """Mirrors ``ent_path_access_t`` from the C header."""
+
+    READ = 0
+    WRITE = 1
+
 # ── Structs ───────────────────────────────────
 
 class EntDelegationRequest(ctypes.Structure):
@@ -226,12 +233,24 @@ class EntropicLogprobResult(ctypes.Structure):
         ("n_logprobs", ctypes.c_int),
     ]
 
+class EntPathApprovalRequest(ctypes.Structure):
+    """Mirrors ``ent_path_approval_request_t`` from the C header."""
+
+    _fields_ = [
+        ("path", ctypes.c_char_p),
+        ("root", ctypes.c_char_p),
+        ("tool", ctypes.c_char_p),
+        ("access", ctypes.c_int),
+        ("session_key", ctypes.c_char_p),
+    ]
+
 # ── Callback typedefs (named) ─────────────────
 
 HOOK_CB = ctypes.CFUNCTYPE(ctypes.c_int, ctypes.c_int, ctypes.c_char_p, ctypes.POINTER(ctypes.c_char_p), ctypes.c_void_p)
 RESIDENCY_OBSERVER_CB = ctypes.CFUNCTYPE(None, ctypes.c_int, ctypes.c_char_p, ctypes.c_char_p, ctypes.c_size_t, ctypes.c_void_p)
 DELEGATION_START_CB = ctypes.CFUNCTYPE(ctypes.c_int, ctypes.POINTER(EntDelegationRequest), ctypes.c_void_p)
 DELEGATION_COMPLETE_CB = ctypes.CFUNCTYPE(ctypes.c_int, ctypes.POINTER(EntDelegationResult), ctypes.c_void_p)
+PATH_APPROVAL_CB = ctypes.CFUNCTYPE(ctypes.c_int, ctypes.POINTER(EntPathApprovalRequest), ctypes.c_void_p)
 ATTEMPT_BOUNDARY_CB = ctypes.CFUNCTYPE(None, ctypes.c_int, ctypes.c_void_p)
 COMPACTOR_CB = ctypes.CFUNCTYPE(ctypes.c_int, ctypes.c_char_p, ctypes.c_char_p, ctypes.POINTER(ctypes.c_char_p), ctypes.POINTER(ctypes.c_char_p), ctypes.c_void_p)
 
@@ -271,6 +290,7 @@ entropic_set_stream_observer = _bind("entropic_set_stream_observer", ctypes.c_in
 entropic_set_state_observer = _bind("entropic_set_state_observer", ctypes.c_int, entropic_handle_t, STATE_OBSERVER_CB, ctypes.c_void_p)
 entropic_set_critique_callbacks = _bind("entropic_set_critique_callbacks", ctypes.c_int, entropic_handle_t, CRITIQUE_START_CB, CRITIQUE_END_CB, ctypes.c_void_p)
 entropic_interrupt = _bind("entropic_interrupt", ctypes.c_int, entropic_handle_t)
+entropic_interrupt_session = _bind("entropic_interrupt_session", ctypes.c_int, entropic_handle_t, ctypes.c_char_p)
 entropic_queue_user_message = _bind("entropic_queue_user_message", ctypes.c_int, entropic_handle_t, ctypes.c_char_p)
 entropic_user_message_queue_depth = _bind("entropic_user_message_queue_depth", ctypes.c_int, entropic_handle_t, ctypes.POINTER(ctypes.c_size_t))
 entropic_clear_user_message_queue = _bind("entropic_clear_user_message_queue", ctypes.c_int, entropic_handle_t)
@@ -278,22 +298,27 @@ entropic_set_queue_observer = _bind("entropic_set_queue_observer", ctypes.c_int,
 entropic_speculative_compat = _bind("entropic_speculative_compat", ctypes.c_int, entropic_handle_t, ctypes.POINTER(ctypes.c_int), ctypes.POINTER(ctypes.c_char_p))
 entropic_set_residency_observer = _bind("entropic_set_residency_observer", ctypes.c_int, entropic_handle_t, RESIDENCY_OBSERVER_CB, ctypes.c_void_p)
 entropic_residency_snapshot = _bind("entropic_residency_snapshot", ctypes.c_int, entropic_handle_t, ctypes.POINTER(ctypes.c_char_p))
+entropic_release_model = _bind("entropic_release_model", ctypes.c_int, entropic_handle_t, ctypes.c_char_p)
 entropic_context_clear = _bind("entropic_context_clear", ctypes.c_int, entropic_handle_t)
 entropic_context_get = _bind("entropic_context_get", ctypes.c_int, entropic_handle_t, ctypes.POINTER(ctypes.c_char_p))
 entropic_run_session = _bind("entropic_run_session", ctypes.c_int, entropic_handle_t, ctypes.c_char_p, ctypes.c_char_p, ctypes.POINTER(ctypes.c_char_p))
 entropic_run_session_as = _bind("entropic_run_session_as", ctypes.c_int, entropic_handle_t, ctypes.c_char_p, ctypes.c_char_p, ctypes.c_char_p, ctypes.POINTER(ctypes.c_char_p))
 entropic_run_session_streaming = _bind("entropic_run_session_streaming", ctypes.c_int, entropic_handle_t, ctypes.c_char_p, ctypes.c_char_p, ENTROPIC_RUN_SESSION_STREAMING_ARG3_CB, ctypes.c_void_p, ctypes.POINTER(ctypes.c_int))
 entropic_session_context_get = _bind("entropic_session_context_get", ctypes.c_int, entropic_handle_t, ctypes.c_char_p, ctypes.POINTER(ctypes.c_char_p))
+entropic_session_context_set = _bind("entropic_session_context_set", ctypes.c_int, entropic_handle_t, ctypes.c_char_p, ctypes.c_char_p)
 entropic_session_context_count = _bind("entropic_session_context_count", ctypes.c_int, entropic_handle_t, ctypes.c_char_p, ctypes.POINTER(ctypes.c_size_t))
 entropic_session_context_clear = _bind("entropic_session_context_clear", ctypes.c_int, entropic_handle_t, ctypes.c_char_p)
 entropic_session_drop = _bind("entropic_session_drop", ctypes.c_int, entropic_handle_t, ctypes.c_char_p)
 entropic_session_list = _bind("entropic_session_list", ctypes.c_int, entropic_handle_t, ctypes.POINTER(ctypes.c_char_p))
+entropic_workspace_create = _bind("entropic_workspace_create", ctypes.c_int, entropic_handle_t, ctypes.c_char_p, ctypes.c_char_p)
+entropic_session_bind_workspace = _bind("entropic_session_bind_workspace", ctypes.c_int, entropic_handle_t, ctypes.c_char_p, ctypes.c_char_p)
 entropic_context_count = _bind("entropic_context_count", ctypes.c_int, entropic_handle_t, ctypes.POINTER(ctypes.c_size_t))
 entropic_context_usage = _bind("entropic_context_usage", ctypes.c_int, entropic_handle_t, ctypes.POINTER(ctypes.c_size_t), ctypes.POINTER(ctypes.c_size_t))
 entropic_state_save = _bind("entropic_state_save", ctypes.c_int, entropic_handle_t, ctypes.c_char_p, ctypes.c_char_p)
 entropic_state_load = _bind("entropic_state_load", ctypes.c_int, entropic_handle_t, ctypes.c_char_p, ctypes.c_char_p)
 entropic_metrics_json = _bind("entropic_metrics_json", ctypes.c_int, entropic_handle_t, ctypes.POINTER(ctypes.c_char_p))
 entropic_set_delegation_callbacks = _bind("entropic_set_delegation_callbacks", ctypes.c_int, entropic_handle_t, DELEGATION_START_CB, DELEGATION_COMPLETE_CB, ctypes.c_void_p)
+entropic_set_path_approval_callback = _bind("entropic_set_path_approval_callback", ctypes.c_int, entropic_handle_t, PATH_APPROVAL_CB, ctypes.c_void_p)
 entropic_validation_set_auto_retry = _bind("entropic_validation_set_auto_retry", ctypes.c_int, entropic_handle_t, ctypes.c_int)
 entropic_validation_resume_retry = _bind("entropic_validation_resume_retry", ctypes.c_int, entropic_handle_t)
 entropic_validation_accept_last = _bind("entropic_validation_accept_last", ctypes.c_int, entropic_handle_t)

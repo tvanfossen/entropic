@@ -2,6 +2,319 @@ _Last 10 releases. Older history: [OLD_NOTES.md](OLD_NOTES.md). Kept short
 because `gh release create --notes-file` hits GitHub's 125,000-char release
 body limit once this file accumulates full project history — see v2.9.3._
 
+# entropic v2.13.0
+
+Minor release — **nineteen issues, a llama.cpp bump, and the gates that found
+the rest.**
+
+The theme is contracts that were written down and never in force. A delegation
+sandbox with no caller. A `max_turns` argument advertised to the model that
+bound nothing. A bash timeout stored, logged and never applied. A grammar stem
+that failed open. In each case the fix is the missing enforcement, not a
+softened claim — which is why a minor release carries this many behaviour
+changes a consumer meets without editing a single config key. Those lead.
+
+## Read this first — behaviour that changes without you asking
+
+Every item here changes what an unmodified consumer sees. Nothing in this
+section requires a config edit to reach you.
+
+- **A tool call that fails three times with identical arguments is now
+  refused before dispatch.** Failures are counted per exact call (tool name +
+  sorted arguments); the third identical attempt against an identical error
+  comes back as a `rejected_anti_spiral` result carrying corrective text
+  instead of running the tool again. A success clears that call's history, and
+  a call that fails *once* is still retried — the transient-retry behaviour is
+  unchanged. This reuses the existing `rejected_anti_spiral` kind rather than
+  adding a tenth `result_kind`, so the nine strings consumers parse are
+  untouched. Tune with `max_identical_failures` (default 3). Found by this
+  release's own gate, where a delegated child re-issued one refused read four
+  times and the test died on its timeout. (gh#160 fallout)
+- **`concurrent_sessions` now defaults to `true`.** A run is guarded per
+  session key, not per handle. Two callers on two sessions no longer serialize
+  behind one another, and `ENTROPIC_ERROR_ALREADY_RUNNING` now means "this
+  session is busy" rather than "this process is busy". Set
+  `concurrent_sessions: false` to restore v2.12.x semantics exactly. (gh#158)
+- **`delegation.isolation` is new and defaults to `none`, and under `none` no
+  sandbox is constructed at all.** That is what every release since v2.1.5
+  actually did — the swap callback had no caller, so children always ran
+  against the real working directory. What went with it was a snapshot of the
+  project tree diffed against itself, whose only product was a **0-byte patch**.
+  A consumer whose `on_complete` fires today **stops seeing it**. Set
+  `delegation.isolation: sandbox` to get the containment the header always
+  described: child writes land in the sandbox and come back as a real patch.
+  (gh#160)
+- **`mcp.filesystem.allow_outside_root` is now tri-state — `true | false |
+  optional` — and defaults to `optional`.** An access outside the root is
+  routed to a new path-approval callback; **with no approver registered it is
+  REFUSED**. The bundled default was previously `true`, which meant unconfined
+  read *and* write. Register a callback with
+  `entropic_set_path_approval_callback`, or set the key explicitly to `true`
+  for the old behaviour. `outside_root_allow` / `outside_root_deny` path lists
+  short-circuit the prompt in either direction; deny always wins.
+- **A tier `grammar:` stem that does not resolve now fails at first use** with
+  a typed error, instead of decoding unconstrained. A tier whose grammar file
+  was missing or misnamed has been silently generating free text; it now says
+  so. (gh#154)
+- **A prompt that cannot fit its tier's context is refused** with
+  `ENTROPIC_ERROR_EVAL_CONTEXT_FULL` instead of degrading silently. This
+  release's own gate tripped it: 27 staged tools against a
+  `context_length: 4096` tier.
+- **`entropic.delegate`'s `max_turns` now bounds the child.** It was advertised
+  to the model, written to the storage row, and read by nothing. A lead that
+  already passes small values will now get correspondingly short children. When
+  the model's value meets the operator's limit, the **stricter** wins — a model
+  cannot raise a configured ceiling. (gh#182)
+- **Identity frontmatter overrides now apply to top-level runs.**
+  `max_iterations` and `max_tool_calls_per_turn` in a tier's identity
+  frontmatter were honoured only for delegated children. They now bind a
+  top-level run too, **when the tier is named**. A routed or default-tier lead
+  still does not pick them up — the tier is chosen after the loop preamble;
+  tracked as gh#185. (gh#183)
+- **`entropic_state_save` / `_state_load` / `_get_logprobs` /
+  `_compute_perplexity` / `_adapter_load` now lazy-load the model** through the
+  residency gate instead of failing with "model not active" — and because a
+  load must not land mid-generation, each claims the handle's turn first and
+  can therefore return `ENTROPIC_ERROR_ALREADY_RUNNING` where it previously
+  could not. (gh#157)
+- **The bash tool enforces its timeout.** `mcp.bash.timeout_seconds` (new,
+  default 30) is a wall-clock limit that now actually fires and kills the
+  process group, where the old value was stored, logged and ignored. The tool
+  header no longer claims to block dangerous commands, because it never did.
+- **`include/entropic/core/engine_types.h` lost two struct members** —
+  `ChildContextInfo::tools` and `LoopContext::all_tools`, both written and
+  never read. Source-breaking **only** for a C++ consumer that constructed or
+  touched those structs directly. The `.so` contract is pure C and is
+  unaffected; `ENTROPIC_API_VERSION` is unchanged.
+
+## Highlights
+
+- **One handle, many repositories.** Named workspaces with per-workspace tool
+  roots and per-workspace server instances, bound per session. (gh#166)
+- **Concurrency that is deliberate rather than accidental.** Per-session run
+  guard, serialized decode, per-session interrupt, and an audit of every piece
+  of per-handle state that a second session could reach. (gh#158)
+- **Delegation isolation that is actually wired**, with unique sibling ids and
+  a restore target that is the parent's active root rather than the repo root.
+  (gh#160)
+- **A structured channel for parent context.** Explicit context seeds,
+  `requires_context` tiers, and resume-by-target, so a child stops re-deriving
+  facts the lead already holds. (gh#162)
+- **VRAM you can hand back.** Deferred load, explicit release, and a load path
+  that goes through the residency gate exactly once. (gh#157, gh#164, gh#148)
+- **Outside-root file access asks**, and the answer can be written down.
+- **llama.cpp b9886 → b11009** — `load_mode`, penalties `n_vocab`, speculative
+  pos0.
+
+## New C API
+
+All additive; `ENTROPIC_API_VERSION` is unchanged.
+
+- `entropic_release_model` — evict weights from VRAM without destroying the
+  handle, keeping adapter registrations and sessions alive. (gh#164)
+- `entropic_session_context_set` — the counterpart gh#144 shipped without:
+  restore a session's conversation with lossless message serialization.
+  (gh#165)
+- `entropic_workspace_create`, `entropic_session_bind_workspace` — a named
+  workspace with its own root and its own server instances. (gh#166)
+- `entropic_interrupt_session` — interrupt one session rather than the handle.
+  (gh#158)
+- `entropic_set_path_approval_callback`, plus `ent_path_access_t` and
+  `ent_path_approval_request_t` — the approver that `allow_outside_root:
+  optional` consults.
+- New error code `ENTROPIC_ERROR_MLOCK_LIMIT_EXCEEDED`: `use_mlock` that would
+  pin more than `RLIMIT_MEMLOCK` allows, for a model too large for the card, is
+  now refused instead of pinning pages nothing can reclaim. (gh#148)
+
+## New configuration
+
+| Key | Default | Notes |
+|---|---|---|
+| `models.defer_load` | `false` | Load the default tier on first use, not at `entropic_configure`. Opt-in, so first-token latency is unchanged unless you ask. (gh#157) |
+| `models.tiers.<name>.cpu_moe_layers` | `0` (off) | **EXPERIMENTAL.** Keep a MoE layer's expert tensors on the CPU while attention and KV stay resident. Absent the key, no override array is built at all. (gh#153, gh#180) |
+| `models.tiers.<name>.requires_context` | `false` | The tier refuses to run without an explicit context seed. (gh#162) |
+| `delegation.isolation` | `none` | `none` \| `sandbox`. See above. (gh#160) |
+| `mcp.filesystem.max_walk_entries` | `250000` | Explicit bound on the gitignore walk. (gh#161) |
+| `mcp.filesystem.outside_root_allow` / `outside_root_deny` | empty | Path lists that short-circuit the approver. Deny beats allow. |
+| `mcp.bash.timeout_seconds` | `30` | Now enforced. |
+
+## Engine bug fixes
+
+- **gh#148** — WARM state mapped the entire GGUF into host RAM regardless of
+  `gpu_layers`, so the ACTIVE reload paid for the file twice. The model now
+  loads **once, directly into its target residency**, and a `use_mlock` /
+  `gpu_layers` combination that cannot be satisfied is refused with a typed
+  error rather than pinning unreclaimable pages.
+- **gh#149** — model-test skips stated a false reason (a missing GGUF) when the
+  large-model gate fired. Every skip now carries its real reason. This release
+  has **zero skips**; that is the point of having fixed the message.
+- **gh#154** — a consumer could not ask whether a run actually decoded under a
+  grammar. Per-generation metric records now carry the resolved grammar source,
+  an unresolvable tier stem fails configure, and a stem that resolves to
+  nothing fails loud at first use.
+- **gh#156** — an unreadable prompt path is rejected at configure time, before
+  the weights are loaded, rather than after the expensive half of startup has
+  already been paid for.
+- **gh#157** — `keep_warm: false` did not stop the default tier loading at
+  startup. `models.defer_load` is the key that does, and fixing it exposed that
+  `activate_default_tier` called the backend directly: the one load every
+  consumer performs bypassed the residency gate, fired no `Loaded` event and
+  recorded no footprint. Both paths now go through `get_model`. Adapter preload
+  moved to the activation of the owning model (it previously skipped silently
+  for every tier on a different GGUF and was never retried), and
+  `entropic_model_has_vision` answers from config, because an unloaded tier
+  answered a confident, wrong `0`.
+- **gh#159** — a bare tool-call turn on a tier with `enable_thinking: false`
+  was logged as an unterminated reasoning block. It is not a fault.
+- **gh#161** — `filesystem.glob` took 87 s on a repo with vendored deps:
+  `is_ignored` ran two regex per rule per path across 5061 rules. The matcher
+  is pruned and the walk is explicitly bounded.
+- **gh#163** — investigated, **no defect reproduced.** The reported symptom — a
+  configured `app_context` path reported as "not configured" — did not occur at
+  any layer: all three configure doors, global-only, global plus a project layer
+  that never mentions the key, the v2.11.1 empty-tiers transplant, and both
+  layers naming a path. The evidence tests shipped regardless, and the log line
+  that made the report ambiguous now says which of three states the key is in
+  (set, explicitly disabled, absent) rather than collapsing them.
+- **gh#168** — `PRE_TOOL_CALL`'s `modified_json` was freed and discarded. It is
+  the one hook path that advertised a modification channel and dropped it; the
+  guard on applying it is pointer identity, not content.
+- **gh#169 / gh#181** — a delegation that hit the iteration cap, or the
+  thinking-budget hard cut, returned a **placeholder** where the child's real
+  result belonged. Both terminals now *annotate* the run's last real output
+  through the same helper, so a parent gets the work its child actually did.
+
+## Defects this release's own gates found
+
+None of these were reported. Each was found by a test written for something
+else, which is the argument for the gates.
+
+- **`entropic_context_usage` could abort the host process** on an unkeyed
+  context read under concurrent sessions.
+- **A lead plus exactly ONE worker had shipped with no delegation tools since
+  v2.0.4.** `register_delegation_tools` skipped `delegate`, `pipeline` and
+  `resume_delegation` when it was handed one tier — a guard written at v1.8.5,
+  when the argument was every configured tier. v2.0.4 changed the argument to
+  the delegation *targets*, with the source tier already removed, and the guard
+  was never re-read against its new meaning. The canonical two-tier deployment
+  therefore collected one target, tripped the guard, and put no delegation
+  tools on the model's menu. Nothing said so — an absent tool is
+  indistinguishable from a model that declined to call one. (gh#160, gh#162)
+- **One workspace could read another workspace's files.** A workspace now
+  confines its tools to its own root whatever the host allows. (gh#166)
+- **`TodoTool::items_` corrupted the heap under concurrent sessions.** The
+  read-before-write tracker and the todo list belong to the session, not to the
+  server. (gh#158)
+- **Four model tests were passing while proving nothing** — asserting on the
+  transcript that contained the question rather than on the assistant's answer,
+  or never reaching the code they claimed to test.
+
+## Measured (gh#153)
+
+A four-arm matrix with a same-config floor, because an A/B without a control
+measures the harness as much as the subject.
+
+| Configuration | Result |
+|---|---|
+| MTP, fully resident E4B QAT | **+42.8 % / +46.7 %** |
+| MTP, partially resident 26B-A4B (18 of 30 layers) | **~0 %** — −0.92 % and +0.82 % across two runs, despite a *higher* accept rate |
+| Expert offload (26B-A4B) | 18.2 tok/s, rising to 22.6 tok/s once the freed VRAM holds the experts again |
+| MTP on top of expert offload | **+4.16 %** |
+| MTP, **fully resident** 26B-A4B at IQ2 (30 of 30 layers) | **+16.33 %** — 52.46 → 61.05 tok/s against a 0.02 % floor |
+
+The middle rows are the finding. Accept rate is not the predictor once the
+model is not fully resident — a drafted token still costs a host-to-device
+round trip for the layers that live in RAM. Expert offload matters here because
+freeing VRAM is what lets the card hold experts again, and only then does MTP
+pay at all. The performance assertion in the suite is now gated on **resident
+fraction**, not on which test is running.
+
+The last row is what that rule predicts, tested. The *same* 26B-A4B, quantized
+until it fits an 11 GiB card instead of being placed cleverly across one, runs
+**52.46 tok/s against 18.86** — 2.8× — and MTP goes from buying nothing to
+**+16.33 %**, clearing the strict fully-resident bar of 5.02 %. On this class
+of hardware, making the model fit beats placing it well, and it is not close.
+A prior arithmetic estimate of 70–145 tok/s for this configuration was
+optimistic by 1.3–2.8×; the direction held, the magnitude did not.
+
+## Verification
+
+The full model gate ran on `f64dfb2`, the head of this release, with every
+engine change in it:
+
+- **Model suite: 86 passed, 1 failed, 0 skipped, 2 flaky**, on a GTX 1080 Ti.
+  Attached as `model-results-v2.13.0.json`, which from this release also
+  records `built_version` — what the tested build actually carried, as
+  distinct from what the tree claimed. All three of `version`,
+  `built_version` and `git_sha` agree on this run.
+  - `test-outside-root-approval` failed one assertion of 15: the lead never
+    issued the second of two requested reads, so the path approver was never
+    consulted about it. Everything the test exists to prove is verified by
+    the other 14 — the approver is asked, one path is served and one refused,
+    and the refused file's contents never reach the model. This is the same
+    known-marginal class as the recall assertions below: an E2B-class lead
+    complying with a tool-call instruction, not engine behaviour.
+  - Two earlier failures are **fixed** by this release and pass here.
+    `test-e7-delegation` previously timed out on all three attempts (~120 s
+    each); with the repeated-failure guard it passes on the first attempt in
+    86 s. `test-gh165-restore` passes with no retry.
+- **A note on those marginal assertions.** Several model tests assert that
+  the lead reproduces a specific word — a remembered codeword, a delegated
+  anomaly code. Some of those only became real assertions in this release: a
+  test helper used to return the whole conversation, so an assertion could
+  match the test's own seed and pass while the model said nothing at all.
+  Now that they test what they claim to, a small lead satisfies them roughly
+  two times in three. Reported rather than tuned away.
+- **CPU suite: 1925/1925.** Pre-commit clean.
+- **ThreadSanitizer: 36/36 with zero warnings** over the gh#158 / gh#160 /
+  gh#166 concurrency scenarios — the suite that found the `TodoTool` heap
+  corruption.
+- Benchmarks `[mtp-e4b]`, `[mtp-a4b]` and `[mtp-a4b-experts]` all pass.
+
+## Distribution
+
+- CPU tarball: `entropic-2.13.0-linux-x86_64-cpu.tar.gz` (sha256 in companion file)
+- CUDA tarball: `entropic-2.13.0-linux-x86_64-cuda.tar.gz` (sha256 in companion file)
+- Python wrapper: `pip install entropic-engine==2.13.0` then `entropic install-engine`
+- Model-test audit record: `model-results-v2.13.0.json`
+
+## Known limitations
+
+- **`[mtp-a4b-iq2]` runs only as the sole arm in its process.** It now runs and
+  reports (see Measured, above): fully resident, 52.46 → 61.05 tok/s, +16.33 %.
+  What does not fit an 11 GiB card is *several* arms in one process — a later
+  arm building its context on top of an earlier one fails to allocate the
+  compute pp buffers. Invoke it anchored, `--filter
+  "gh108-config-benchmark-mtp-a4b-iq2"`, and it fits — but not comfortably.
+  Measured: trunk 9535.79 MiB, MTP head 225.21 MiB, KV 115.31 MiB, compute
+  buffers up to 520.61 MiB, against ~11162 MiB usable. The log reads **712 MiB
+  free at the moment the head loads**, leaving on the order of 500 MiB once it
+  is resident. That is the budget, not room to grow into.
+  Making the four-arm harness release between arms is tracked by gh#167 and
+  gh#180. Nothing else in the matrix depends on it.
+- **Expert-tensor offload is a prototype, default off, and unmeasured by the
+  admission math.** `estimate_footprint_bytes` and `gpu_layers: auto` still
+  price whole layers, so a prototype user states `gpu_layers` explicitly and
+  the `auto` combination is refused rather than approximated. Whether it ships
+  as a supported feature is gh#180's to decide.
+- **A routed or default-tier lead still does not pick up its identity's
+  `max_iterations` / `max_tool_calls_per_turn`** — the tier is chosen after the
+  loop preamble. Name the tier explicitly, or track gh#185.
+- **`delegation.isolation: sandbox` serializes sandboxed delegations on a
+  handle.** `set_working_dir` is one field per in-process server, so two
+  sandboxed children would otherwise interleave their swaps. gh#166's
+  per-workspace server instances are what give the parallelism back;
+  unsandboxed delegations are untouched.
+- **An external stdio/SSE MCP server cannot be contained.** It is a separate
+  process with its own cwd. A sandboxed child that can reach one whose
+  `tools/list` does not assert `readOnlyHint: true` is **rejected** with a
+  typed message naming the tool, rather than being given a containment
+  guarantee that is quietly false.
+
+Issues closed: gh#148, #149, #153, #154, #156, #157, #158, #159, #160, #161,
+#162, #164, #165, #166, #168, #169, #181, #182, #183. gh#163 was investigated
+and produced no defect; its evidence tests shipped.
+
 # entropic v2.12.2
 
 Patch release — **an MTP-vs-plain comparison can now be read off the logs**, and
@@ -867,266 +1180,3 @@ names cannot collide. Strings returned by `list_tools`/`execute` are freed
 through *that plugin's* `entropic_free`, not the engine's allocator. A plugin
 returning a malformed tool list or response is contained to itself — it does
 not throw through the agent loop or empty the tool list for other servers.
-
-# entropic v2.10.0
-
-Minor release — **MTP grammar + streaming support, tool-call robustness, and
-filesystem/pipeline polish.**
-
-## Highlights
-
-- **MTP grammar (gh#108)**: tiers with `speculative.mtp: true` and a static
-  GBNF grammar now work correctly. `to_common_sampling` propagates
-  `params.grammar` to the MTP sampler chain; the loader rejection and the
-  orchestrator routing gate are removed.
-- **MTP streaming (gh#108)**: `speculative.mtp: true` is now compatible with
-  streaming calls. `generate_streaming` wraps `on_token` with `StreamThinkFilter`
-  for incremental thinking-channel stripping, and calls `apply_adapter_parse` on
-  return — matching the non-streaming path.
-- **MTP head guard (gh#107)**: using a Gemma-4 MTP head GGUF on the classical
-  separate-draft path now fails loud with `INCOMPATIBLE_CONFIG` instead of
-  crashing in `fattn.cu`. Message names `speculative.mtp: true` as the fix.
-- **Lenient tool-call parse (gh#127)**: fenced JSON blocks containing only an
-  arguments object (no `name` key) are now matched against registered tool
-  schemas and synthesized into a `ToolCall` when exactly one schema matches.
-- **Pipeline stage validation (gh#129)**: `PipelineTool` rejects unknown stage
-  names at emission time with an `invalid_stage` error, instead of silently
-  passing them to `DelegationManager` and failing per-stage.
-- **Per-stage pipeline output (gh#125)**: pipeline context messages now include
-  per-stage `{tier, task}` summaries in addition to the final result.
-- **`read_file` guidance (gh#124)**: not-found errors now name `list_directory`
-  as the corrective action.
-- **`glob` path matching (gh#126)**: `**/*.cpp` and similar patterns now match
-  root-level files and path-relative entries; `**` maps to `.*` (cross-directory)
-  while bare `*` maps to `[^/]*` (single segment).
-- **UTF-8 safety (gh#132)**: `CompleteTool::execute`, `serialize_batch_results`,
-  and `entropic_validation_last_result` sanitize output before JSON serialization.
-
-## Engine bug fixes
-
-- gh#132: `type_error.316` on malformed model output in `CompleteTool::execute`
-- gh#127: tool-call lost when model emits arguments-only fence (no `name` key)
-- gh#129: silent per-stage failure on unknown tier names in `pipeline` tool
-- gh#126: `glob("**/*.cpp")` returned nothing for root-level and path-relative files
-- gh#124: `read_file` not-found error provided no recovery guidance
-- gh#107: crash (`GGML_ABORT` in `fattn.cu`) when MTP head GGUF routed to classical draft path
-- gh#108: MTP sampler did not enforce GBNF grammar constraints
-- gh#108: MTP streaming emitted raw `<think>` tokens and skipped `apply_adapter_parse`
-
-## New features
-
-- gh#125: pipeline output includes per-stage tier + task summary
-- gh#107: `looks_like_mtp_head(n_layer)` + `mtp_head_classical_path_error` in `mtp_envelope.h`
-
-## Breaking changes
-
-- Loader no longer rejects `speculative.mtp: true` + static grammar combination
-  (was: validation error at parse time). Existing configs that relied on this
-  gate as a safety net may now route to MTP with grammar applied.
-- `mtp_unsupported_reason` always returns `""` — all three guards (temperature,
-  grammar, streaming) are removed. Direct callers asserting non-empty for any
-  condition should update their tests.
-
-## Distribution
-
-- CPU tarball: `entropic-2.10.0-linux-x86_64-cpu.tar.gz` (sha256 in companion file)
-- CUDA tarball: `entropic-2.10.0-linux-x86_64-cuda.tar.gz` (sha256 in companion file)
-- Python wrapper: `pip install entropic-engine==2.10.0` then `entropic install-engine`
-
-# entropic v2.9.8
-
-Patch — **completes the gh#111 UTF-8 fix that v2.9.7 left half-done.**
-`entropic_run` still threw `nlohmann::json::type_error 316` mid-turn in a
-lead→delegate turn under MTP, at the exact site named (but not patched) in the
-v2.9.7 notes: `fire_delegate_complete_hook`'s `j.dump()` on a raw child summary.
-
-## Why v2.9.7 missed it
-
-v2.9.7 sanitized the hook-plugin *return* boundaries (`fire_post_generate_hook`,
-`fire_complete_hook`, `fire_post_tool_hook`) — but only on the branch where a
-plugin **revises** content (`out != nullptr`). On the headless path (no
-content-revising `POST_GENERATE` hook) that branch never runs, so the raw
-summary sailed straight into the dump.
-
-Root cause: the summary reaches `fire_delegate_complete_hook` via the child's
-**last-assistant-content fallback** in `extract_summary`, not the tool-arg path.
-That content comes from `AgentEngine::parse_tool_calls`, whose backend callback
-re-derives `*cleaned` / `*tool_calls_json` from the model's **raw** generation —
-a channel entirely separate from the content sanitize at
-`response_generator.cpp:470`. A split multi-byte UTF-8 codepoint (routine under
-MTP speculative decode, when a character splits across the draft/target token
-boundary) therefore survives into the message and, downstream, into the
-delegate-complete hook's `j.dump()`.
-
-## The fix (one boundary, not scattered sinks)
-
-Sanitize **both** outputs of the tool-call parse channel at the single seam
-where they cross into engine-owned state — `AgentEngine::parse_tool_calls`
-(`src/core/engine.cpp`):
-
-```cpp
-std::string cleaned_str = mcp::sanitize_utf8(cleaned ? cleaned : raw_content);
-std::string tc_str      = mcp::sanitize_utf8(tc_json ? tc_json : "[]");
-```
-
-This is the tool-call-channel sibling of the existing content sanitize. It
-closes every downstream `json::dump()` at once: the assistant message /
-delegation-summary fallback (`cleaned_str`) and the tool-call args
-(`tc_str` → `CompleteTool` / directive JSON). Documented in the boundary-policy
-table in `include/entropic/mcp/utf8_sanitize.h`.
-
-Secondary benefit: `tc_str` sanitize also stops MTP from **silently dropping** a
-tool call — a raw arg previously failed `nlohmann::json::parse` and the model's
-directive (e.g. `entropic.complete`) was discarded.
-
-## Tests (red-first)
-
-Added to `tests/unit/core/engine_test.cpp`, each proven to FAIL on the
-unmodified v2.9.7 code and PASS with the fix:
-- **Delegation reproduction** — drives a real lead→child delegation whose child
-  produces raw content; without the fix this throws
-  `type_error.316 ... byte at index 9: 0x28` out of `fire_delegate_complete_hook`
-  (the exact reported crash).
-- **Content channel** — a backend parse returning raw cleaned content is
-  sanitized before it becomes a message.
-- **Tool-call survival** — a raw-arg tool call is preserved and dispatched, not
-  silently dropped.
-
-Also fixes `tasks.py`'s model-test runner to honor each test's CMake `TIMEOUT`
-(carried from the develop branch; was a source of false model-test failures).
-
-No `interfaces/i_*.h` touched.
-
----
-
-# entropic v2.9.7
-
-Patch — **UTF-8 sanitize gap at the hook-plugin return boundary** (gh#3
-recurrence, gh#111). `entropic_run()` could throw `nlohmann::json::type_error
-316` mid-agentic-turn in a lead→researcher delegation, immediately after
-generation completed.
-
-## The bug
-
-The v2.1.1 fix for gh#3 established a boundary-of-ownership UTF-8 sanitize
-policy covering four boundaries: MCP tool-result inbound, llama.cpp stream
-inbound, audit-log inbound, and C-API outbound. It missed a class of
-boundary: **a hook plugin's returned content crossing back into the
-engine.** Three call sites accepted a hook's output verbatim, with no
-sanitize call before the bytes could re-enter engine state and later reach
-an unguarded `nlohmann::json::dump()`:
-
-- `fire_post_generate_hook` (`src/core/engine.cpp`) — POST_GENERATE hook
-  revision. In a delegation, unsanitized content here became the child
-  loop's summary, which `fire_delegate_complete_hook` dumps directly.
-- `fire_complete_hook` (`src/core/engine.cpp`) — ON_COMPLETE hook feedback,
-  injected into a `Message`.
-- `ToolExecutor::fire_post_tool_hook` (`src/mcp/tool_executor.cpp`) —
-  POST_TOOL_CALL hook transform, applied to the tool-result `Message`.
-
-v2.9.6/gh#110 made MTP reachable from the agent loop's *batch* dispatch path
-for the first time — exactly the path (`generate_batch` →
-`fire_post_generate_hook` → delegation summary) that exercises the first
-gap, which is why the recurrence surfaced now rather than earlier.
-
-## The fix
-
-- All three call sites now sanitize a hook's returned bytes via
-  `mcp::sanitize_utf8` before they re-enter engine state, matching the
-  treatment already given to MCP tool results.
-- Documented the hook-plugin boundary in
-  `include/entropic/mcp/utf8_sanitize.h`'s policy table; corrected prior text
-  that incorrectly listed hook contexts as "interior/trusted."
-- Added regression coverage in `tests/unit/core/engine_test.cpp` and
-  `tests/unit/mcp/tool_executor_test.cpp` exercising all three hook points
-  with malformed UTF-8, asserting the sanitized content JSON-dumps without
-  throwing.
-
-## Deferred
-
-`src/storage/backend.cpp`'s SQLite message-load path reads `content` off the
-column with no sanitize before a later `.dump()` — same class of gap as the
-(already-fixed) audit-replay path, for the SQLite backend. Not the confirmed
-root cause of this crash; fixing it cleanly needs `entropic-storage` to gain
-access to the sanitizer (currently only linked into `entropic-core`). Tracked
-separately, not blocking this release.
-
----
-
-# entropic v2.9.6
-
-Patch — **MTP/speculative decoding is now reachable through the agent loop**
-(gh#110). v2.9.0–v2.9.4 proved MTP correct and fast when the orchestrator is
-called directly, but every agent-loop turn (`entropic_run` and friends) with
-`speculative.mtp` enabled failed loud — the kernel never ran.
-
-## The bug (two independent gates)
-
-1. `build_loop_config()` hardcoded `LoopConfig::stream_output = true`, so the
-   agent loop always streamed. The streaming path unconditionally binds a
-   non-empty `on_token` callback, and `LlamaCppBackend::mtp_guard` derives its
-   "is this a streaming call" check as `static_cast<bool>(on_token)` — a bound
-   callback is indistinguishable from "this is streaming," so every agent-loop
-   MTP call tripped `mtp_unsupported_reason`'s streaming rejection and
-   returned `ENTROPIC_ERROR_SPECULATIVE_INCOMPATIBLE_CONFIG`, every time.
-2. Even with streaming disabled, the batch path's cancel-aware bridge
-   (`inference_.generate_cancellable`, always wired in production) calls an
-   orchestrator overload that deliberately bypasses `run_generate_dispatch` —
-   batch-with-cancel only ever ran plain decode, never speculative.
-
-Existing MTP tests never caught this because they call
-`orchestrator->generate()` directly — shaped like the agent loop's traffic,
-but never actually routed through `AgentEngine`/`ResponseGenerator`/the
-facade.
-
-## The fix
-
-- New `generation.stream_output` config key (default `true`, no behavior
-  change for existing consumers) threads through `build_loop_config()`,
-  making batch mode reachable from config.
-- `dispatch_batch_generate` now prefers the dispatching (non-cancellable)
-  `generate` entry point over the cancel-aware one whenever speculative
-  decoding is enabled, so the batch path actually reaches
-  `run_generate_dispatch` → MTP. v1 tradeoff, documented not hidden: a
-  speculative batch turn is not cancellable mid-decode.
-
-To use MTP from the agent loop: set `generation.stream_output: false` +
-`inference.speculative.{enabled,mtp}: true`.
-
-## Tests
-
-- `test_gh110_mtp_agent_loop.cpp` — drives the real `entropic_create` →
-  `entropic_configure_dir` → `entropic_run` path (not a direct orchestrator
-  call) and asserts on the backend's own `"Speculative: generated=..."` log
-  line, the only MTP-engagement signal that crosses the C-ABI boundary.
-  Verified on real hardware (RTX PRO 4000 Blackwell, gemma-4-E2B-it-Q8_0 +
-  MTP head): the kernel engaged across multiple turns of the same
-  conversation (`accept_rate` 0.08–0.14).
-
-No `interfaces/i_*.h` touched.
-
-# entropic v2.9.5
-
-Patch — **turn/run entry points now log to `session.log` with the console
-sink disabled** (gh#109). `entropic_run`, `entropic_run_as`,
-`entropic_run_batch`, `entropic_run_streaming`, `entropic_run_messages`, and
-`entropic_run_messages_streaming` never entered a `HandleLogScope`, so the
-thread-local handle id stayed unset for the whole turn and
-`HandleAwareSink` silently dropped every log line emitted during
-generation. Consumers running with `console_logging: false` (e.g. a TUI
-that keeps stderr clean for its own paint) got zero turn diagnostics —
-`session.log` stopped at "configure complete" and never logged another
-line, even on failure.
-
-These six entry points intentionally skip the full `HandleApiLock` so a
-long-running turn doesn't block `entropic_interrupt()` called from another
-thread — but dropping the lock also dropped the log scope bundled inside
-it. Fix enters a bare `HandleLogScope` (no `api_mutex`) at the top of each
-instead; `run_turn`/`run_streaming` execute synchronously on the calling
-thread with no internal logging worker threads, so a single scope per
-entry point is sufficient — no change to the interrupt/cancel contract.
-
-Adds a regression test (`facade_integration_test.cpp`) that configures a
-handle via `entropic_configure_dir` with `console_logging: false`, runs a
-turn, and asserts `session.log` grows with `[core.*]`-style content —
-locking in that every run entry point holds a log scope.

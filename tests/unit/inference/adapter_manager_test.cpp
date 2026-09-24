@@ -444,3 +444,84 @@ TEST_CASE("Unload all ignores adapters for different model", "[adapter]") {
     REQUIRE(mgr.state("eng") == entropic::AdapterState::COLD);
     REQUIRE(mgr.state("other") == entropic::AdapterState::WARM);
 }
+
+// ── gh#164 (v2.13.0): release keeps the registration ───────────
+
+SCENARIO("gh#164: releasing a model's handles keeps its registrations",
+         "[adapter][gh164][2.13.0]") {
+    GIVEN("two adapters bound to one base model, one of them HOT") {
+        mock_adapter::reset();
+        entropic::AdapterManager mgr;
+        mgr.load("eng", "/path/eng-lora.gguf", fake_model(), 0.75f);
+        mgr.load("qa", "/path/qa-lora.gguf", fake_model());
+        mgr.activate("eng", fake_ctx());
+        REQUIRE(mgr.list_adapters().size() == 2);
+
+        WHEN("the model's handles are released") {
+            mgr.release_handles_for_model(fake_model(), fake_ctx());
+
+            THEN("the llama handles are freed and the states go COLD") {
+                CHECK(mock_adapter::free_calls == 2);
+                CHECK(mgr.state("eng") == entropic::AdapterState::COLD);
+                CHECK(mgr.state("qa") == entropic::AdapterState::COLD);
+                CHECK(mgr.active_adapter().empty());
+            }
+
+            AND_THEN("the REGISTRATIONS survive, unlike unload_all_for_model") {
+                // This is the whole difference. The swap path erases, so a
+                // released tier came back with its adapters deregistered and
+                // the next swap failed "not found or COLD".
+                REQUIRE(mgr.list_adapters().size() == 2);
+                CHECK(mgr.info("eng").path == "/path/eng-lora.gguf");
+                CHECK(mgr.info("eng").scale == 0.75f);
+            }
+
+            AND_WHEN("the model is reloaded and the adapter re-bound") {
+                bool ok = mgr.load("eng", "/path/eng-lora.gguf",
+                                   fake_model_2(), 0.75f);
+
+                THEN("the registration is re-initialised, not refused") {
+                    CHECK(ok);
+                    CHECK(mgr.state("eng") == entropic::AdapterState::WARM);
+                    CHECK(mock_adapter::init_calls == 3);  // 2 + the re-bind
+                    CHECK(mgr.list_adapters().size() == 2);
+                }
+            }
+        }
+    }
+
+    GIVEN("an adapter bound to a DIFFERENT model") {
+        mock_adapter::reset();
+        entropic::AdapterManager mgr;
+        mgr.load("eng", "/path/eng.gguf", fake_model());
+        mgr.load("other", "/path/other.gguf", fake_model_2());
+
+        WHEN("only the first model is released") {
+            mgr.release_handles_for_model(fake_model(), fake_ctx());
+
+            THEN("the other model's adapter is untouched") {
+                CHECK(mgr.state("eng") == entropic::AdapterState::COLD);
+                CHECK(mgr.state("other") == entropic::AdapterState::WARM);
+                CHECK(mock_adapter::free_calls == 1);
+            }
+        }
+    }
+}
+
+SCENARIO("gh#164: a WARM duplicate is still refused",
+         "[adapter][gh164][2.13.0]") {
+    GIVEN("an adapter that is loaded and usable") {
+        mock_adapter::reset();
+        entropic::AdapterManager mgr;
+        mgr.load("eng", "/path/eng-lora.gguf", fake_model());
+
+        WHEN("the same name is loaded again") {
+            bool ok = mgr.load("eng", "/different/path.gguf", fake_model());
+
+            THEN("it is refused — re-binding applies only to a released one") {
+                CHECK_FALSE(ok);
+                CHECK(mock_adapter::init_calls == 1);
+            }
+        }
+    }
+}

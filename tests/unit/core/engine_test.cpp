@@ -466,6 +466,64 @@ SCENARIO("zero-tool-call with explicit_completion halts within retry cap",
     }
 }
 
+SCENARIO("a context-overflow refusal fails the turn instead of retrying it",
+         "[engine][v2.13.0][context_fit]")
+{
+    // The v2.13.0 release gate's second failure: the backend could not fit
+    // the prompt, so every turn came back empty, and the engine read those
+    // empty turns as a MODEL problem — appending "you must end every turn
+    // with exactly one tool call, retry", which makes the prompt LARGER,
+    // three times, and then reported
+    // "zero_tool_calls_with_explicit_completion". A refusal is structural:
+    // no retry can change it, and the failure the operator is shown must
+    // say so.
+    GIVEN("a backend that refuses the prompt as too large for the tier") {
+        MockInference mock;
+        mock.tier = "lead";
+        mock.is_complete = false;
+        mock.generate_rc = ENTROPIC_ERROR_EVAL_CONTEXT_FULL;
+        auto iface = make_mock_interface(mock);
+        LoopConfig lc;
+        lc.max_iterations = 15;
+        CompactionConfig cc;
+        AgentEngine engine(iface, lc, cc);
+
+        TierResolutionInterface tri{};
+        tri.get_tier_param = [](const std::string& tier,
+                                const std::string& param,
+                                void* /*ud*/) -> std::string {
+            if (tier == "lead" && param == "explicit_completion") {
+                return "true";
+            }
+            return "";
+        };
+        engine.set_tier_resolution(tri);
+
+        std::vector<int> states;
+        EngineCallbacks cb;
+        cb.on_state_change = [](int s, void* ud) {
+            static_cast<std::vector<int>*>(ud)->push_back(s);
+        };
+        cb.user_data = &states;
+        engine.set_callbacks(cb);
+
+        WHEN("the loop runs") {
+            engine.run(make_messages());
+
+            THEN("the model is asked exactly once") {
+                // Not 4. The empty-turn ladder must not engage: retrying
+                // appends a correction message, which makes the prompt
+                // that already did not fit bigger.
+                REQUIRE(mock.generate_call_count == 1);
+            }
+            AND_THEN("the run ends in ERROR, not COMPLETE") {
+                REQUIRE_FALSE(states.empty());
+                REQUIRE(states.back() == static_cast<int>(AgentState::ERROR));
+            }
+        }
+    }
+}
+
 // ── P1-9: circular delegation detection ──────────────────
 
 SCENARIO("is_delegation_cycle flags ancestor reuse",
@@ -2016,8 +2074,14 @@ SCENARIO("delegation snapshot + per-tier metrics accumulation",
             ctx.locked_tier = "lead";
             engine.run_loop(ctx);
         }
-        auto it = engine.per_tier_metrics().find("lead");
-        REQUIRE(it != engine.per_tier_metrics().end());
+        // gh#158: hold the copy. `per_tier_metrics()` returns by value (it
+        // always did), so iterating one temporary and comparing against a
+        // DIFFERENT temporary's end() was a dangling-iterator compare that
+        // happened to work. The accessor now takes a lock to produce that
+        // copy, which makes the lifetime question worth getting right.
+        const auto per_tier = engine.per_tier_metrics();
+        auto it = per_tier.find("lead");
+        REQUIRE(it != per_tier.end());
         REQUIRE(it->second.iterations >= 2);
     }
 }
@@ -2901,4 +2965,1033 @@ TEST_CASE("gh#123 part 4: ChildContextInfo.max_consecutive_empty_turns_override 
     //      fires at n>=2 (3rd empty turn), ERROR before max_iterations.
     // GREEN: ceiling=5 surfaced → max_iterations exits normally, not ERROR.
     CHECK(ctx.state != AgentState::ERROR);
+}
+
+// ── gh#160 (v2.13.0): the isolation wiring the engine owns ──────────────
+
+namespace gh160_engine {
+namespace fs = std::filesystem;
+
+/**
+ * @brief Point $HOME at a temp dir so sandbox sessions land there.
+ * @internal
+ * @version 2.13.0
+ */
+struct ScopedHomeEng {
+    std::string original;                 ///< Prior $HOME
+    fs::path tmp_home;                    ///< Replacement $HOME
+    ScopedHomeEng() {
+        const char* h = std::getenv("HOME");
+        original = (h != nullptr) ? h : "";
+        tmp_home = fs::temp_directory_path() /
+                   ("entropic_eng160_" + std::to_string(::getpid()));
+        fs::create_directories(tmp_home);
+        ::setenv("HOME", tmp_home.string().c_str(), 1);
+    }
+    ~ScopedHomeEng() {
+        if (!original.empty()) { ::setenv("HOME", original.c_str(), 1); }
+        std::error_code ec;
+        fs::remove_all(tmp_home, ec);
+    }
+};
+
+/// @brief Facade stand-in: the root the session's tools resolve against.
+struct RootStub {
+    fs::path root;                        ///< Answer for resolve_root
+    std::vector<std::string> unsafe;      ///< Answer for unsafe_external_tools
+    std::string last_key;                 ///< Session key the engine asked about
+};
+
+static fs::path stub_root(const std::string& key, void* ud) {
+    auto* s = static_cast<RootStub*>(ud);
+    s->last_key = key;
+    return s->root;
+}
+
+static std::vector<std::string> stub_unsafe(
+    const std::string& /*key*/,
+    const std::vector<std::string>& /*allowed*/, void* ud) {
+    return static_cast<RootStub*>(ud)->unsafe;
+}
+
+static entropic::SessionRootInterface make_stub(RootStub& s) {
+    entropic::SessionRootInterface iface;
+    iface.resolve_root = stub_root;
+    iface.unsafe_external_tools = stub_unsafe;
+    iface.user_data = &s;
+    return iface;
+}
+
+} // namespace gh160_engine
+
+SCENARIO("gh#160: delegation isolation is opt-in and rooted at the "
+         "session's tool root", "[engine][gh160][v2.13.0]") {
+    using namespace gh160_engine;
+    ScopedHomeEng home;
+    auto tools_root = fs::temp_directory_path() /
+                      ("entropic_tools_" + std::to_string(::getpid()));
+    auto engine_repo = fs::temp_directory_path() /
+                       ("entropic_repo_" + std::to_string(::getpid()));
+    fs::create_directories(tools_root);
+    fs::create_directories(engine_repo);
+
+    RootStub stub;
+    stub.root = tools_root;
+
+    GIVEN("the shipped default (delegation.isolation: none)") {
+        MockInference mock;
+        auto iface = make_mock_interface(mock);
+        LoopConfig lc;
+        CompactionConfig cc;
+        AgentEngine engine(iface, lc, cc);
+        engine.set_project_dir(engine_repo);
+        engine.set_session_root_interface(make_stub(stub));
+
+        THEN("no sandbox is created, so no snapshot cost is paid") {
+            CHECK(engine.sandbox_for_session("") == nullptr);
+        }
+        THEN("nothing is claimed, so nothing is refused") {
+            LoopContext ctx;
+            stub.unsafe = {"clew.refresh"};
+            CHECK(engine.isolation_unsafe_tools(ctx, "eng").empty());
+        }
+    }
+
+    GIVEN("delegation.isolation: sandbox") {
+        MockInference mock;
+        auto iface = make_mock_interface(mock);
+        LoopConfig lc;
+        lc.delegation_isolation = true;
+        CompactionConfig cc;
+        AgentEngine engine(iface, lc, cc);
+        engine.set_project_dir(engine_repo);
+        engine.set_session_root_interface(make_stub(stub));
+
+        THEN("the sandbox snapshots the TOOL root, not the engine repo") {
+            auto* mgr = engine.sandbox_for_session("s1");
+            REQUIRE(mgr != nullptr);
+            // gh#160's actual report: these two were different paths and
+            // the engine snapshotted its own, so the patch diffed a tree
+            // no tool had written to.
+            CHECK(mgr->project_dir() == fs::absolute(tools_root));
+            CHECK(stub.last_key == "s1");
+        }
+        THEN("the same session reuses one manager") {
+            CHECK(engine.sandbox_for_session("s1")
+                  == engine.sandbox_for_session("s1"));
+        }
+        THEN("a writable external tool makes the delegation refusable") {
+            LoopContext ctx;
+            stub.unsafe = {"clew.refresh"};
+            auto unsafe = engine.isolation_unsafe_tools(ctx, "eng");
+            REQUIRE(unsafe.size() == 1);
+            CHECK(unsafe[0] == "clew.refresh");
+        }
+    }
+
+    fs::remove_all(tools_root);
+    fs::remove_all(engine_repo);
+}
+
+// ── gh#162 (v2.13.0): resume a tier without knowing its storage id ──────
+
+SCENARIO("gh#162: resume by target picks that tier's latest delegation",
+         "[engine][gh162][v2.13.0][delegation][resume]") {
+    auto run_resume = [](StorageInterface& si, const std::string& target,
+                         LoopContext& ctx) {
+        MockInference mock;
+        mock.tool_calls_queue.push_back(R"([{"name":"x","arguments":{}}])");
+        auto iface = make_mock_interface(mock);
+        LoopConfig lc;
+        lc.max_iterations = 1;
+        CompactionConfig cc;
+        AgentEngine engine(iface, lc, cc);
+        engine.set_storage(si);
+        PendingDelegation pd;
+        pd.target = target;
+        pd.task = "follow up on the same subsystem";
+        pd.resume_by_target = true;  // no delegation_id known
+        v2310::DelegInjector st{v2310::DelegInjector::RESUME, pd, {}, false};
+        engine.set_tool_executor(v2310::deleg_executor(&st));
+        ctx.messages = make_messages();
+        engine.run_loop(ctx);
+    };
+
+    GIVEN("storage holding a completed delegation to 'reader'") {
+        StorageInterface si{};
+        si.latest_delegation_for_target =
+            [](const char* tier, std::string& id, void*) {
+                if (std::string(tier) != "reader") { return false; }
+                id = "del-latest";
+                return true;
+            };
+        si.load_delegation_with_messages =
+            [](const char* id, std::string& out, void*) {
+                if (std::string(id) != "del-latest") { return false; }
+                out = R"({"target_tier":"reader","messages":[
+                          {"role":"user","content":"prior turn"}]})";
+                return true;
+            };
+
+        WHEN("the lead resumes by naming the tier") {
+            LoopContext ctx;
+            run_resume(si, "reader", ctx);
+            THEN("the latest delegation to that tier is loaded and run") {
+                // RED before gh#162: resume_by_target did not exist, so the
+                // lead needed a followup round trip to learn "del-latest"
+                // before it could ask for anything.
+                CHECK(v2310::msg_contains(ctx, "[DELEGATION"));
+                CHECK_FALSE(v2310::msg_contains(
+                    ctx, "no prior delegation to this tier"));
+            }
+        }
+
+        WHEN("the named tier has no prior delegation") {
+            LoopContext ctx;
+            run_resume(si, "nobody", ctx);
+            THEN("the lead is told, rather than silently getting a cold run") {
+                CHECK(v2310::msg_contains(
+                    ctx, "[DELEGATION FAILED: resume_delegation]"));
+                CHECK(v2310::msg_contains(
+                    ctx, "no prior delegation to this tier"));
+            }
+        }
+    }
+}
+
+// ── gh#169 (v2.13.0): a capped child hands back its last real summary ──
+//
+// AgentEngine::loop pushed a synthetic assistant message whose CONTENT was
+// "[iteration cap reached after N iterations — returning current state]".
+// DelegationManager::extract_summary takes the last assistant message, so
+// the placeholder REPLACED the child's work in DelegationResult::summary
+// and in everything downstream of it — the parent-tier relay and the
+// ON_DELEGATE_COMPLETE payload alike.
+//
+// Consumer evidence: 3 of 5 turns the lead told a parent a record lookup
+// had FAILED while get_student_record had returned status=ok with a full
+// 501-char record and set_interest had written the row; separately a lead
+// apologised that a lesson plan "didn't come through" with the finished
+// lesson sitting in the store.
+
+namespace gh169 {
+
+/// @brief Captures ON_DELEGATE_COMPLETE payloads verbatim.
+struct DelegHookCap {
+    std::vector<std::pair<int, std::string>> post;  ///< (point, json)
+};
+
+/// @brief Hook interface that records post-hook payloads.
+inline HookInterface make_capturing_hooks(DelegHookCap* c) {
+    HookInterface hi{};
+    hi.registry = c;
+    hi.fire_pre = [](void*, entropic_hook_point_t, const char*,
+                     char**) -> int { return 0; };
+    hi.fire_post = [](void* r, entropic_hook_point_t p,
+                      const char* json, char**) {
+        static_cast<DelegHookCap*>(r)->post.emplace_back(
+            static_cast<int>(p), json != nullptr ? json : "");
+    };
+    hi.fire_info = [](void*, entropic_hook_point_t, const char*) {};
+    return hi;
+}
+
+/// @brief The last assistant message in a context ("" when there is none).
+inline std::string last_assistant(const LoopContext& ctx) {
+    std::string found;
+    for (auto rit = ctx.messages.rbegin();
+         rit != ctx.messages.rend(); ++rit) {
+        if (rit->role == "assistant") { found = rit->content; break; }
+    }
+    return found;
+}
+
+}  // namespace gh169
+
+SCENARIO("gh#169: a capped loop carries its last real content, annotated",
+         "[engine][gh169][regression][2.13.0]") {
+    GIVEN("a loop that produces real work and never signals completion") {
+        MockInference mock;
+        mock.response = "curriculum drafted: unit 3 covers long division";
+        mock.finish_reason = "stop";
+        mock.is_complete = false;
+        auto iface = make_mock_interface(mock);
+        LoopConfig lc;
+        lc.max_iterations = 3;
+        CompactionConfig cc;
+        AgentEngine engine(iface, lc, cc);
+
+        WHEN("the loop runs to the iteration cap") {
+            LoopContext ctx;
+            ctx.messages = make_messages();
+            engine.run_loop(ctx);
+
+            THEN("the final assistant message carries the real work") {
+                // RED before the fix: the cap message REPLACED the child's
+                // output, so the parent read "[iteration cap reached ...]"
+                // where the answer belonged.
+                CHECK(gh169::last_assistant(ctx).find("long division")
+                      != std::string::npos);
+            }
+            AND_THEN("the cap annotates it rather than replacing it") {
+                CHECK(gh169::last_assistant(ctx).find(
+                          "iteration cap reached after 3 iterations")
+                      != std::string::npos);
+            }
+            AND_THEN("terminal_reason survives") {
+                auto it = ctx.metadata.find("terminal_reason");
+                REQUIRE(it != ctx.metadata.end());
+                CHECK(it->second == "budget_exhausted");
+                CHECK(ctx.state == AgentState::COMPLETE);
+            }
+            AND_THEN("the carry is recorded as a typed signal") {
+                auto it = ctx.metadata.find("cap_carried_content");
+                REQUIRE(it != ctx.metadata.end());
+                CHECK(it->second == "true");
+            }
+        }
+    }
+}
+
+SCENARIO("gh#169: a capped loop that produced nothing stays distinguishable",
+         "[engine][gh169][regression][2.13.0]") {
+    GIVEN("a loop whose every turn is empty") {
+        MockInference mock;
+        mock.response = "";
+        mock.finish_reason = "stop";
+        mock.is_complete = false;
+        auto iface = make_mock_interface(mock);
+        LoopConfig lc;
+        lc.max_iterations = 3;
+        CompactionConfig cc;
+        AgentEngine engine(iface, lc, cc);
+
+        WHEN("the loop runs to the iteration cap") {
+            LoopContext ctx;
+            ctx.messages = make_messages();
+            engine.run_loop(ctx);
+
+            THEN("the cap message says so in words") {
+                auto last = gh169::last_assistant(ctx);
+                CHECK(last.find("no substantive output")
+                      != std::string::npos);
+                CHECK(last.find("iteration cap reached after 3 iterations")
+                      != std::string::npos);
+            }
+            AND_THEN("and in the typed signal a parent can branch on") {
+                auto it = ctx.metadata.find("cap_carried_content");
+                REQUIRE(it != ctx.metadata.end());
+                CHECK(it->second == "false");
+            }
+            AND_THEN("terminal_reason survives") {
+                auto it = ctx.metadata.find("terminal_reason");
+                REQUIRE(it != ctx.metadata.end());
+                CHECK(it->second == "budget_exhausted");
+            }
+        }
+    }
+}
+
+SCENARIO("gh#169: the parent relay receives the capped child's real work",
+         "[engine][gh169][delegation][regression][2.13.0]") {
+    GIVEN("a lead that relays a single delegate, and a child that is capped") {
+        MockInference mock;
+        mock.is_complete = false;
+        mock.response = "lesson plan: fractions, 40 minutes, worksheet B";
+        // Parent's FIRST parse returns a tool call so the injector fires;
+        // every later parse falls back to "[]", so the child loop runs to
+        // its cap without ever emitting entropic.complete.
+        mock.tool_calls_queue.push_back(
+            R"([{"name":"test.mock","arguments":{}}])");
+        mock.tool_calls_json = "[]";
+        auto iface = make_mock_interface(mock);
+        LoopConfig lc;
+        lc.max_iterations = 3;
+        CompactionConfig cc;
+        AgentEngine engine(iface, lc, cc);
+        engine.set_relay_single_delegate("lead");
+
+        gh169::DelegHookCap cap;
+        engine.set_hooks(gh169::make_capturing_hooks(&cap));
+
+        TierResolutionInterface tri{};
+        tri.resolve_tier = [](const std::string&, void*) -> ChildContextInfo {
+            ChildContextInfo info;
+            info.valid = true;
+            info.system_prompt = "child agent";
+            return info;
+        };
+        engine.set_tier_resolution(tri);
+
+        DelegInjector injector;
+        ToolExecutionInterface tex{};
+        tex.process_tool_calls = inject_delegation_once;
+        tex.user_data = &injector;
+        engine.set_tool_executor(tex);
+
+        WHEN("the parent loop delegates and the child hits its cap") {
+            LoopContext ctx;
+            ctx.messages = make_messages();
+            ctx.locked_tier = "lead";
+            engine.run_loop(ctx);
+
+            auto it = ctx.metadata.find("explicit_completion_summary");
+            REQUIRE(it != ctx.metadata.end());
+
+            THEN("the relayed summary carries the child's own output") {
+                // RED before the fix: the relay read
+                // "[partial — budget_exhausted] [iteration cap reached
+                //  after N iterations — returning current state]"
+                // and the lead reported the work as missing.
+                CHECK(it->second.find("lesson plan: fractions")
+                      != std::string::npos);
+            }
+            AND_THEN("it is still tagged partial") {
+                CHECK(it->second.substr(0, 8) == "[partial");
+                CHECK(ctx.metadata.at("relay_status")
+                      == "budget_exhausted_relayed");
+            }
+            AND_THEN("ON_DELEGATE_COMPLETE keeps its field names and "
+                     "semantics") {
+                // A consumer parses success / target_tier / result_kind
+                // out of this payload; a capped child is still a failed
+                // delegation, and carrying its work does not change that.
+                std::string deleg_json;
+                for (const auto& [point, json] : cap.post) {
+                    if (point == ENTROPIC_HOOK_ON_DELEGATE_COMPLETE) {
+                        deleg_json = json;
+                    }
+                }
+                REQUIRE_FALSE(deleg_json.empty());
+                auto j = nlohmann::json::parse(deleg_json);
+                CHECK(j.at("success").get<bool>() == false);
+                CHECK(j.at("target_tier").get<std::string>() == "eng");
+                CHECK(j.at("result_kind").get<std::string>()
+                      == "delegation_failed");
+                CHECK(j.at("summary").get<std::string>().find(
+                          "lesson plan: fractions") != std::string::npos);
+            }
+        }
+    }
+}
+
+// ── gh#181 (v2.13.0): the thinking-budget hard cut, same defect ──────
+//
+// Sibling of gh#169 on the OTHER budget path. AgentEngine::hard_cut_budget
+// pushed an assistant message whose CONTENT was
+// "[thinking budget exhausted — the turn was hard-cut after the completion
+//  nudge went unheeded; no tool call was emitted]".
+// DelegationManager::extract_summary takes the last assistant message, so a
+// child hard-cut by the thinking budget handed its parent that string where
+// its result belonged — identical in kind to the iteration cap.
+//
+// The two differ in LIKELIHOOD, not in kind: the cut fires when a model
+// narrates instead of calling a tool, so "it produced something substantive
+// first" is less often true here. That is an argument for carrying whatever
+// exists and saying plainly when nothing does — the empty case below is the
+// one this path hits more often, and it must stay distinguishable.
+//
+// The helpers (last_assistant / capturing hooks) are gh#169's, reused
+// deliberately: both paths are asserted through the same lens.
+
+SCENARIO("gh#181: a thinking-budget hard cut carries the run's real content",
+         "[engine][gh181][budget][regression][2.13.0]") {
+    GIVEN("a model that narrates real work and never calls a tool") {
+        MockInference mock;
+        mock.is_complete = false;   // never completes naturally
+        // 54 chars ≈ 13 token-equivalents — one turn exceeds the limit.
+        mock.response =
+            "inspection done: the grain silo hatch seal is cracked";
+        auto iface = make_mock_interface(mock);
+        LoopConfig lc;
+        lc.max_iterations = 10;     // high — the BUDGET must stop it first
+        lc.budget_mode = entropic::BudgetMode::tokens;
+        lc.budget_limit = 10;
+        CompactionConfig cc;
+        AgentEngine engine(iface, lc, cc);
+
+        WHEN("the budget nudges and then hard-cuts the turn") {
+            LoopContext ctx;
+            ctx.messages = make_messages();
+            engine.run_loop(ctx);
+
+            THEN("the cut fired before the iteration cap") {
+                CHECK(mock.generate_call_count == 2);
+            }
+            AND_THEN("the final assistant message carries the real work") {
+                // RED before the fix: the cut message REPLACED the run's
+                // output, so a parent read the placeholder where the
+                // agent's own text belonged.
+                CHECK(gh169::last_assistant(ctx).find("grain silo hatch")
+                      != std::string::npos);
+            }
+            AND_THEN("the cut annotates it rather than replacing it") {
+                CHECK(gh169::last_assistant(ctx).find(
+                          "thinking budget exhausted")
+                      != std::string::npos);
+            }
+            AND_THEN("terminal_reason keeps its own distinct value") {
+                auto it = ctx.metadata.find("terminal_reason");
+                REQUIRE(it != ctx.metadata.end());
+                CHECK(it->second == "budget_exhausted_thinking");
+                CHECK(ctx.state == AgentState::COMPLETE);
+            }
+            AND_THEN("the carry is recorded as a typed signal") {
+                auto it = ctx.metadata.find("cap_carried_content");
+                REQUIRE(it != ctx.metadata.end());
+                CHECK(it->second == "true");
+            }
+        }
+    }
+}
+
+SCENARIO("gh#181: a hard cut with nothing substantive stays distinguishable",
+         "[engine][gh181][budget][regression][2.13.0]") {
+    GIVEN("a model burning the budget on whitespace") {
+        MockInference mock;
+        mock.is_complete = false;
+        // Charged against the budget (600 chars ≈ 150 tokens) but not
+        // substantive — "substantive" is byte-level, not length-based.
+        mock.response = std::string(600, ' ');
+        auto iface = make_mock_interface(mock);
+        LoopConfig lc;
+        lc.max_iterations = 10;
+        lc.budget_mode = entropic::BudgetMode::tokens;
+        lc.budget_limit = 100;
+        CompactionConfig cc;
+        AgentEngine engine(iface, lc, cc);
+
+        WHEN("the budget hard-cuts the turn") {
+            LoopContext ctx;
+            ctx.messages = make_messages();
+            engine.run_loop(ctx);
+
+            THEN("the cut message says so in words") {
+                auto last = gh169::last_assistant(ctx);
+                CHECK(last.find("no substantive output")
+                      != std::string::npos);
+                CHECK(last.find("thinking budget exhausted")
+                      != std::string::npos);
+            }
+            AND_THEN("and in the typed signal a parent can branch on") {
+                auto it = ctx.metadata.find("cap_carried_content");
+                REQUIRE(it != ctx.metadata.end());
+                CHECK(it->second == "false");
+            }
+            AND_THEN("terminal_reason keeps its own distinct value") {
+                auto it = ctx.metadata.find("terminal_reason");
+                REQUIRE(it != ctx.metadata.end());
+                CHECK(it->second == "budget_exhausted_thinking");
+            }
+        }
+    }
+}
+
+SCENARIO("gh#181: the parent relay receives the hard-cut child's real work",
+         "[engine][gh181][budget][delegation][regression][2.13.0]") {
+    GIVEN("a lead relaying one delegate whose child burns its budget") {
+        MockInference mock;
+        mock.is_complete = false;
+        // 63 chars ≈ 15 token-equivalents; limit 12 → nudge, then cut.
+        mock.response =
+            "field report: the culvert at mile 12 is scoured, add riprap";
+        // Parent's FIRST parse returns a tool call so the injector fires;
+        // every later parse falls back to "[]", so the child narrates its
+        // way into the hard cut without ever emitting entropic.complete.
+        mock.tool_calls_queue.push_back(
+            R"([{"name":"test.mock","arguments":{}}])");
+        mock.tool_calls_json = "[]";
+        auto iface = make_mock_interface(mock);
+        LoopConfig lc;
+        lc.max_iterations = 6;      // the cut must land before the cap
+        lc.budget_mode = entropic::BudgetMode::tokens;
+        lc.budget_limit = 12;
+        CompactionConfig cc;
+        AgentEngine engine(iface, lc, cc);
+        engine.set_relay_single_delegate("lead");
+
+        gh169::DelegHookCap cap;
+        engine.set_hooks(gh169::make_capturing_hooks(&cap));
+
+        TierResolutionInterface tri{};
+        tri.resolve_tier = [](const std::string&, void*) -> ChildContextInfo {
+            ChildContextInfo info;
+            info.valid = true;
+            info.system_prompt = "child agent";
+            return info;
+        };
+        engine.set_tier_resolution(tri);
+
+        DelegInjector injector;
+        ToolExecutionInterface tex{};
+        tex.process_tool_calls = inject_delegation_once;
+        tex.user_data = &injector;
+        engine.set_tool_executor(tex);
+
+        WHEN("the parent delegates and the child is hard-cut") {
+            LoopContext ctx;
+            ctx.messages = make_messages();
+            ctx.locked_tier = "lead";
+            engine.run_loop(ctx);
+
+            auto it = ctx.metadata.find("explicit_completion_summary");
+            REQUIRE(it != ctx.metadata.end());
+
+            THEN("the relayed summary carries the child's own output") {
+                // RED before the fix: the relay read
+                // "[partial — budget_exhausted] [thinking budget
+                //  exhausted — ... no tool call was emitted]" and the
+                // lead reported the work as missing.
+                CHECK(it->second.find("culvert at mile 12")
+                      != std::string::npos);
+            }
+            AND_THEN("it was the thinking-budget cut that ended the child") {
+                CHECK(it->second.find("thinking budget exhausted")
+                      != std::string::npos);
+            }
+            AND_THEN("it is still tagged partial") {
+                CHECK(it->second.substr(0, 8) == "[partial");
+                CHECK(ctx.metadata.at("relay_status")
+                      == "budget_exhausted_relayed");
+            }
+            AND_THEN("ON_DELEGATE_COMPLETE keeps its field names and "
+                     "semantics") {
+                // A consumer parses success / target_tier / result_kind
+                // out of this payload; a hard-cut child is still a failed
+                // delegation, and carrying its work does not change that.
+                std::string deleg_json;
+                for (const auto& [point, json] : cap.post) {
+                    if (point == ENTROPIC_HOOK_ON_DELEGATE_COMPLETE) {
+                        deleg_json = json;
+                    }
+                }
+                REQUIRE_FALSE(deleg_json.empty());
+                auto j = nlohmann::json::parse(deleg_json);
+                CHECK(j.at("success").get<bool>() == false);
+                CHECK(j.at("target_tier").get<std::string>() == "eng");
+                CHECK(j.at("result_kind").get<std::string>()
+                      == "delegation_failed");
+                CHECK(j.at("summary").get<std::string>().find(
+                          "culvert at mile 12") != std::string::npos);
+            }
+        }
+    }
+}
+
+// ── gh#182 (v2.13.0): entropic.delegate's max_turns bounds the child ──
+//
+// `data/tools/entropic/delegate.json` advertises `max_turns` to the MODEL
+// (integer, minimum 1, maximum 30, "Maximum number of turns the delegate
+// can use"). The value reached `DelegationManager::run_child`, went into
+// the `delegations` storage row, and stopped there: the child was
+// dispatched through `run_child_fn_`, which takes no limit, so its bound
+// came from `LoopConfig::max_iterations` or the child tier's identity
+// frontmatter and NOTHING the model asked for. An argument the model is
+// shown and allowed to set, which then does nothing, is worse than one
+// that is absent — the model believes it has scoped the work.
+//
+// The bound is now the STRICTER of the two: a model may LOWER the
+// operator's limit, never raise it.
+
+namespace gh182 {
+
+/// @brief What one injected `entropic.delegate` call carried.
+/// @version 2.13.0
+struct CappedInjector {
+    int max_turns = -1;  ///< The model-supplied argument (-1 = omitted).
+    bool fired = false;  ///< One delegation per run.
+};
+
+/**
+ * @brief Tool executor that injects one delegation carrying max_turns.
+ * @param ctx Loop context (pending_delegation set as a side effect).
+ * @param ud CappedInjector pointer.
+ * @return One tool message, so the iteration counts as tool-bearing.
+ * @internal
+ * @version 2.13.0
+ */
+static std::vector<Message> inject_capped_delegation(
+    LoopContext& ctx,
+    const std::vector<ToolCall>& /*calls*/,
+    void* ud) {
+    auto* inj = static_cast<CappedInjector*>(ud);
+    if (!inj->fired) {
+        inj->fired = true;
+        ctx.pending_delegation = PendingDelegation{
+            "eng", "audit the depot manifest", inj->max_turns};
+    }
+    Message m;
+    m.role = "tool";
+    m.content = "injected delegation";
+    return {m};
+}
+
+/// @brief The child tier's own identity override (-1 = the tier sets none).
+/// @version 2.13.0
+struct TierCap {
+    int eng_max_iterations = -1;  ///< `max_iterations` frontmatter for "eng".
+};
+
+/**
+ * @brief get_tier_param over a TierCap — answers max_iterations for "eng".
+ * @param tier Tier being asked about.
+ * @param param Parameter name.
+ * @param ud TierCap pointer.
+ * @return The override as a string, or "" when the tier sets none.
+ * @internal
+ * @version 2.13.0
+ */
+static std::string tier_param(const std::string& tier,
+                              const std::string& param,
+                              void* ud) {
+    auto* cap = static_cast<TierCap*>(ud);
+    if (tier == "eng" && param == "max_iterations"
+        && cap->eng_max_iterations >= 0) {
+        return std::to_string(cap->eng_max_iterations);
+    }
+    return "";
+}
+
+/**
+ * @brief resolve_tier that validates every tier, so delegation proceeds.
+ * @return A valid ChildContextInfo.
+ * @internal
+ * @version 2.13.0
+ */
+static ChildContextInfo resolve_any(const std::string& /*tier*/,
+                                    void* /*ud*/) {
+    ChildContextInfo info;
+    info.valid = true;
+    info.system_prompt = "child agent";
+    return info;
+}
+
+/// @brief What one delegated run reports back to the test.
+/// @version 2.13.0
+struct Outcome {
+    int child_iterations = 0;  ///< Iterations the CHILD loop actually ran.
+    std::string carrier;       ///< The [DELEGATION …] message the parent got.
+};
+
+/**
+ * @brief The last [DELEGATION …] carrier message in a context.
+ * @param ctx Parent loop context.
+ * @return The message content, or "" when no delegation was pushed.
+ * @internal
+ * @version 2.13.0
+ */
+static std::string delegation_carrier(const LoopContext& ctx) {
+    std::string found;
+    for (auto rit = ctx.messages.rbegin();
+         rit != ctx.messages.rend() && found.empty(); ++rit) {
+        if (rit->content.rfind("[DELEGATION ", 0) == 0) {
+            found = rit->content;
+        }
+    }
+    return found;
+}
+
+/// @brief The work the child produces every turn; it never completes.
+/// @version 2.13.0
+constexpr const char* kChildWork = "audit complete: anomaly TQ-4417";
+
+/**
+ * @brief Run one parent turn that delegates to "eng" exactly once.
+ * @param max_turns The `entropic.delegate` argument (-1 = omitted).
+ * @param engine_cap LoopConfig::max_iterations (the operator's own limit).
+ * @param tier The child tier's identity override.
+ * @param cap Hook capture wired to ON_DELEGATE_COMPLETE.
+ * @return The child's iteration count and the parent's carrier message.
+ * @internal
+ * @version 2.13.0
+ */
+static Outcome delegate_once(int max_turns, int engine_cap, TierCap& tier,
+                             gh169::DelegHookCap& cap) {
+    MockInference mock;
+    mock.is_complete = false;  // the child never signals completion
+    mock.response = kChildWork;
+    // Parent's FIRST parse yields a tool call so the injector fires; every
+    // later parse falls back to "[]", so the child only narrates.
+    mock.tool_calls_queue.push_back(
+        R"([{"name":"test.mock","arguments":{}}])");
+    mock.tool_calls_json = "[]";
+    auto iface = make_mock_interface(mock);
+    LoopConfig lc;
+    lc.max_iterations = engine_cap;
+    CompactionConfig cc;
+    AgentEngine engine(iface, lc, cc);
+    engine.set_hooks(gh169::make_capturing_hooks(&cap));
+
+    TierResolutionInterface tri{};
+    tri.resolve_tier = resolve_any;
+    tri.get_tier_param = tier_param;
+    tri.user_data = &tier;
+    engine.set_tier_resolution(tri);
+
+    CappedInjector inj;
+    inj.max_turns = max_turns;
+    ToolExecutionInterface tex{};
+    tex.process_tool_calls = inject_capped_delegation;
+    tex.user_data = &inj;
+    engine.set_tool_executor(tex);
+
+    LoopContext ctx;
+    ctx.messages = make_messages();
+    ctx.locked_tier = "lead";
+    engine.run_loop(ctx);
+
+    Outcome out;
+    auto per_tier = engine.per_tier_metrics();
+    out.child_iterations = per_tier["eng"].iterations;
+    out.carrier = delegation_carrier(ctx);
+    return out;
+}
+
+/**
+ * @brief The ON_DELEGATE_COMPLETE payload, as a consumer parses it.
+ * @param cap Hook capture.
+ * @return The last hook-9 payload, or "" when it never fired.
+ * @internal
+ * @version 2.13.0
+ */
+static std::string delegate_complete_json(const gh169::DelegHookCap& cap) {
+    std::string found;
+    for (const auto& [point, json] : cap.post) {
+        if (point == ENTROPIC_HOOK_ON_DELEGATE_COMPLETE) { found = json; }
+    }
+    return found;
+}
+
+}  // namespace gh182
+
+SCENARIO("gh#182: a model-supplied max_turns bounds the delegated child",
+         "[engine][gh182][delegation][regression][2.13.0]") {
+    GIVEN("an operator limit of 6 iterations and no tier override") {
+        gh182::TierCap tier;  // the tier sets nothing
+        gh169::DelegHookCap cap;
+
+        WHEN("the model delegates with max_turns=2") {
+            auto out = gh182::delegate_once(2, 6, tier, cap);
+
+            THEN("the child stops at 2 iterations, not at the engine's 6") {
+                // RED before the fix: 6. max_turns reached the storage
+                // record and nothing else.
+                CHECK(out.child_iterations == 2);
+            }
+            AND_THEN("the capped child still hands back its real work") {
+                // gh#169/gh#181: an engine-authored terminal ANNOTATES the
+                // child's last substantive output instead of replacing it.
+                // A max_turns cap is the same terminal, so it owes the same
+                // hand-back.
+                CHECK(out.carrier.find(gh182::kChildWork)
+                      != std::string::npos);
+                CHECK(out.carrier.find("[iteration cap reached after ")
+                      != std::string::npos);
+            }
+            AND_THEN("it is still reported as a FAILED delegation") {
+                // A bounded child did not complete naturally. Consumers
+                // parse these three fields; gh#182 does not touch them.
+                CHECK(out.carrier.rfind("[DELEGATION FAILED: eng]", 0) == 0);
+                auto json = gh182::delegate_complete_json(cap);
+                REQUIRE_FALSE(json.empty());
+                auto j = nlohmann::json::parse(json);
+                CHECK(j.at("success").get<bool>() == false);
+                CHECK(j.at("target_tier").get<std::string>() == "eng");
+                CHECK(j.at("result_kind").get<std::string>()
+                      == "delegation_failed");
+            }
+        }
+    }
+
+    GIVEN("a child tier whose identity caps it at 5 iterations") {
+        gh182::TierCap tier;
+        tier.eng_max_iterations = 5;
+        gh169::DelegHookCap cap;
+
+        WHEN("the model delegates with max_turns=2") {
+            auto out = gh182::delegate_once(2, 20, tier, cap);
+
+            THEN("the stricter of the two — the model's 2 — wins") {
+                // RED before the fix: 5 (the tier's own override).
+                CHECK(out.child_iterations == 2);
+            }
+        }
+
+        WHEN("the model delegates with max_turns=30, the schema maximum") {
+            auto out = gh182::delegate_once(30, 20, tier, cap);
+
+            THEN("the operator's tier limit still holds at 5") {
+                // The model may LOWER a bound, never raise one.
+                CHECK(out.child_iterations == 5);
+            }
+        }
+    }
+
+    GIVEN("an operator limit of 4 and a model that omits max_turns") {
+        gh182::TierCap tier;
+        gh169::DelegHookCap cap;
+
+        WHEN("the delegation carries max_turns = -1") {
+            auto out = gh182::delegate_once(-1, 4, tier, cap);
+
+            THEN("nothing changes: the engine limit governs, as before") {
+                CHECK(out.child_iterations == 4);
+            }
+        }
+    }
+
+    GIVEN("a model that asks for more turns than the engine allows") {
+        gh182::TierCap tier;
+        gh169::DelegHookCap cap;
+
+        WHEN("the delegation carries max_turns=30 against an engine cap of 3") {
+            auto out = gh182::delegate_once(30, 3, tier, cap);
+
+            THEN("the engine's own limit is not raised") {
+                CHECK(out.child_iterations == 3);
+            }
+        }
+    }
+}
+
+// ── gh#183 (v2.13.0): identity overrides reach a TOP-LEVEL run ──
+//
+// `AgentEngine::apply_identity_overrides` had exactly one caller,
+// `run_loop` — the entry point a DELEGATION CHILD arrives through. A
+// top-level turn goes through `run()`, which built its own LoopContext and
+// called `loop(ctx)` directly, so `max_iterations` and
+// `max_tool_calls_per_turn` in a tier's identity frontmatter applied when
+// that tier ran as a child and were silently ignored when the SAME tier ran
+// as the lead. Not a subset of behaviour: the same config, read on one path
+// and dropped on the other.
+//
+// Both entry points now share one preamble. What differs between them
+// stays differing: `run()` resets the interrupt and clears the pause
+// unconditionally (a fresh top-level turn), `run_loop` does so only when
+// `inherit_interrupt` is false — see the two gh#81 scenarios above, which
+// are the guard on that half and are deliberately NOT duplicated here.
+
+namespace gh183 {
+
+/// @brief The "lead" identity's own max_iterations (-1 = it sets none).
+/// @version 2.13.0
+struct LeadCap {
+    int lead_max_iterations = -1;  ///< `max_iterations` frontmatter.
+};
+
+/**
+ * @brief get_tier_param over a LeadCap — answers only for tier "lead".
+ * @param tier Tier being asked about.
+ * @param param Parameter name.
+ * @param ud LeadCap pointer.
+ * @return The override as a string, or "" when the tier sets none.
+ * @internal
+ * @version 2.13.0
+ */
+static std::string tier_param(const std::string& tier,
+                              const std::string& param,
+                              void* ud) {
+    auto* cap = static_cast<LeadCap*>(ud);
+    if (tier == "lead" && param == "max_iterations"
+        && cap->lead_max_iterations >= 0) {
+        return std::to_string(cap->lead_max_iterations);
+    }
+    return "";
+}
+
+}  // namespace gh183
+
+SCENARIO("gh#183: a tier's identity overrides reach a top-level run",
+         "[engine][gh183][identity][regression][2.13.0]") {
+    GIVEN("a 'lead' identity capped at 2 against an engine limit of 50") {
+        MockInference mock;
+        mock.is_complete = false;  // never finishes on its own
+        auto iface = make_mock_interface(mock);
+        LoopConfig lc;
+        lc.max_iterations = 50;
+        CompactionConfig cc;
+        AgentEngine engine(iface, lc, cc);
+
+        gh183::LeadCap cap;
+        cap.lead_max_iterations = 2;
+        TierResolutionInterface tri{};
+        tri.get_tier_param = gh183::tier_param;
+        tri.user_data = &cap;
+        engine.set_tier_resolution(tri);
+
+        WHEN("the tier runs as the LEAD, through run(messages, \"lead\")") {
+            auto out = engine.run(make_messages(), "lead");
+
+            THEN("the loop stops at the identity's 2, not the engine's 50") {
+                // RED before the fix: 50. run() never applied the override.
+                CHECK(mock.generate_call_count == 2);
+            }
+            AND_THEN("the run still ends on the cap's synthetic completion") {
+                REQUIRE_FALSE(out.empty());
+                CHECK(out.back().role == "assistant");
+                CHECK(out.back().content.find("[iteration cap reached after ")
+                      != std::string::npos);
+            }
+        }
+
+        WHEN("the same tier runs as a delegated CHILD, through run_loop") {
+            LoopContext ctx;
+            ctx.messages = make_messages();
+            ctx.locked_tier = "lead";
+            engine.run_loop(ctx, /*inherit_interrupt=*/true);
+
+            THEN("it still stops at 2 — today's behaviour, unchanged") {
+                CHECK(mock.generate_call_count == 2);
+            }
+        }
+    }
+
+    GIVEN("a 'lead' identity that sets no override at all") {
+        MockInference mock;
+        mock.is_complete = false;
+        auto iface = make_mock_interface(mock);
+        LoopConfig lc;
+        lc.max_iterations = 3;
+        CompactionConfig cc;
+        AgentEngine engine(iface, lc, cc);
+
+        gh183::LeadCap cap;  // lead_max_iterations stays -1
+        TierResolutionInterface tri{};
+        tri.get_tier_param = gh183::tier_param;
+        tri.user_data = &cap;
+        engine.set_tier_resolution(tri);
+
+        WHEN("it runs as the lead") {
+            engine.run(make_messages(), "lead");
+
+            THEN("the engine limit governs, exactly as before") {
+                CHECK(mock.generate_call_count == 3);
+            }
+        }
+    }
+}
+
+SCENARIO("gh#183: a fresh top-level run still clears a stale interrupt",
+         "[engine][gh183][interrupt][regression][2.13.0]") {
+    GIVEN("an interrupt raised before a fresh top-level run") {
+        MockInference mock;
+        auto iface = make_mock_interface(mock);
+        LoopConfig lc;
+        lc.max_iterations = 4;
+        CompactionConfig cc;
+        AgentEngine engine(iface, lc, cc);
+        engine.interrupt();
+
+        WHEN("run() executes") {
+            auto out = engine.run(make_messages());
+
+            THEN("the flag was cleared and the turn generated normally") {
+                // The preamble hoist must not hand a top-level run a
+                // child's interrupt-INHERITANCE semantics.
+                CHECK(mock.generate_call_count >= 1);
+                REQUIRE_FALSE(out.empty());
+                CHECK(out.back().role == "assistant");
+            }
+        }
+    }
 }

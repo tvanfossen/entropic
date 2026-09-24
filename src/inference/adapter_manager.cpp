@@ -69,7 +69,7 @@ void clear_adapters(llama_context* ctx) {
  * @return true on success; false on a duplicate name, a null base model,
  *         or a load failure — each fails cleanly without corrupting state.
  * @req REQ-INFER-023
- * @version 1.9.2
+ * @version 2.13.0
  */
 bool AdapterManager::load(
     const std::string& name,
@@ -79,8 +79,15 @@ bool AdapterManager::load(
 {
     std::lock_guard<std::mutex> lock(adapter_mutex_);
 
+    // gh#164 (v2.13.0): an entry left behind by `release_handles_for_model`
+    // is a REGISTRATION without a handle. Re-binding it against the reloaded
+    // model is exactly this call, so it is not a duplicate. An entry that
+    // still holds a handle is, and stays refused.
+    auto existing = adapters_.find(name);
+    const bool released = existing != adapters_.end()
+        && existing->second.handle == nullptr;
     bool precondition_failed =
-        adapters_.find(name) != adapters_.end() || !model;
+        (existing != adapters_.end() && !released) || !model;
     if (precondition_failed) {
         logger->error("Cannot load adapter '{}': {}",
                      name, !model ? "base model is null" : "duplicate name");
@@ -95,14 +102,15 @@ bool AdapterManager::load(
         return false;
     }
 
-    AdapterEntry entry;
+    // Creates the entry on a first load; on a gh#164 re-bind this is the
+    // SAME entry, so tier_name / metadata set elsewhere survive.
+    AdapterEntry& entry = adapters_[name];
     entry.name = name;
     entry.path = adapter_path;
     entry.handle = lora;
     entry.model = model;
     entry.scale = scale;
     entry.state = AdapterState::WARM;
-    adapters_.emplace(name, std::move(entry));
 
     logger->info("Loaded adapter '{}' from {} in {:.1f}ms (scale={:.2f})",
                 name, adapter_path.string(),
@@ -331,6 +339,47 @@ void AdapterManager::unload_all_for_model(
     }
 
     logger->info("Unloaded {} adapter(s) for model", to_remove.size());
+}
+
+/**
+ * @brief Free a model's adapter handles, keeping the registrations (gh#164).
+ *
+ * See the header for why this is a separate operation from
+ * `unload_all_for_model` rather than a flag on it. Entries are left COLD
+ * with a null handle; `load()` re-initialises such an entry in place.
+ *
+ * @param model The base model being released.
+ * @param ctx Context to clear a HOT adapter from. May be nullptr.
+ * @req REQ-INFER-023
+ * @version 2.13.0
+ */
+void AdapterManager::release_handles_for_model(
+    llama_model* model, llama_context* ctx)
+{
+    std::lock_guard<std::mutex> lock(adapter_mutex_);
+
+    bool cleared_context = false;
+    size_t released = 0;
+
+    for (auto& [name, entry] : adapters_) {
+        if (entry.model != model) { continue; }
+        if (entry.state == AdapterState::HOT && ctx && !cleared_context) {
+            clear_adapters(ctx);
+            cleared_context = true;
+        }
+        if (name == active_name_) { active_name_.clear(); }
+        if (entry.handle) {
+            llama_adapter_lora_free(entry.handle);
+            entry.handle = nullptr;
+        }
+        // The model is about to be freed; the registration is not.
+        entry.model = nullptr;
+        entry.state = AdapterState::COLD;
+        ++released;
+    }
+
+    logger->info("Released {} adapter handle(s); registrations kept "
+                 "(gh#164)", released);
 }
 
 /**

@@ -21,6 +21,40 @@
 namespace entropic {
 
 /**
+ * @brief What constrained one decode, and what asked for it (gh#154).
+ *
+ * The engine always knew this and no consumer could ask. `GrammarRegistry::
+ * get()` returns "" on a miss, the engine logs a warning, and the decode
+ * proceeds UNCONSTRAINED — so from outside, a constrained run and an
+ * unconstrained one produce output of the same shape whenever the prompt
+ * also describes the shape. The only distinguishing signal was the ABSENCE
+ * of a log line, which is not something a consumer can assert on; three days
+ * of speculative-decode measurements were published against it and
+ * withdrawn.
+ *
+ * `source` names who ASKED. `resolved` says whether a grammar text actually
+ * reached the sampler. They are separate on purpose: a named key that does
+ * not resolve is exactly the state that was undiagnosable.
+ *
+ * @version 2.13.0
+ */
+struct GrammarProvenance {
+    /// @brief "request" | "tier" | "tool_call" | "none".
+    std::string source = "none";
+
+    /// @brief Registry key / frontmatter stem that was named ("" = none).
+    std::string key;
+
+    /// @brief true when a grammar text actually constrained this decode.
+    bool resolved = false;
+
+    /// @brief The winning source when two grammars collided ("" = no
+    ///        collision). A request grammar displacing a tool-call grammar
+    ///        means the staged tools were NOT structurally enforced.
+    std::string conflict_winner;
+};
+
+/**
  * @brief Result of a single generation call.
  *
  * Maps to Python GenerationResult dataclass.
@@ -88,6 +122,14 @@ struct GenerationResult {
     /// @version 2.9.0
     int n_accepted = 0;
 
+    /* ── gh#154: grammar provenance ── */
+
+    /// @brief What constrained this decode and who asked for it.
+    /// Populated by the orchestrator from the SAME inputs the sampler's
+    /// application site uses, so the record cannot disagree with what ran.
+    /// @version 2.13.0
+    GrammarProvenance grammar;
+
     /* ── Error state (for partial results on failure) ── */
     entropic_error_t error_code = ENTROPIC_OK; ///< Error code (ENTROPIC_OK if no error)
     std::string error_message;              ///< Error description (empty if no error)
@@ -100,5 +142,44 @@ struct GenerationResult {
      */
     bool ok() const { return error_code == ENTROPIC_OK; }
 };
+
+/**
+ * @brief One generation's metrics, without its text (gh#154).
+ *
+ * `GenerationResult` is rich and per-call; this is what survives the call
+ * and reaches a consumer through `entropic_metrics_json`. Content and
+ * tool calls are deliberately excluded — the engine keeps a bounded ring
+ * of these, and keeping the text would make it a transcript.
+ *
+ * @version 2.13.0
+ */
+struct GenerationRecord {
+    std::string finish_reason;        ///< "stop", "length", "error"
+    int token_count = 0;              ///< Tokens generated
+    int prefill_tokens = 0;           ///< Prompt tokens actually decoded (gh#144)
+    double throughput_tok_s = 0.0;    ///< Measured decode throughput
+    int n_drafted = 0;                ///< Speculative/MTP tokens proposed
+    int n_accepted = 0;               ///< Of those, accepted by the target
+    GrammarProvenance grammar;        ///< What constrained the decode
+};
+
+/**
+ * @brief Project a result down to the record kept for metrics.
+ * @param r Completed generation result.
+ * @return The metric fields, without content or tool calls.
+ * @utility
+ * @version 2.13.0
+ */
+inline GenerationRecord make_generation_record(const GenerationResult& r) {
+    GenerationRecord rec;
+    rec.finish_reason = r.finish_reason;
+    rec.token_count = r.token_count;
+    rec.prefill_tokens = r.prefill_tokens;
+    rec.throughput_tok_s = r.throughput_tok_s;
+    rec.n_drafted = r.n_drafted;
+    rec.n_accepted = r.n_accepted;
+    rec.grammar = r.grammar;
+    return rec;
+}
 
 } // namespace entropic

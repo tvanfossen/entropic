@@ -7,6 +7,7 @@
 
 #include <entropic/mcp/transport_stdio.h>
 #include <entropic/types/logging.h>
+#include <entropic/types/run_scope.h>
 
 #include <cerrno>
 #include <cstring>
@@ -211,21 +212,30 @@ bool StdioTransport::open_child_process() {
 }
 
 /**
- * @brief Send SIGTERM, reap child, close pipes.
+ * @brief Send SIGTERM, reap the child, join the stderr pump, close pipes.
  * @dg_internal
- * @version 2.1.5
+ * @version 2.13.0
  */
 void StdioTransport::close() {
     connected_ = false;
 
     terminate_child();
-    close_fd(stdin_fd_);
-    close_fd(stdout_fd_);
-    close_fd(stderr_fd_);
 
+    // gh#158 (v2.13.0): JOIN BEFORE CLOSING, not after. `close_fd` writes
+    // `stderr_fd_ = -1` while `stderr_reader_loop` is still polling and
+    // reading that same member — a data race on an int and a read from an
+    // fd number that may already have been reused by another thread's
+    // open(). ThreadSanitizer reports it at close_fd's assignment. The loop
+    // exits on `connected_` (false above) or on the child's EOF, so the
+    // join costs at most one 500ms poll slice, which `terminate_child`'s
+    // 3s reap has usually already absorbed.
     if (stderr_thread_.joinable()) {
         stderr_thread_.join();
     }
+
+    close_fd(stdin_fd_);
+    close_fd(stdout_fd_);
+    close_fd(stderr_fd_);
 
     logger->info("Closed stdio transport for '{}'", display_name_);
 }
@@ -238,15 +248,18 @@ void StdioTransport::close() {
  *         when the transport is disconnected, an interrupt is pending,
  *         the write failed, or the read timed out — an empty return is
  *         what the client turns into a typed error envelope rather than
- *         a hang.
+ *         a hang. An abandoned read marks the pipe DESYNCED so the next
+ *         request drains whatever the server eventually answered rather
+ *         than reading it as its own result (gh#158).
  * @req REQ-MCP-025
- * @version 2.0.6-rc16
+ * @req REQ-MCP-026
+ * @version 2.13.0 [reviewed]
  */
 std::string StdioTransport::send_request(
     const std::string& request_json,
     uint32_t timeout_ms) {
 
-    if (!connected_ || cancel_flag_.load(std::memory_order_acquire)) {
+    if (!connected_ || request_cancelled()) {
         return "";
     }
 
@@ -254,6 +267,14 @@ std::string StdioTransport::send_request(
         ? timeout_ms : default_timeout_ms_;
 
     std::lock_guard<std::mutex> lock(io_mutex_);
+
+    if (desynced_) {
+        int dropped = drain_orphaned_responses();
+        desynced_ = false;
+        logger->warn("Discarded {} orphaned response line(s) from '{}' "
+                     "before sending the next request", dropped,
+                     display_name_);
+    }
 
     std::string msg = request_json + "\n";
     ssize_t written = ::write(stdin_fd_, msg.data(), msg.size());
@@ -264,7 +285,35 @@ std::string StdioTransport::send_request(
         return "";
     }
 
-    return read_line(stdout_fd_, actual_timeout);
+    // gh#158: the request is on the wire. Anything other than a complete
+    // line back means we walked away from a reply the server will still
+    // send, so mark the pipe desynced and let the next caller drain it.
+    auto response = read_line(stdout_fd_, actual_timeout);
+    desynced_ = response.empty();
+    return response;
+}
+
+/**
+ * @brief Discard replies left over from an abandoned request — see header.
+ * @return Number of orphaned lines discarded.
+ * @req REQ-MCP-026
+ * @utility
+ * @version 2.13.0
+ */
+int StdioTransport::drain_orphaned_responses() {
+    constexpr int kMaxLines = 64;
+    constexpr size_t kMaxBytes = 1u << 20;  // 1 MiB
+    int lines = 0;
+    size_t bytes = 0;
+    while (lines < kMaxLines && bytes < kMaxBytes) {
+        struct pollfd pfd{stdout_fd_, POLLIN, 0};
+        if (::poll(&pfd, 1, 0) <= 0) { break; }
+        char ch = 0;
+        if (::read(stdout_fd_, &ch, 1) <= 0) { break; }
+        ++bytes;
+        if (ch == '\n') { ++lines; }
+    }
+    return lines;
 }
 
 /**
@@ -330,6 +379,35 @@ void StdioTransport::clear_interrupt() {
  */
 bool StdioTransport::is_interrupted() const {
     return cancel_flag_.load(std::memory_order_acquire);
+}
+
+/**
+ * @brief Whether THIS request should abort (gh#158, v2.13.0).
+ *
+ * Two independent reasons, and they mean different things.
+ *
+ * `cancel_flag_` is the HANDLE-WIDE latch gh#150 built: set by
+ * `ServerManager::interrupt_external_tools()` on every transport at once,
+ * which is what `entropic_interrupt()` ("stop everything") wants.
+ *
+ * `current_run_cancelled()` is the token of the run that issued THIS call,
+ * published to this thread by the engine (`RunCancelScope`). Once runs are
+ * keyed per session, `entropic_interrupt_session("A")` must abort A's
+ * in-flight tool call and leave B's alone — so it sets only A's token and
+ * never touches the latch. Reaching for the latch there would abort B and
+ * hand it an empty result indistinguishable from a real one, which is the
+ * gh#150 defect arriving through a different door.
+ *
+ * A transport used outside any run (discovery, the initialize handshake)
+ * sees no token and is governed by the latch alone, exactly as before.
+ *
+ * @return true when this request must stop.
+ * @utility
+ * @version 2.13.0
+ */
+bool StdioTransport::request_cancelled() const {
+    return cancel_flag_.load(std::memory_order_acquire)
+        || entropic::current_run_cancelled();
 }
 
 /**
@@ -511,7 +589,7 @@ int StdioTransport::poll_until_ready(
  * @param timeout_ms Timeout.
  * @return Line without newline, or empty on error/timeout/cancel.
  * @utility
- * @version 2.0.6-rc16
+ * @version 2.13.0
  */
 std::string StdioTransport::read_line(int fd, uint32_t timeout_ms) {
     std::string line;
@@ -520,7 +598,7 @@ std::string StdioTransport::read_line(int fd, uint32_t timeout_ms) {
 
     while (true) {
         // P1-10: short-circuit if the engine interrupted this request.
-        if (cancel_flag_.load(std::memory_order_acquire)) {
+        if (request_cancelled()) {
             logger->info("Transport read cancelled by interrupt");
             break;
         }

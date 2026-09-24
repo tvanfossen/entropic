@@ -388,7 +388,7 @@ std::string load_identity(
  * @param data_dir Bundled data directory.
  * @param[out] body Output constitution text.
  * @return Empty string on success, error on failure.
- * @version 1.8.2
+ * @version 2.13.0
  * @utility
  */
 std::string load_constitution(
@@ -419,6 +419,12 @@ std::string load_constitution(
         if (err.empty()) {
             body = std::move(result.body);
             s_log->info("Constitution loaded from {}", path.string());
+        } else {
+            // gh#163: report the failure where the state is known. Every
+            // caller used to drop this string, so a rejected constitution
+            // was indistinguishable from one that was never configured.
+            body.clear();
+            s_log->warn("Constitution not loaded: {}", err);
         }
     }
 
@@ -471,19 +477,70 @@ static std::string load_app_context_file(
 }
 
 /**
+ * @brief Classify the app_context configuration.
+ * @param app_context_path Configured path (nullopt = none).
+ * @param app_context_content Inline text (nullopt = none).
+ * @param disabled true when `app_context: false`.
+ * @return The state this configuration is in.
+ * @req REQ-TYPE-005
+ * @version 2.13.0
+ */
+AppContextState classify_app_context(
+    const std::optional<std::filesystem::path>& app_context_path,
+    const std::optional<std::string>& app_context_content,
+    bool disabled)
+{
+    // gh#141: inline content wins over a path, but NOT over an explicit
+    // opt-out — `app_context: false` still means off, whatever else is set.
+    AppContextState state = AppContextState::NOT_CONFIGURED;
+    if (disabled) {
+        state = AppContextState::DISABLED;
+    } else if (app_context_content.has_value()) {
+        state = AppContextState::INLINE;
+    } else if (app_context_path.has_value()) {
+        state = AppContextState::FROM_PATH;
+    }
+    return state;
+}
+
+/**
+ * @brief The log message describing one app_context state.
+ * @param state State to describe.
+ * @return A static message, distinct per state.
+ * @req REQ-TYPE-005
+ * @version 2.13.0
+ */
+const char* app_context_state_message(AppContextState state)
+{
+    // gh#163: three of these four states used to share one line,
+    // "App context disabled (not configured)" — which told a consumer
+    // whose path had been REJECTED that they had never configured one.
+    const char* msg = "App context not configured (no `app_context` key)";
+    if (state == AppContextState::DISABLED) {
+        msg = "App context explicitly disabled (`app_context: false`)";
+    } else if (state == AppContextState::INLINE) {
+        msg = "App context supplied inline (`app_context: {content: ...}`)";
+    } else if (state == AppContextState::FROM_PATH) {
+        msg = "App context configured but rejected";
+    }
+    return msg;
+}
+
+/**
  * @brief Load app_context from inline content or a path, with tri-state resolution.
  *
  * Resolution order (gh#141): an explicit opt-out wins over everything; then
  * inline content, which is used without touching the filesystem; then a path.
+ * The state that produced no body is named in the log (gh#163).
  *
  * @param app_context_path Custom path (nullopt = none configured).
  * @param app_context_content Inline text (nullopt = none supplied).
  * @param disabled true if app_context explicitly disabled.
  * @param data_dir Bundled data directory.
- * @param[out] body Output app_context text.
+ * @param[out] body Output app_context text; cleared whenever no body loads.
  * @return Empty string on success, error on failure.
  * @req REQ-TYPE-005
- * @version 2.11.0
+ * @version 2.13.0
  * @utility
  */
 std::string load_app_context(
@@ -494,25 +551,138 @@ std::string load_app_context(
     std::string& body)
 {
     std::string err;
+    const auto state = classify_app_context(
+        app_context_path, app_context_content, disabled);
 
-    // gh#141: inline content wins over a path, but NOT over an explicit
-    // opt-out — `app_context: false` still means off, whatever else is set.
-    // Checked before the path branch so the filesystem is never touched when
-    // the caller already holds the text; that is the whole point of the
-    // feature for a consumer that cannot write the file.
-    if (!disabled && app_context_content.has_value()) {
+    if (state == AppContextState::INLINE) {
         body = *app_context_content;
-        s_log->info("App context supplied inline ({} bytes)", body.size());
-        return err;
-    }
-
-    if (disabled || !app_context_path.has_value()) {
-        s_log->info("App context disabled (not configured)");
-        body.clear();
-    } else {
+        s_log->info("{} — {} bytes",
+                    app_context_state_message(state), body.size());
+    } else if (state == AppContextState::FROM_PATH) {
         err = load_app_context_file(*app_context_path, data_dir, body);
+        if (!err.empty()) {
+            // The path was named and could not be used. Say so — this is
+            // the state the reporter was in, described as "not configured".
+            body.clear();
+            s_log->warn("{}: {}", app_context_state_message(state), err);
+        }
+    } else {
+        body.clear();
+        s_log->info("{}", app_context_state_message(state));
     }
 
+    return err;
+}
+
+/**
+ * @brief Load both shared prompt sources, logging rather than discarding.
+ * @param config Parsed engine config.
+ * @param data_dir Bundled data directory.
+ * @param[out] constitution Constitution body (empty when it failed).
+ * @param[out] app_context App context body (empty when it failed).
+ * @req REQ-TYPE-005
+ * @version 2.13.0 [reviewed]
+ */
+void load_shared_prompt_sources(
+    const entropic::ParsedConfig& config,
+    const std::filesystem::path& data_dir,
+    std::string& constitution,
+    std::string& app_context)
+{
+    // gh#156: these two return values were dropped at all three call
+    // sites. A working load announced itself ("App context loaded
+    // from ..."), a failing one said nothing — the asymmetry WAS the
+    // bug, and it cost a consumer twenty minutes.
+    //
+    // gh#163: the report now lives inside each loader, which is the only
+    // layer that knows WHICH state produced no body. Collapsing the two
+    // calls here still matters — it is one call site to keep honest
+    // instead of three.
+    load_constitution(config.constitution, config.constitution_disabled,
+                      data_dir, constitution);
+    load_app_context(config.app_context, config.app_context_content,
+                     config.app_context_disabled, data_dir, app_context);
+}
+
+/**
+ * @brief Check a configured constitution path loads.
+ * @param config Parsed engine config.
+ * @param data_dir Bundled data directory.
+ * @return Empty string when unconfigured, disabled, or loadable.
+ * @dg_internal
+ * @version 2.13.0
+ */
+static std::string check_constitution_source(
+    const entropic::ParsedConfig& config,
+    const std::filesystem::path& data_dir)
+{
+    std::string err;
+    if (config.constitution.has_value() && !config.constitution_disabled) {
+        std::string body;
+        err = load_constitution(config.constitution, false, data_dir, body);
+        if (!err.empty()) {
+            err = "constitution: " + err
+                + ". A constitution file is one of entropic's own prompt "
+                  "documents: it needs YAML frontmatter with "
+                  "`type: constitution` between `---` lines.";
+        }
+    }
+    return err;
+}
+
+/**
+ * @brief Check a configured app_context path loads.
+ *
+ * Inline content (gh#141) and `app_context: false` are never checked —
+ * neither touches the filesystem, and both must keep working untouched.
+ *
+ * @param config Parsed engine config.
+ * @param data_dir Bundled data directory.
+ * @return Empty string when unconfigured, disabled, inline, or loadable.
+ * @dg_internal
+ * @version 2.13.0
+ */
+static std::string check_app_context_source(
+    const entropic::ParsedConfig& config,
+    const std::filesystem::path& data_dir)
+{
+    const bool configured_as_path = config.app_context.has_value()
+        && !config.app_context_disabled
+        && !config.app_context_content.has_value();
+    std::string err;
+    if (configured_as_path) {
+        std::string body;
+        err = load_app_context(config.app_context, std::nullopt, false,
+                               data_dir, body);
+        if (!err.empty()) {
+            err = "app_context: " + err
+                + ". app_context is read as one of entropic's own prompt "
+                  "documents, so the file needs YAML frontmatter with "
+                  "`type: app_context` between `---` lines. To supply a "
+                  "document you do not own — a repository's CLAUDE.md, for "
+                  "example — pass the text inline instead of a path: "
+                  "`app_context: {content: \"...\"}` (gh#141).";
+        }
+    }
+    return err;
+}
+
+/**
+ * @brief Check every configured prompt source can be loaded.
+ * @param config Parsed engine config.
+ * @param data_dir Bundled data directory.
+ * @return Empty string on success, an actionable message otherwise.
+ * @req REQ-TYPE-005
+ * @version 2.13.0
+ */
+std::string validate_configured_prompts(
+    const entropic::ParsedConfig& config,
+    const std::filesystem::path& data_dir)
+{
+    std::string err = check_constitution_source(config, data_dir);
+    if (err.empty()) {
+        err = check_app_context_source(config, data_dir);
+    }
     return err;
 }
 
@@ -586,17 +756,14 @@ std::string resolve_tier_identity(
  * @param data_dir Bundled data directory.
  * @return Assembled system prompt string.
  * @dg_internal
- * @version 2.11.0
+ * @version 2.13.0
  */
 std::string assemble(
     const entropic::ParsedConfig& config,
     const std::filesystem::path& data_dir) {
     std::string constitution, app_ctx;
 
-    load_constitution(config.constitution, config.constitution_disabled,
-                      data_dir, constitution);
-    load_app_context(config.app_context, config.app_context_content,
-                     config.app_context_disabled, data_dir, app_ctx);
+    load_shared_prompt_sources(config, data_dir, constitution, app_ctx);
 
     std::string identity_body;
     auto tier_it = config.models.tiers.find(config.models.default_tier);

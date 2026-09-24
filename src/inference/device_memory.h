@@ -42,4 +42,20 @@ namespace entropic {
  */
 uint64_t query_device_free_vram_bytes();
 
+/**
+ * @brief This process's RLIMIT_MEMLOCK, in bytes (gh#148).
+ *
+ * The ceiling on what `use_mlock` can pin. Reported so the admission gate
+ * can REFUSE a configuration that would lock more than the limit allows
+ * rather than discovering it as an OOM kill — pinned pages cannot be
+ * reclaimed under pressure, which is what turned partial offload of a
+ * 13 GB model from slow into fatal (v2.12.0).
+ *
+ * @return The soft limit in bytes, or `kMemlockUnlimited` when unlimited or
+ *         unreadable — both mean "this gate has nothing to say".
+ * @req REQ-INFER-019
+ * @version 2.13.0
+ */
+uint64_t host_memlock_limit_bytes();
+
 }  // namespace entropic

@@ -16,8 +16,10 @@
 
 #include <unistd.h>
 #include <atomic>
+#include <cstdint>
 #include <filesystem>
 #include <fstream>
+#include <string>
 
 namespace fs = std::filesystem;
 using namespace entropic;
@@ -270,6 +272,145 @@ TEST_CASE("IgnoreMatcher compiles patterns containing backslash escapes",
     // A "normal" filename without a literal `*` must not match —
     // the escape kept `*` as literal rather than glob-wildcard.
     CHECK_FALSE(m.is_ignored("normal.txt", false));
+}
+
+// ── gh#161: bounded work, pruned discovery ───────────────
+
+namespace {
+
+/**
+ * @brief Build a wide tree of nested .gitignore files.
+ *
+ * `tops` x `subs` directories, each with its own `.gitignore` holding
+ * `rules` patterns — the shape of a repository that vendors its
+ * dependencies, where the reporter measured 5,061 rules.
+ *
+ * @internal
+ * @version 2.13.0
+ */
+void build_nested_ignore_tree(const fs::path& root, int tops, int subs,
+                              int rules) {
+    for (int t = 0; t < tops; ++t) {
+        auto top = root / ("d" + std::to_string(t));
+        for (int s = 0; s < subs; ++s) {
+            auto dir = top / ("s" + std::to_string(s));
+            std::string body;
+            for (int r = 0; r < rules; ++r) {
+                body += "d" + std::to_string(t) + "_s"
+                      + std::to_string(s) + "_r" + std::to_string(r)
+                      + ".dat\n";
+            }
+            write_file(dir / ".gitignore", body);
+            write_file(dir / "probe.cpp", "x");
+        }
+        write_file(top / ".gitignore",
+                   "top" + std::to_string(t) + ".out\n");
+    }
+}
+
+} // namespace
+
+TEST_CASE("IgnoreMatcher evaluates only the rules on a path's own "
+          "ancestry",
+          "[mcp][ignore_matcher][2.13.0][gh-161]") {
+    // gh#161: a repo vendoring boost/opencv/pcl loaded 5,061 rules and
+    // is_ignored ran TWO regexes against EVERY one of them for EVERY
+    // path — 87 s for a single glob. A rule anchored at
+    // deps/boost/libs/geometry/doc cannot match src/main.cpp, so the
+    // only defensible bound on the work is the rules on the path's own
+    // ancestry. Asserted as an evaluation COUNT, never as elapsed time.
+    TempDir tmp;
+    write_file(tmp.path() / ".gitignore", "*.tmp\n*.bak\n");
+    constexpr int kTops = 8;
+    constexpr int kSubs = 8;
+    constexpr int kRules = 10;
+    build_nested_ignore_tree(tmp.path(), kTops, kSubs, kRules);
+
+    IgnoreMatcher m;
+    m.load(tmp.path());
+
+    // 2 root + 8 top-level + 640 leaf rules across 73 distinct bases.
+    REQUIRE(m.rule_count() >= 640);
+
+    // Ancestry of d3/s5/probe.cpp: root (2) + d3 (1) + d3/s5 (10) = 13
+    // rules, so 26 regex evaluations is the ceiling — two per rule,
+    // and the implementation may legitimately use fewer.
+    constexpr std::uint64_t kAncestryCeiling = 2 * (2 + 1 + 10);
+
+    m.reset_regex_evals();
+    CHECK_FALSE(m.is_ignored("d3/s5/probe.cpp", false));
+    CHECK(m.regex_evals() <= kAncestryCeiling);
+
+    // Same bound when the path IS ignored, by its own directory's rule…
+    m.reset_regex_evals();
+    CHECK(m.is_ignored("d3/s5/d3_s5_r4.dat", false));
+    CHECK(m.regex_evals() <= kAncestryCeiling);
+
+    // …and when it is ignored by a rule from the ROOT .gitignore.
+    m.reset_regex_evals();
+    CHECK(m.is_ignored("d3/s5/scratch.tmp", false));
+    CHECK(m.regex_evals() <= kAncestryCeiling);
+
+    // A sibling's rule must not leak across bases.
+    CHECK_FALSE(m.is_ignored("d3/s5/d2_s1_r0.dat", false));
+}
+
+TEST_CASE("IgnoreMatcher discovery prunes skip-list and ignored "
+          "directories",
+          "[mcp][ignore_matcher][2.13.0][gh-161]") {
+    // gh#161: load_nested_gitignores claimed in its own comment to skip
+    // excluded directories and did not — it walked the ENTIRE tree,
+    // .git included, loading ~200 vendored .gitignore files at startup.
+    // Rule count is the probe: a .gitignore inside a pruned directory
+    // was never opened, so its rules cannot be in the set.
+    TempDir tmp;
+    write_file(tmp.path() / ".gitignore", "vendor/\n");
+    write_file(tmp.path() / ".git" / "hooks" / ".gitignore", "a\nb\nc\n");
+    write_file(tmp.path() / "node_modules" / "pkg" / ".gitignore", "d\ne\n");
+    write_file(tmp.path() / "__pycache__" / ".gitignore", "f\n");
+    write_file(tmp.path() / ".venv" / "lib" / ".gitignore", "g\n");
+    write_file(tmp.path() / "vendor" / "boost" / ".gitignore", "h\ni\n");
+    write_file(tmp.path() / "src" / ".gitignore", "j\n");
+
+    IgnoreMatcher m;
+    m.load(tmp.path());
+
+    // Root `vendor/` + src's `j`. Nothing else was even opened.
+    CHECK(m.rule_count() == 2);
+    CHECK(m.is_ignored("src/j", false));
+    CHECK(m.is_ignored("vendor/boost/x.hpp", false));
+    CHECK_FALSE(m.is_ignored(".git/hooks/a", false));
+    CHECK_FALSE(m.is_ignored("node_modules/pkg/d", false));
+    CHECK_FALSE(m.is_ignored("__pycache__/f", false));
+    CHECK_FALSE(m.is_ignored(".venv/lib/g", false));
+    // git itself never re-includes below an excluded directory, so a
+    // .gitignore under vendor/ is unreachable by construction — the
+    // path stays excluded by the root's `vendor/` rule either way.
+    CHECK(m.is_ignored("vendor/boost/h", false));
+}
+
+TEST_CASE("IgnoreMatcher preserves last-match-wins ACROSS anchor bases",
+          "[mcp][ignore_matcher][2.13.0][gh-161]") {
+    // The semantic guard on gh#161's bucketing: consulting only the
+    // buckets on a path's ancestry must not reorder the rule set. A
+    // naive "deepest base first" bucketing passes every other test in
+    // this file and fails this one.
+    TempDir tmp;
+    write_file(tmp.path() / ".gitignore", "");
+    // Loaded second, base "sub": exclude *.txt, re-include early.txt.
+    write_file(tmp.path() / "sub" / ".gitignore", "*.txt\n!early.txt\n");
+    // Loaded LAST, base "" (the parent): re-include sub/keep.txt and
+    // re-exclude sub/early.txt. Both are later rules at a SHALLOWER
+    // base than the ones they override.
+    write_file(tmp.path() / ".explorerignore",
+               "!sub/keep.txt\nsub/early.txt\n");
+
+    IgnoreMatcher m;
+    m.load(tmp.path());
+
+    CHECK(m.is_ignored("sub/other.txt", false));   // nested rule stands
+    CHECK_FALSE(m.is_ignored("sub/keep.txt", false));  // later negation
+    CHECK(m.is_ignored("sub/early.txt", false));       // later exclude
 }
 
 TEST_CASE("IgnoreMatcher tolerates a malformed character class",

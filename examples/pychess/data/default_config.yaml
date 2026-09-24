@@ -5,6 +5,10 @@
 
 constitution: prompts/constitution.md
 
+# gh#154 (v2.13.0): an unresolvable tier `grammar:` stem now fails
+# configure. config_dir names the root searched for `grammars/`.
+config_dir: data
+
 models:
   # Thinker tier: fast analysis + strategic planning
   thinker:

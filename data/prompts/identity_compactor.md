@@ -7,7 +7,6 @@ focus:
   - preserving factual content and critical tool results
   - eliminating redundancy from conversation history
 examples: []
-grammar: grammars/compactor.gbnf
 auto_chain: null
 allowed_tools: []
 max_output_tokens: 512

@@ -1,6 +1,6 @@
 {
   "name": "glob",
-  "description": "Find files matching a glob pattern within the project directory.\n\nReturns a list of matching file paths relative to project root.\nResults are capped at 500 entries.\n\n**Example patterns:**\n- `**/*.py` — all Python files\n- `src/**/*.md` — all Markdown files under src/\n- `*.json` — JSON files in project root\n- `tests/**/test_*.py` — all test files",
+  "description": "Find files matching a glob pattern within the project directory.\n\nReturns a list of matching file paths relative to project root.\nResults are capped at 500 entries, and the directory walk itself is capped (config `filesystem.max_walk_entries`). If the walk is cut short, the LAST array element is an object \u2014 `{\"truncated\": true, \"note\": \"walk truncated at N entries \u2014 narrow the pattern\"}` \u2014 instead of a path: the answer is partial, so narrow the pattern and retry.\n\n**Example patterns:**\n- `**/*.py` — all Python files\n- `src/**/*.md` — all Markdown files under src/\n- `*.json` — JSON files in project root\n- `tests/**/test_*.py` — all test files",
   "inputSchema": {
     "type": "object",
     "properties": {

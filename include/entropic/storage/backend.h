@@ -231,6 +231,22 @@ public:
      * @req REQ-SAFE-001
      * @version 2.1.6
      */
+    /**
+     * @brief Most recent completed delegation to a tier (gh#162, v2.13.0).
+     *
+     * Backs `entropic.resume_delegation`'s `target` form. Only completed
+     * rows are eligible: resuming a delegation that failed or is still
+     * running would seed the child with a broken conversation.
+     *
+     * @param target_tier Tier to search for.
+     * @param[out] delegation_id Resolved id on success.
+     * @return true when such a delegation exists.
+     * @req REQ-STOR-005
+     * @version 2.13.0
+     */
+    bool latest_delegation_for_target(const std::string& target_tier,
+                                      std::string& delegation_id);
+
     bool search_delegations(const std::string& query, int max_results,
                             std::string& result_json);
 

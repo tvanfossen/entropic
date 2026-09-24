@@ -21,6 +21,9 @@
 
 #pragma once
 
+#include <entropic/types/config.h>
+#include <entropic/types/generation_result.h>
+
 #include <string>
 
 namespace entropic {
@@ -32,6 +35,14 @@ namespace entropic {
 enum class GrammarSource {
     none,       ///< Unconstrained
     request,    ///< GenerationParams::grammar (COMMON_GRAMMAR_TYPE_USER)
+
+    /// The TIER's identity frontmatter `grammar:` stem (gh#154). Reaches
+    /// the sampler through `GenerationParams::grammar` exactly like
+    /// `request` does — which is precisely why it needed naming: a
+    /// consumer reading a result could not tell a tier-configured grammar
+    /// from one they passed, or from none at all.
+    tier,
+
     tool_call,  ///< Render-derived (COMMON_GRAMMAR_TYPE_TOOL_CALLS, needs prefill)
 
     /// Sentinel — MUST remain last. Adding a source above this line breaks
@@ -70,18 +81,93 @@ inline constexpr int grammar_source_count() {
  *
  * @param request_grammar GenerationParams::grammar.
  * @param tool_grammar Render-derived tool-call GBNF.
- * @return GrammarSource::request when a request grammar is present,
- *         GrammarSource::tool_call when only the render-derived grammar is,
- *         GrammarSource::none when neither is.
+ * @param request_from_tier true when the request-side text came from the
+ *        tier's frontmatter `grammar:` stem rather than from the caller
+ *        (gh#154). Reporting-only: the two are applied identically.
+ * @return GrammarSource::request / ::tier when a request-side grammar is
+ *         present, GrammarSource::tool_call when only the render-derived
+ *         grammar is, GrammarSource::none when neither is.
  * @req REQ-INFER-008
  * @req REQ-TYPE-004
- * @version 2.10.4
+ * @version 2.13.0
  */
 inline GrammarSource resolve_grammar_source(const std::string& request_grammar,
-                                            const std::string& tool_grammar) {
-    if (!request_grammar.empty()) { return GrammarSource::request; }
-    if (!tool_grammar.empty()) { return GrammarSource::tool_call; }
-    return GrammarSource::none;
+                                            const std::string& tool_grammar,
+                                            bool request_from_tier = false) {
+    GrammarSource source = GrammarSource::none;
+    if (!request_grammar.empty()) {
+        source = request_from_tier ? GrammarSource::tier
+                                   : GrammarSource::request;
+    } else if (!tool_grammar.empty()) {
+        source = GrammarSource::tool_call;
+    }
+    return source;
+}
+
+/**
+ * @brief Whether a source is applied as a request-side grammar.
+ *
+ * `tier` and `request` differ only in REPORTING — both arrive as
+ * `GenerationParams::grammar` and are applied as COMMON_GRAMMAR_TYPE_USER.
+ * The application site asks this rather than comparing against `request`
+ * alone, so naming a further request-side source cannot silently stop the
+ * grammar being applied.
+ *
+ * @param source Resolved source.
+ * @return true for `request` and `tier`.
+ * @req REQ-INFER-008
+ * @version 2.13.0
+ */
+inline bool is_request_grammar(GrammarSource source) {
+    return source == GrammarSource::request || source == GrammarSource::tier;
+}
+
+/**
+ * @brief A TIER named a grammar and nothing resolved it (gh#154).
+ *
+ * Reads only what `ModelOrchestrator::resolve_grammar_key` already wrote,
+ * so there is no second copy of the precedence rule to keep in sync: the
+ * key is recorded BEFORE the registry lookup and `grammar` stays empty
+ * when the lookup misses, so the three fields together say "the tier
+ * asked, and nothing answered".
+ *
+ * Deliberately narrow. A per-call `params.grammar_key` miss is NOT this:
+ * it may name a grammar the caller registers later, so it keeps the
+ * documented fail-open and reports itself through
+ * `generations[].grammar.resolved == false`. A tier stem is static
+ * config and the ENGINE selects the tier, so a miss there is a broken
+ * deployment the caller cannot see from the output — the decode would be
+ * unconstrained and shaped exactly like a constrained one.
+ *
+ * @param params Params after `resolve_grammar_key` has run.
+ * @return true when a tier-derived key was named and resolved to nothing.
+ * @req REQ-INFER-007
+ * @version 2.13.0
+ */
+inline bool tier_grammar_unresolved(const GenerationParams& params) {
+    return params.grammar.empty()
+        && params.grammar_from_tier
+        && !params.resolved_grammar_key.empty();
+}
+
+/**
+ * @brief Stable wire name for a grammar source.
+ * @param source Resolved source.
+ * @return "none" | "request" | "tier" | "tool_call". Serialized into
+ *         `entropic_metrics_json`, so these strings are a consumer contract.
+ * @req REQ-INFER-008
+ * @version 2.13.0
+ */
+inline const char* grammar_source_name(GrammarSource source) {
+    const char* name = "none";
+    if (source == GrammarSource::request) {
+        name = "request";
+    } else if (source == GrammarSource::tier) {
+        name = "tier";
+    } else if (source == GrammarSource::tool_call) {
+        name = "tool_call";
+    }
+    return name;
 }
 
 /**
@@ -96,6 +182,45 @@ inline GrammarSource resolve_grammar_source(const std::string& request_grammar,
 inline bool grammar_sources_collide(const std::string& request_grammar,
                                     const std::string& tool_grammar) {
     return !request_grammar.empty() && !tool_grammar.empty();
+}
+
+/**
+ * @brief Describe what constrained one decode, for the result record (gh#154).
+ *
+ * Reads the SAME two inputs `apply_grammar_source` reads — the resolved
+ * `params.grammar` and the render-derived tool grammar — through the same
+ * `resolve_grammar_source`, so the record cannot disagree with what the
+ * sampler did. That is the property worth having: a provenance field
+ * computed from a parallel rule would be a second thing to keep in sync,
+ * and gh#95 / gh#108 / gh#134 are all instances of that going wrong.
+ *
+ * A key that was NAMED but produced no text reports `resolved: false` with
+ * the naming source still in `source` — the fail-open state a consumer
+ * previously could only detect by a MISSING log line.
+ *
+ * @param params Resolved generation params (post resolve_grammar_key).
+ * @param tool_grammar Render-derived tool-call GBNF ("" when none).
+ * @return Provenance for `GenerationResult::grammar`.
+ * @req REQ-INFER-008
+ * @version 2.13.0
+ */
+inline GrammarProvenance describe_grammar(const GenerationParams& params,
+                                          const std::string& tool_grammar) {
+    const auto source = resolve_grammar_source(
+        params.grammar, tool_grammar, params.grammar_from_tier);
+    GrammarProvenance provenance;
+    provenance.source = grammar_source_name(source);
+    provenance.key = params.resolved_grammar_key;
+    provenance.resolved = (source != GrammarSource::none);
+    if (!provenance.resolved && !provenance.key.empty()) {
+        provenance.source = params.grammar_from_tier
+            ? grammar_source_name(GrammarSource::tier)
+            : grammar_source_name(GrammarSource::request);
+    }
+    if (grammar_sources_collide(params.grammar, tool_grammar)) {
+        provenance.conflict_winner = provenance.source;
+    }
+    return provenance;
 }
 
 } // namespace entropic

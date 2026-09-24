@@ -35,6 +35,13 @@ struct ExternalServerConfig {
     std::vector<std::string> args;                 ///< Stdio command args
     std::map<std::string, std::string> env;        ///< Stdio env vars
     std::string url;                               ///< SSE URL (empty for stdio)
+    /// @brief gh#166 (v2.13.0): cwd for the spawned child ("" = inherit).
+    ///
+    /// An external server is a separate process, and before this it took
+    /// whatever cwd the HOST happened to have — which made a repo-scoped
+    /// server useless in a second workspace. `ServerManager` fills this
+    /// with its own root when a spec leaves it empty.
+    std::string working_dir;
 };
 
 /**

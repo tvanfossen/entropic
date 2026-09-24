@@ -11,6 +11,7 @@
 #include <entropic/core/sandbox.h>
 #include <entropic/mcp/utf8_sanitize.h>
 #include <entropic/types/logging.h>
+#include <entropic/types/run_scope.h>
 #include <entropic/types/tool_result.h>
 
 #include <nlohmann/json.hpp>
@@ -317,16 +318,34 @@ void AgentEngine::apply_identity_overrides(LoopContext& ctx) {
 
 /**
  * @brief Resolve effective max_iterations, honouring per-identity override.
+ *
+ * gh#182 (v2.13.0): a delegated child also carries the `max_turns` the
+ * MODEL asked for on `entropic.delegate`. The two bounds are resolved
+ * here, and the STRICTER wins — a model may LOWER the operator's limit,
+ * never raise it. `delegated_max_turns < 1` is "the argument was
+ * omitted" and leaves this function exactly as it was.
+ *
+ * Why the resolver and not the two writers: `apply_identity_overrides`
+ * runs at loop entry and `DelegationManager::run_child` sets the child's
+ * request before that, so folding one into the other would make the
+ * outcome depend on their order. Taking the min at READ time cannot.
+ *
  * @param ctx Loop context.
- * @return Per-identity override if set (>=0), otherwise LoopConfig default.
+ * @return Per-identity override if set (>=0), otherwise LoopConfig
+ *         default, clamped down by a child's max_turns when it carries one.
  * @req REQ-IDEN-001
  * @req REQ-LOOP-002
- * @version 2.0.6-rc16
+ * @req REQ-DELEG-002
+ * @version 2.13.0
  */
 int AgentEngine::resolve_max_iterations(const LoopContext& ctx) const {
-    return ctx.effective_max_iterations >= 0
+    int operator_limit = ctx.effective_max_iterations >= 0
         ? ctx.effective_max_iterations
         : loop_config_.max_iterations;
+    if (ctx.delegated_max_turns < 1) {
+        return operator_limit;
+    }
+    return std::min(operator_limit, ctx.delegated_max_turns);
 }
 
 /**
@@ -343,39 +362,98 @@ int AgentEngine::resolve_max_tool_calls(const LoopContext& ctx) const {
 }
 
 /**
- * @brief Run the engine loop on a pre-built context.
- * @param ctx Loop context to execute.
- * @param inherit_interrupt When true, do not reset the interrupt flag.
+ * @brief Everything a loop needs done to its context before it runs.
+ *
+ * gh#183 (v2.13.0): the ONE preamble both entry points share.
+ * `apply_identity_overrides` used to be called only from `run_loop` —
+ * the door a delegation CHILD comes through — so a tier's identity
+ * `max_iterations` / `max_tool_calls_per_turn` applied when that tier
+ * ran as a child and were silently ignored when the SAME tier ran as
+ * the lead through `run()`. One preamble rather than a second call
+ * site, because two copies of a setup sequence drift.
+ *
+ * What is deliberately NOT in here: the interrupt reset and the pause
+ * clear. Those are exactly what the two entries must keep doing
+ * DIFFERENTLY — `run()` is always a fresh top-level turn and resets
+ * unconditionally, while `run_loop` resets only when `inherit_interrupt`
+ * is false, so a child cannot swallow a parent interrupt raised at
+ * dispatch (gh#81). Hoisting them would hand a top-level run a child's
+ * inheritance semantics, or the reverse.
+ *
+ * @param ctx Loop context, mutated in place.
+ * @req REQ-IDEN-001
  * @req REQ-LOOP-001
- * @req REQ-LOOP-006
  * @req REQ-COMPACT-002
- * @version 2.4.3
+ * @version 2.13.0
  */
-void AgentEngine::run_loop(LoopContext& ctx, bool inherit_interrupt) {
-    // gh#81 (v2.4.3): child delegation loops inherit the parent's
-    // interrupt state — clearing it here would swallow a parent
-    // interrupt raised just before the child was dispatched. Only a
-    // fresh top-level turn resets.
-    if (!inherit_interrupt) {
-        reset_interrupt();
-        pause_flag_.store(false);
-    }
+void AgentEngine::begin_loop_preamble(LoopContext& ctx) {
     apply_identity_overrides(ctx);
     reinject_context_anchors(ctx);
     if (ctx.metrics.start_time == 0.0) {
         ctx.metrics.start_time = now_seconds();
     }
     set_state(ctx, AgentState::PLANNING);
+}
+
+/**
+ * @brief Run the engine loop on a pre-built context.
+ * @param ctx Loop context to execute.
+ * @param inherit_interrupt When true, do not reset the interrupt flag.
+ * @req REQ-LOOP-001
+ * @req REQ-LOOP-006
+ * @req REQ-COMPACT-002
+ * @req REQ-IDEN-001
+ * @version 2.13.0
+ */
+void AgentEngine::run_loop(LoopContext& ctx, bool inherit_interrupt) {
+    // gh#158 (v2.13.0): publish THIS run's cancel token to THIS thread, so
+    // an external MCP tool call made from inside the loop aborts when its
+    // own session is interrupted and not when some other session is. The
+    // scope restores the previous token, so a child delegation loop nested
+    // inside a parent turn cannot orphan the parent's.
+    RunCancelScope cancel_scope(&run_cancel_flag());
+    // gh#81 (v2.4.3): child delegation loops inherit the parent's
+    // interrupt state — clearing it here would swallow a parent
+    // interrupt raised just before the child was dispatched. Only a
+    // fresh top-level turn resets.
+    if (!inherit_interrupt) {
+        reset_interrupt();
+        clear_pause_for_fresh_turn();
+    }
+    begin_loop_preamble(ctx);  // gh#183: shared with run()
     loop(ctx);
     ctx.metrics.end_time = now_seconds();
-    // Per-tier accumulator (P2-15 follow-up, 2.0.6-rc16.2)
-    auto& tm = per_tier_metrics_[
-        ctx.locked_tier.empty() ? "lead" : ctx.locked_tier];
-    tm.iterations  += ctx.metrics.iterations;
-    tm.tool_calls  += ctx.metrics.tool_calls;
-    tm.tokens_used += ctx.metrics.tokens_used;
-    tm.errors      += ctx.metrics.errors;
-    tm.end_time    += (ctx.metrics.end_time - ctx.metrics.start_time);
+    accumulate_per_tier(ctx);
+}
+
+/**
+ * @brief Clear the handle-wide pause only when nothing else is running.
+ *
+ * gh#158 (v2.13.0). `pause_flag_` is handle-wide BY DESIGN — see decision
+ * #66: `pause()` is raised from a thread that owns no run, so unlike the
+ * interrupt it cannot be routed to a session by a thread-local token, and
+ * there is no `entropic_pause_session` because no consumer has asked for
+ * one. What was NOT by design is that a fresh turn cleared it
+ * unconditionally: starting run B silently un-paused run A, the same shape
+ * as the interrupt defect this issue set out to fix.
+ *
+ * So the clear is conditional. With one run in flight (which includes every
+ * `concurrent_sessions: false` configuration) this is exactly the old
+ * `pause_flag_.store(false)`. With another run already in flight, the pause
+ * belongs to that run and a starting turn leaves it alone.
+ *
+ * @dg_internal
+ * @version 2.13.0
+ */
+void AgentEngine::clear_pause_for_fresh_turn() {
+    std::size_t others = 0;
+    {
+        std::lock_guard<std::mutex> guard(runs_mutex_);
+        others = active_runs_.size();
+    }
+    if (others <= 1) {
+        pause_flag_.store(false);
+    }
 }
 
 /**
@@ -387,7 +465,8 @@ void AgentEngine::run_loop(LoopContext& ctx, bool inherit_interrupt) {
  * @req REQ-LOOP-001
  * @req REQ-LOOP-002
  * @req REQ-COMPACT-002
- * @version 2.12.0
+ * @req REQ-IDEN-001
+ * @version 2.13.0
  */
 std::vector<Message> AgentEngine::run(std::vector<Message> messages,
                                       const std::string& tier_override) {
@@ -398,21 +477,31 @@ std::vector<Message> AgentEngine::run(std::vector<Message> messages,
         std::chrono::duration_cast<std::chrono::seconds>(
             std::chrono::system_clock::now().time_since_epoch()).count());
 
+    // gh#158 (v2.13.0): see run_loop — this run's cancel token, published
+    // to this run's thread for the duration of the loop.
+    RunCancelScope cancel_scope(&run_cancel_flag());
+
     LoopContext ctx;
     ctx.messages = std::move(messages);
     ctx.locked_tier = tier_override;  // gh#99: "" routes; non-empty locks
     // gh#144 (v2.12.0): carry the caller-scoped session down to the backend,
     // which maps it to a KV sequence. "" is the default session.
-    ctx.session_key = active_session_key_;
+    ctx.session_key = active_session_key();
     ctx.metrics.start_time = now_seconds();
 
     init_session_conversation(ctx);
 
+    // A fresh top-level turn always starts un-interrupted and un-paused;
+    // only a child loop inherits (gh#81). That asymmetry is why these two
+    // are NOT part of the shared preamble below.
     reset_interrupt();
-    pause_flag_.store(false);
+    clear_pause_for_fresh_turn();
 
-    reinject_context_anchors(ctx);
-    set_state(ctx, AgentState::PLANNING);
+    // gh#183 (v2.13.0): the same preamble run_loop runs — which is how a
+    // tier's identity overrides finally reach a run where that tier is the
+    // LEAD and not somebody's delegate. start_time is already set above, so
+    // the preamble leaves it alone.
+    begin_loop_preamble(ctx);
 
     loop(ctx);
 
@@ -450,12 +539,29 @@ void AgentEngine::init_session_conversation(LoopContext& ctx) {
 
 /**
  * @brief Fold a finished run's metrics into the per-tier totals.
+ *
+ * gh#158 (v2.13.0): both halves under `metrics_mutex_`.
+ *
  * @param ctx Loop context (with completed metrics).
  * @dg_internal
- * @version 2.3.7
+ * @version 2.13.0
  */
 void AgentEngine::accumulate_run_metrics(LoopContext& ctx) {
-    last_metrics_ = ctx.metrics;  // P2-15: snapshot for entropic_status
+    {
+        std::lock_guard<std::mutex> guard(metrics_mutex_);
+        last_metrics_ = ctx.metrics;  // P2-15: snapshot for entropic_status
+    }
+    accumulate_per_tier(ctx);
+}
+
+/**
+ * @brief Fold one run's metrics into the per-tier totals (gh#158).
+ * @param ctx Loop context (with completed metrics).
+ * @dg_internal
+ * @version 2.13.0
+ */
+void AgentEngine::accumulate_per_tier(const LoopContext& ctx) {
+    std::lock_guard<std::mutex> guard(metrics_mutex_);
     // Per-tier accumulator (P2-15 follow-up, 2.0.6-rc16.2)
     auto& tm = per_tier_metrics_[
         ctx.locked_tier.empty() ? "lead" : ctx.locked_tier];
@@ -467,11 +573,151 @@ void AgentEngine::accumulate_run_metrics(LoopContext& ctx) {
 }
 
 /**
+ * @brief Metrics from the most recent completed run — see header (gh#158).
+ * @return A copy of `last_metrics_`, taken under `metrics_mutex_`.
+ * @utility
+ * @version 2.13.0
+ */
+LoopMetrics AgentEngine::last_loop_metrics() const {
+    std::lock_guard<std::mutex> guard(metrics_mutex_);
+    return last_metrics_;
+}
+
+/**
+ * @brief Per-tier aggregated metrics — see header (gh#158).
+ * @return A copy of the per-tier map, taken under `metrics_mutex_`.
+ * @utility
+ * @version 2.13.0
+ */
+std::unordered_map<std::string, LoopMetrics>
+AgentEngine::per_tier_metrics() const {
+    std::lock_guard<std::mutex> guard(metrics_mutex_);
+    return per_tier_metrics_;
+}
+
+/**
+ * @brief The last assistant message with something in it (gh#169).
+ *
+ * "Substantive" is byte-level: any content that is not entirely
+ * whitespace. The loop has not yet pushed its cap message when this
+ * runs, so there is no engine-authored marker to filter out.
+ *
+ * @param ctx Loop context.
+ * @return The content, or "" when the run produced none.
+ * @dg_internal
+ * @version 2.13.0
+ */
+static std::string last_substantive_assistant(const LoopContext& ctx) {
+    std::string found;
+    for (auto rit = ctx.messages.rbegin();
+         rit != ctx.messages.rend() && found.empty(); ++rit) {
+        if (rit->role == "assistant"
+            && rit->content.find_first_not_of(" \t\r\n")
+               != std::string::npos) {
+            found = rit->content;
+        }
+    }
+    return found;
+}
+
+/**
+ * @brief Build an engine-forced stop's final assistant content.
+ *
+ * Shared by BOTH engine-authored terminals — the iteration cap (gh#169)
+ * and the thinking-budget hard cut (gh#181). Either one ANNOTATES the
+ * agent's last substantive output instead of replacing it:
+ * DelegationManager::extract_summary reads the last assistant message,
+ * so replacing it handed the parent a placeholder where the child's
+ * work belonged. One annotator, because two hand-rolled copies of the
+ * same wording is how the two paths drift apart.
+ *
+ * The two branches are worded differently on purpose — a child that
+ * produced nothing must stay distinguishable from one that produced
+ * work and then ran out. That distinction matters MORE on the budget
+ * path: the cut fires when a model narrates instead of calling a tool,
+ * so "it produced something first" is less often true there.
+ *
+ * @param carried Last substantive assistant content ("" when none).
+ * @param reason Reason clause, rendered inside the trailing bracket.
+ * @param stop_noun What stopped the run ("cap" / "cut"), used only in
+ *                  the nothing-was-produced wording.
+ * @return The content for the synthetic completion message.
+ * @dg_internal
+ * @version 2.13.0
+ */
+static std::string annotate_hard_stop(const std::string& carried,
+                                      const std::string& reason,
+                                      const std::string& stop_noun) {
+    std::string out = "[" + reason
+        + " — no substantive output was produced before the "
+        + stop_noun + "]";
+    if (!carried.empty()) {
+        out = carried + "\n\n[" + reason
+            + " — the text above is the agent's last substantive output; "
+              "it did not signal completion]";
+    }
+    return out;
+}
+
+/**
+ * @brief Synthesize the final assistant message a forced stop owes.
+ *
+ * Appends the annotated last substantive output as the final assistant
+ * message, records the caller's terminal_reason (unchanged by gh#169 /
+ * gh#181, and still what DelegationResult::success and the parent-tier
+ * relay read), plus the typed cap_carried_content signal, and forces
+ * COMPLETE.
+ *
+ * @param ctx Loop context (messages, metadata and state mutated).
+ * @param reason Reason clause for annotate_hard_stop.
+ * @param stop_noun What stopped the run ("cap" / "cut").
+ * @param terminal_reason Value written to metadata["terminal_reason"].
+ * @req REQ-LOOP-002
+ * @req REQ-LOOP-005
+ * @version 2.13.0
+ */
+void AgentEngine::finish_with_carried_output(
+    LoopContext& ctx,
+    const std::string& reason,
+    const std::string& stop_noun,
+    const std::string& terminal_reason) {
+    std::string carried = last_substantive_assistant(ctx);
+    Message forced;
+    forced.role = "assistant";
+    forced.content = annotate_hard_stop(carried, reason, stop_noun);
+    ctx.messages.push_back(std::move(forced));
+    ctx.metadata["terminal_reason"] = terminal_reason;
+    ctx.metadata["cap_carried_content"] =
+        carried.empty() ? "false" : "true";
+    set_state(ctx, AgentState::COMPLETE);
+}
+
+/**
+ * @brief Force the synthetic completion the iteration cap owes (gh#169).
+ *
+ * gh#181 (v2.13.0): the mechanism moved to
+ * finish_with_carried_output, now shared with the thinking-budget hard
+ * cut. The rendered text and terminal_reason are unchanged.
+ *
+ * @param ctx Loop context (messages, metadata and state mutated).
+ * @req REQ-LOOP-002
+ * @version 2.13.0 [reviewed]
+ */
+void AgentEngine::force_iteration_cap_completion(LoopContext& ctx) {
+    finish_with_carried_output(
+        ctx,
+        "iteration cap reached after "
+            + std::to_string(ctx.metrics.iterations) + " iterations",
+        "cap",
+        "budget_exhausted");
+}
+
+/**
  * @brief Main loop.
  * @param ctx Loop context.
  * @req REQ-LOOP-002
  * @req REQ-HOOK-002
- * @version 2.3.28
+ * @version 2.13.0 [reviewed]
  */
 void AgentEngine::loop(LoopContext& ctx) {
     fire_loop_start_hook(hooks_, ctx);  // ON_LOOP_START (v1.9.1)
@@ -479,7 +725,7 @@ void AgentEngine::loop(LoopContext& ctx) {
     while (!should_stop(ctx)) {
         ctx.metrics.iterations++;
 
-        if (interrupt_flag_.load()) {
+        if (run_interrupted()) {
             set_state(ctx, AgentState::INTERRUPTED);
             break;
         }
@@ -498,17 +744,14 @@ void AgentEngine::loop(LoopContext& ctx) {
         // E7 (2.0.6-rc18): mark ctx.metadata with the terminal reason
         // so delegate result and parent-tier relay can surface that
         // the child did not complete naturally.
+        // gh#169 (v2.13.0): the cap ANNOTATES the agent's last
+        // substantive output instead of replacing it with a placeholder
+        // — the parent reads the last assistant message, and the child's
+        // real summary exists at cap time.
         logger->warn("Loop ended due to max iterations ({}/{}) — "
                      "forcing synthetic entropic.complete",
                      ctx.metrics.iterations, resolve_max_iterations(ctx));
-        Message forced;
-        forced.role = "assistant";
-        forced.content = "[iteration cap reached after "
-            + std::to_string(ctx.metrics.iterations)
-            + " iterations — returning current state]";
-        ctx.messages.push_back(std::move(forced));
-        ctx.metadata["terminal_reason"] = "budget_exhausted";
-        set_state(ctx, AgentState::COMPLETE);
+        force_iteration_cap_completion(ctx);
     }
 
     fire_loop_end_hook(hooks_, ctx);  // ON_LOOP_END (v1.9.1)
@@ -666,18 +909,31 @@ void AgentEngine::nudge_budget_completion(LoopContext& ctx) {
 
 /**
  * @brief Second-exhaustion hard cut, failure visible in history. (gh#80)
+ *
+ * gh#181 (v2.13.0): the cut ANNOTATES the run's last substantive
+ * assistant content instead of replacing it with a placeholder — the
+ * sibling defect of gh#169 on the other budget path. A child hard-cut
+ * here handed its parent "[thinking budget exhausted — ... no tool call
+ * was emitted]" where its result belonged, because
+ * DelegationManager::extract_summary takes the last assistant message.
+ *
+ * terminal_reason stays "budget_exhausted_thinking" — a DISTINCT value
+ * from the iteration cap's "budget_exhausted", and one a consumer may
+ * key on to tell the two stops apart.
+ *
+ * @param ctx Loop context (messages, metadata and state mutated).
  * @req REQ-LOOP-005
- * @version 2.5.0
+ * @version 2.13.0
  */
 void AgentEngine::hard_cut_budget(LoopContext& ctx) {
     logger->warn("[BUDGET] thinking budget exhausted after nudge — "
                  "hard-cutting turn");
-    Message cut{"assistant",
-        "[thinking budget exhausted — the turn was hard-cut after the "
-        "completion nudge went unheeded; no tool call was emitted]"};
-    ctx.messages.push_back(std::move(cut));
-    ctx.metadata["terminal_reason"] = "budget_exhausted_thinking";
-    set_state(ctx, AgentState::COMPLETE);
+    finish_with_carried_output(
+        ctx,
+        "thinking budget exhausted after the completion nudge went "
+        "unheeded; no tool call was emitted",
+        "cut",
+        "budget_exhausted_thinking");
 }
 
 /**
@@ -696,10 +952,10 @@ void AgentEngine::hard_cut_budget(LoopContext& ctx) {
  * @param ctx Loop context.
  * @req REQ-LOOP-003
  * @req REQ-LOOP-006
- * @version 2.4.3
+ * @version 2.13.0
  */
 void AgentEngine::dispatch_pending_or_halt(LoopContext& ctx) {
-    if (interrupt_flag_.load() && !is_terminal_state(ctx)) {
+    if (run_interrupted() && !is_terminal_state(ctx)) {
         logger->info("[ITER] interrupt observed during tool processing — "
                      "halting before pending dispatch");
         set_state(ctx, AgentState::INTERRUPTED);
@@ -753,28 +1009,45 @@ void AgentEngine::evaluate_no_tool_decision(
 /**
  * @brief Short-circuit evaluation for terminal finish reasons.
  *
- * Handles "interrupted" and "length" before the tier-specific logic
- * runs. Keeps evaluate_no_tool_decision under the 3-return cap.
- * (P1-6, 2.0.6-rc16)
+ * Handles "interrupted", "context_overflow" and "length" before the
+ * tier-specific logic runs. Keeps evaluate_no_tool_decision under the
+ * 3-return cap. (P1-6, 2.0.6-rc16)
+ *
+ * v2.13.0 adds "context_overflow": the backend refused the turn because
+ * its prompt could not fit the tier's context. That is terminal by
+ * construction — the empty-turn ladder below would append a correction
+ * message and retry, which makes the prompt LARGER, and after three such
+ * turns reports "zero_tool_calls_with_explicit_completion", sending the
+ * operator after a model that was never given a chance to answer. The
+ * single-exit shape is what keeps this at one return.
  *
  * @param ctx Loop context.
  * @param finish_reason Generation finish reason.
  * @return true if a terminal reason was handled (caller returns).
  * @req REQ-LOOP-006
- * @version 2.0.6-rc16
+ * @req REQ-INFER-026
+ * @version 2.13.0
  */
 bool AgentEngine::handle_terminal_finish_reasons(
     LoopContext& ctx, const std::string& finish_reason) {
+    bool handled = true;
     if (finish_reason == "interrupted") {
         logger->info("[DECISION] interrupted");
         set_state(ctx, AgentState::INTERRUPTED);
-        return true;
-    }
-    if (finish_reason == "length") {
+    } else if (finish_reason == "context_overflow") {
+        ctx.metadata["failure_reason"] = "context_overflow";
+        ctx.metadata["failure_tier"] = ctx.locked_tier;
+        logger->error("[DECISION] prompt does not fit tier '{}' context — "
+                      "failing the turn instead of retrying it; the "
+                      "inference log carries the token breakdown",
+                      ctx.locked_tier);
+        set_state(ctx, AgentState::ERROR);
+    } else if (finish_reason == "length") {
         logger->info("[DECISION] length, continuing");
-        return true;
+    } else {
+        handled = false;
     }
-    return false;
+    return handled;
 }
 
 /**
@@ -1014,18 +1287,46 @@ void AgentEngine::set_state(LoopContext& ctx, AgentState state) {
  * (P1-4, 2.0.6-rc16)
  *
  * @req REQ-LOOP-006
- * @version 2.0.6-rc16.1
+ * @version 2.13.0
  */
 void AgentEngine::interrupt() {
+    // gh#158 (v2.13.0): `interrupt()` means EVERY run on this handle and
+    // keeps that meaning. Each in-flight run carries its own token now, so
+    // the handle-wide flag alone would not reach a run that started before
+    // it was set and polls its own. Fan out explicitly.
+    {
+        std::lock_guard<std::mutex> guard(runs_mutex_);
+        for (auto& [key, run] : active_runs_) {
+            (void)key;
+            run->interrupt.store(true, std::memory_order_release);
+        }
+    }
     if (!interrupt_flag_.exchange(true)) {
         logger->info("Engine interrupted");
         // P1-10: propagate to external MCP transports so in-flight
-        // tool calls abort alongside the generation loop.
+        // tool calls abort alongside the generation loop. This is the
+        // handle-wide latch and stays handle-wide: `interrupt_session`
+        // deliberately does NOT fire it (see its declaration).
         if (external_interrupt_cb_ != nullptr) {
             external_interrupt_cb_(external_interrupt_data_);
         }
     }
     pause_flag_.store(false);
+}
+
+/**
+ * @brief Whether the run on THIS thread should stop (gh#158).
+ *
+ * The handle-wide flag ("all runs") OR this run's own token ("that one").
+ * Pre-gh#158 every poll site read the handle flag directly, which was
+ * correct only because a handle ran one turn at a time.
+ *
+ * @return true when the current run is interrupted.
+ * @dg_internal
+ * @version 2.13.0
+ */
+bool AgentEngine::run_interrupted() const {
+    return interrupt_flag_.load() || current_run_cancelled();
 }
 
 /**
@@ -1067,10 +1368,16 @@ void AgentEngine::set_external_reset(void (*cb)(void*),
 /**
  * @brief Reset interrupt flag.
  * @req REQ-LOOP-006
- * @version 2.12.1
+ * @version 2.13.0
  */
 void AgentEngine::reset_interrupt() {
     interrupt_flag_.store(false);
+    // gh#158: a run's own token is what its decode and its MCP transport
+    // poll, so clearing only the handle flag would leave a re-used run
+    // state latched — the same shape of bug gh#150 fixed one layer up.
+    if (auto run = this_thread_run()) {
+        run->interrupt.store(false, std::memory_order_release);
+    }
     // gh#150: an interrupt is scoped to a RUN, not to the process. This
     // used to clear the engine's flag and stop, leaving every external
     // MCP transport latched shut with no path in the tree that could
@@ -1117,12 +1424,25 @@ std::pair<int, int> AgentEngine::context_usage(
 
 /**
  * @brief Reinject all cached context anchors.
+ *
+ * gh#158 (v2.13.0): iterates a SNAPSHOT taken under `anchors_mutex_`, not
+ * the live map. Two reasons, and both are required. A concurrent run's
+ * `context_anchor` directive inserts into the map, and an insert that
+ * rehashes invalidates the iterators this loop is holding. And `dir_anchor`
+ * — which this calls per entry — takes the same mutex, so holding it across
+ * the loop would self-deadlock on a non-recursive lock.
+ *
  * @param ctx Loop context.
  * @req REQ-COMPACT-002
- * @version 1.8.4
+ * @version 2.13.0
  */
 void AgentEngine::reinject_context_anchors(LoopContext& ctx) {
-    for (const auto& [key, content] : context_anchors_) {
+    std::unordered_map<std::string, std::string> snapshot;
+    {
+        std::lock_guard<std::mutex> guard(anchors_mutex_);
+        snapshot = context_anchors_;
+    }
+    for (const auto& [key, content] : snapshot) {
         ContextAnchorDirective d(key, content);
         DirectiveResult r;
         dir_anchor(ctx, d, r);
@@ -1186,14 +1506,16 @@ void AgentEngine::dir_tier_change(
 /**
  * @brief Handle delegate directive (store pending).
  * @req REQ-DELEG-002
- * @version 2.1.6
+ * @version 2.13.0
  */
 void AgentEngine::dir_delegate(
     LoopContext& ctx, const Directive& d, DirectiveResult& r) {
     const auto& dl = static_cast<const DelegateDirective&>(d);
     ctx.pending_delegation = PendingDelegation{
         dl.target, dl.task, dl.max_turns,
-        dl.resume_from_delegation_id};
+        dl.resume_from_delegation_id,
+        dl.context,            // gh#162 (v2.13.0)
+        dl.resume_by_target};  // gh#162 (v2.13.0)
     r.stop_processing = true;
     if (dl.resume_from_delegation_id.empty()) {
         logger->info("[DIRECTIVE] delegate: target={} task='{}'",
@@ -1208,12 +1530,12 @@ void AgentEngine::dir_delegate(
 /**
  * @brief Handle pipeline directive (store pending).
  * @req REQ-DELEG-004
- * @version 1.8.6
+ * @version 2.13.0
  */
 void AgentEngine::dir_pipeline(
     LoopContext& ctx, const Directive& d, DirectiveResult& r) {
     const auto& pl = static_cast<const PipelineDirective&>(d);
-    ctx.pending_pipeline = PendingPipeline{pl.stages, pl.task};
+    ctx.pending_pipeline = PendingPipeline{pl.stages, pl.task, pl.context};
     r.stop_processing = true;
     logger->info("[DIRECTIVE] pipeline: {} stages", pl.stages.size());
 }
@@ -1309,19 +1631,31 @@ void AgentEngine::dir_prune(
 
 /**
  * @brief Handle context_anchor directive.
+ *
+ * gh#158 (v2.13.0): `context_anchors_` is handle-wide and mutated from
+ * inside the loop, so two concurrent runs both emitting an anchor directive
+ * raced on the map. The lock is held for the map operation only — never
+ * across `remove_anchor_messages`, which walks the run's own messages.
+ *
  * @req REQ-COMPACT-002
- * @version 1.8.4
+ * @version 2.13.0
  */
 void AgentEngine::dir_anchor(
     LoopContext& ctx, const Directive& d, DirectiveResult&) {
     const auto& ca = static_cast<const ContextAnchorDirective&>(d);
     if (ca.content.empty()) {
-        context_anchors_.erase(ca.key);
+        {
+            std::lock_guard<std::mutex> guard(anchors_mutex_);
+            context_anchors_.erase(ca.key);
+        }
         remove_anchor_messages(ctx, ca.key);
         logger->info("Removed anchor: {}", ca.key);
         return;
     }
-    context_anchors_[ca.key] = ca.content;
+    {
+        std::lock_guard<std::mutex> guard(anchors_mutex_);
+        context_anchors_[ca.key] = ca.content;
+    }
     remove_anchor_messages(ctx, ca.key);
     Message anchor;
     anchor.role = "user";
@@ -2191,12 +2525,52 @@ static void push_delegation_repeat_blocked(
 }
 
 /**
- * @brief Apply the pre-run delegation guards (depth/cycle/repeat).
+ * @brief Append the "isolation cannot be honoured" reject message (gh#160).
+ *
+ * An external MCP server is a separate process with its own cwd; the
+ * engine cannot move it into the sandbox. If the child can call one that
+ * does not declare `readOnlyHint: true`, the containment the consumer
+ * asked for is not in force — so the delegation is refused LOUDLY rather
+ * than run with a guarantee that is quietly false (the fail-fast rule
+ * decision #66's audit settled on).
+ *
+ * @param ctx Loop context (message + failure metadata land here).
+ * @param target Target tier name.
+ * @param tools Offending fully-qualified tool names.
+ * @req REQ-DELEG-001
+ * @req REQ-DELEG-005
+ * @version 2.13.0
+ */
+static void push_delegation_isolation_unsafe(
+    LoopContext& ctx, const std::string& target,
+    const std::vector<std::string>& tools) {
+    std::string names;
+    for (const auto& t : tools) {
+        if (!names.empty()) { names += ", "; }
+        names += t;
+    }
+    Message reject;
+    reject.role = "user";
+    reject.content =
+        "[DELEGATION REJECTED] delegation.isolation is 'sandbox', but '"
+        + target + "' can reach external MCP tools that are not declared "
+          "read-only (" + names + "). An external server runs in its own "
+          "process and cannot be moved into the sandbox, so its writes "
+          "would escape it. Either restrict the tier's allowed_tools to "
+          "read-only tools, have the server declare readOnlyHint, or set "
+          "delegation.isolation: none.";
+    ctx.metadata["failure_reason"] = "delegation_isolation_unsafe";
+    ctx.metadata["failure_target"] = target;
+    ctx.messages.push_back(std::move(reject));
+}
+
+/**
+ * @brief Apply the pre-run delegation guards (depth/cycle/repeat/isolation).
  * @param ctx Loop context.
  * @param pending The delegation about to run.
  * @return true if rejected (rejection message already pushed).
  * @req REQ-DELEG-001
- * @version 2.3.7
+ * @version 2.13.0
  */
 bool AgentEngine::reject_delegation_if_guarded(
     LoopContext& ctx, const PendingDelegation& pending) {
@@ -2210,6 +2584,13 @@ bool AgentEngine::reject_delegation_if_guarded(
         logger->warn("Delegation rejected: cycle on target tier '{}'",
                      pending.target);
         push_delegation_cycle_rejected(ctx, pending.target);
+    } else if (auto unsafe = isolation_unsafe_tools(ctx, pending.target);
+               !unsafe.empty()) {
+        // gh#160: refuse rather than silently run uncontained.
+        logger->error("Delegation rejected: isolation is on but '{}' can "
+                      "reach {} non-read-only external tool(s)",
+                      pending.target, unsafe.size());
+        push_delegation_isolation_unsafe(ctx, pending.target, unsafe);
     } else if (is_delegation_repeat_blocked(ctx, pending.target)) {
         // gh#64: refuse re-delegation to a target that has just failed
         // N times in a row. Pre-fix, a lead retrying a Q4 specialist
@@ -2239,7 +2620,7 @@ bool AgentEngine::reject_delegation_if_guarded(
  * @param ctx Loop context with pending delegation.
  * @req REQ-DELEG-002
  * @req REQ-LOOP-003
- * @version 2.1.6-gh32
+ * @version 2.13.0
  */
 void AgentEngine::execute_pending_delegation(LoopContext& ctx) {
     auto pending = std::move(*ctx.pending_delegation);
@@ -2258,7 +2639,11 @@ void AgentEngine::execute_pending_delegation(LoopContext& ctx) {
     // single early-exit (knots returns gate).
     std::vector<Message> resume_history;
     bool blocked = false;
-    if (!pending.resume_from_delegation_id.empty()
+    // gh#162 (v2.13.0): `resume_by_target` is the second way in — the id is
+    // empty precisely because the lead did not have to look it up.
+    const bool is_resume = !pending.resume_from_delegation_id.empty()
+                           || pending.resume_by_target;
+    if (is_resume
         && !resolve_resume_delegation(ctx, pending, resume_history)) {
         blocked = true;
     } else if (fire_delegate_pre_hook(pending, ctx.delegation_depth)) {
@@ -2479,16 +2864,21 @@ void AgentEngine::log_relay_status(LoopContext& ctx,
 }
 
 /**
- * @brief Execute a pending pipeline after tool processing.
- * @param ctx Loop context with pending_pipeline set.
- * @req REQ-DELEG-004
+ * @brief Apply the pre-run pipeline guards (depth, isolation reach).
+ *
+ * gh#160 (v2.13.0): a pipeline shares ONE sandbox across its stages, so a
+ * single stage able to reach a writable external tool breaks containment
+ * for the whole run — every stage is checked before any of them starts.
+ *
+ * @param ctx Loop context (rejection message lands here).
+ * @param pending The pipeline about to run.
+ * @return true if rejected (message already pushed).
  * @req REQ-DELEG-001
- * @version 2.10.0
+ * @req REQ-DELEG-004
+ * @version 2.13.0
  */
-void AgentEngine::execute_pending_pipeline(LoopContext& ctx) {
-    auto pending = std::move(*ctx.pending_pipeline);
-    ctx.pending_pipeline.reset();
-
+bool AgentEngine::reject_pipeline_if_guarded(
+    LoopContext& ctx, const PendingPipeline& pending) {
     if (ctx.delegation_depth >= MAX_DELEGATION_DEPTH) {
         logger->warn("Pipeline rejected: depth {} >= max {}",
                      ctx.delegation_depth, MAX_DELEGATION_DEPTH);
@@ -2497,16 +2887,46 @@ void AgentEngine::execute_pending_pipeline(LoopContext& ctx) {
         reject.content = "[PIPELINE REJECTED] Maximum delegation "
                          "depth reached.";
         ctx.messages.push_back(std::move(reject));
-        return;
+        return true;
     }
+    for (const auto& stage : pending.stages) {
+        auto unsafe = isolation_unsafe_tools(ctx, stage);
+        if (!unsafe.empty()) {
+            logger->error("Pipeline rejected: isolation is on but stage "
+                          "'{}' can reach {} non-read-only external "
+                          "tool(s)", stage, unsafe.size());
+            push_delegation_isolation_unsafe(ctx, stage, unsafe);
+            return true;
+        }
+    }
+    return false;
+}
+
+/**
+ * @brief Execute a pending pipeline after tool processing.
+ * @param ctx Loop context with pending_pipeline set.
+ * @req REQ-DELEG-004
+ * @req REQ-DELEG-001
+ * @version 2.13.0 [reviewed]
+ */
+void AgentEngine::execute_pending_pipeline(LoopContext& ctx) {
+    auto pending = std::move(*ctx.pending_pipeline);
+    ctx.pending_pipeline.reset();
+
+    if (reject_pipeline_if_guarded(ctx, pending)) { return; }
 
     set_state(ctx, AgentState::DELEGATING);
 
     // gh#33 (v2.1.6): engine-scoped sandbox; non-owning pointer.
-    auto repo_dir = get_repo_dir();
+    // gh#160 (v2.13.0): both the root and the sandbox are per SESSION now,
+    // and the dir-swap callback is finally passed on — without it every
+    // ScopedSandbox took the non-sandboxed branch.
+    auto root = resolve_session_root(ctx.session_key);
     DelegationManager mgr(run_child_loop_trampoline, this,
-                          tier_res_, repo_dir,
-                          ensure_sandbox_manager());
+                          tier_res_, root,
+                          sandbox_for_session(ctx.session_key));
+    auto swap = dir_swap_snapshot();
+    mgr.set_dir_swap(swap.first, swap.second);
     if (storage_.create_delegation != nullptr) {
         mgr.set_storage(&storage_);
     }
@@ -2518,7 +2938,7 @@ void AgentEngine::execute_pending_pipeline(LoopContext& ctx) {
         cb_snap.start, cb_snap.complete, cb_snap.user_data);
     std::vector<DelegationResult> stage_log;
     auto result = mgr.execute_pipeline(
-        ctx, pending.stages, pending.task, stage_log);
+        ctx, pending.stages, pending.task, stage_log, pending.context);
 
     std::string tag = result.success ? "COMPLETE" : "FAILED";
     std::string content = "[PIPELINE " + tag + "]";
@@ -2663,9 +3083,27 @@ bool AgentEngine::try_auto_chain(
  *
  * @return Project directory path.
  * @dg_internal
- * @version 2.1.6
+ * @version 2.13.0
  */
 std::filesystem::path AgentEngine::get_repo_dir() {
+    std::lock_guard<std::mutex> guard(sandbox_mutex_);
+    return get_repo_dir_locked();
+}
+
+/**
+ * @brief `get_repo_dir` body, with `sandbox_mutex_` already held (gh#158).
+ *
+ * Split out because `ensure_sandbox_manager` needs the resolved dir while
+ * holding the same lock — the lazy manager and the lazy path cache are ONE
+ * piece of state (the manager is constructed FROM the path), so two
+ * concurrent delegating runs must not be able to observe a half-resolved
+ * pair. A recursive mutex would also work and says less.
+ *
+ * @return Project directory path; empty when none resolves.
+ * @dg_internal
+ * @version 2.13.0
+ */
+std::filesystem::path AgentEngine::get_repo_dir_locked() {
     if (repo_dir_checked_) {
         return cached_repo_dir_.value_or(std::filesystem::path{});
     }
@@ -2693,9 +3131,10 @@ std::filesystem::path AgentEngine::get_repo_dir() {
  *
  * @param project_dir Project root (empty resets to CWD fallback).
  * @dg_internal
- * @version 2.1.6
+ * @version 2.13.0
  */
 void AgentEngine::set_project_dir(const std::filesystem::path& project_dir) {
+    std::lock_guard<std::mutex> guard(sandbox_mutex_);
     project_dir_override_ = project_dir;
     cached_repo_dir_.reset();
     repo_dir_checked_ = false;
@@ -2766,25 +3205,73 @@ bool AgentEngine::fetch_resume_payload(
 }
 
 /**
+ * @brief Resolve `resume_by_target` into a concrete delegation id (gh#162).
+ *
+ * Asks storage for the most recent COMPLETED delegation to that tier. A
+ * miss is a typed failure the lead can act on ("delegate cold instead"),
+ * not a silent cold start — silently converting a resume into a fresh
+ * delegation would hide exactly the cost the lead was trying to avoid.
+ *
+ * @param ctx Parent loop context (failure message lands here).
+ * @param[in,out] pending Resume request; its id is filled on success.
+ * @return true when an id was found.
+ * @req REQ-DELEG-006
+ * @version 2.13.0
+ */
+bool AgentEngine::resolve_latest_for_target(
+        LoopContext& ctx, PendingDelegation& pending) {
+    std::string id;
+    bool found = storage_.latest_delegation_for_target != nullptr
+        && storage_.latest_delegation_for_target(
+               pending.target.c_str(), id, storage_.user_data)
+        && !id.empty();
+    if (!found) {
+        push_resume_failure(
+            ctx, "no prior delegation to this tier in storage — use "
+                 "entropic.delegate instead",
+            pending.target);
+        return false;
+    }
+    logger->info("resume_delegation by target '{}' resolved to id '{}'",
+                 pending.target, id);
+    pending.resume_from_delegation_id = id;
+    return true;
+}
+
+/**
  * @brief Resolve a resume_delegation request via storage (gh#32, v2.1.6).
+ * @param ctx Parent loop context (failure message lands here).
+ * @param[in,out] pending Resume request (target rewritten on success).
+ * @param[out] out_history Loaded conversation messages.
  * @return true when the stored payload yielded a target tier and seed
  *         history; false on failure, with the reason already pushed
  *         into ctx by push_resume_failure.
  * @req REQ-DELEG-002
- * @version 2.1.6
+ * @req REQ-DELEG-006
+ * @version 2.13.0
  */
 bool AgentEngine::resolve_resume_delegation(
         LoopContext& ctx,
         PendingDelegation& pending,
         std::vector<Message>& out_history) {
-    const auto& id = pending.resume_from_delegation_id;
+    // gh#162 (v2.13.0): a lead that remembers the specialist but not the
+    // storage id addresses the tier directly; the id is resolved here,
+    // because the tool cannot see storage. Two round trips become one.
+    // Single-exit accumulator — the knots returns gate is 3.
     nlohmann::json j;
-    if (!fetch_resume_payload(ctx, id, j)) {
-        return false;
+    bool ok = !pending.resume_by_target
+              || resolve_latest_for_target(ctx, pending);
+    const auto& id = pending.resume_from_delegation_id;
+    if (ok) { ok = fetch_resume_payload(ctx, id, j); }
+    std::string target;
+    if (ok) {
+        target = j.value("target_tier", std::string{});
+        if (target.empty()) {
+            push_resume_failure(ctx, "target_tier missing in storage", id);
+            ok = false;
+        }
     }
-    auto target = j.value("target_tier", std::string{});
-    if (target.empty()) {
-        push_resume_failure(ctx, "target_tier missing in storage", id);
+    if (!ok) {
         return false;
     }
     pending.target = target;
@@ -2815,7 +3302,7 @@ bool AgentEngine::resolve_resume_delegation(
  * @param resume_history  Pre-loaded history (empty for cold delegations).
  * @return DelegationResult from the child loop.
  * @req REQ-DELEG-002
- * @version 2.1.6
+ * @version 2.13.0 [reviewed]
  */
 DelegationResult AgentEngine::run_pending_delegation(
         LoopContext& ctx,
@@ -2824,8 +3311,10 @@ DelegationResult AgentEngine::run_pending_delegation(
     std::optional<int> max_turns;
     if (pending.max_turns > 0) { max_turns = pending.max_turns; }
     DelegationManager mgr(run_child_loop_trampoline, this,
-                          tier_res_, get_repo_dir(),
-                          ensure_sandbox_manager());
+                          tier_res_, resolve_session_root(ctx.session_key),
+                          sandbox_for_session(ctx.session_key));
+    auto swap = dir_swap_snapshot();  // gh#160
+    mgr.set_dir_swap(swap.first, swap.second);
     if (storage_.create_delegation != nullptr) {
         mgr.set_storage(&storage_);
     }
@@ -2834,42 +3323,185 @@ DelegationResult AgentEngine::run_pending_delegation(
         cb_snap.start, cb_snap.complete, cb_snap.user_data);
     if (resume_history.empty()) {
         return mgr.execute_delegation(
-            ctx, pending.target, pending.task, max_turns);
+            ctx, pending.target, pending.task, max_turns, pending.context);
     }
     return mgr.execute_resume_delegation(
         ctx, pending.target, pending.task,
-        std::move(resume_history), max_turns);
+        std::move(resume_history), max_turns, pending.context);
 }
 
 /**
  * @brief Lazy accessor for the engine-scoped SandboxManager (gh#33, v2.1.6).
+ *
+ * gh#158 (v2.13.0): serialized on `sandbox_mutex_`. Two concurrent runs that
+ * both delegate hit this at the same time, and the check-then-emplace is not
+ * atomic: both see an empty `optional`, both call `emplace`, and the second
+ * DESTROYS the manager the first just handed out — a `SandboxManager*` the
+ * caller is about to dereference. That is a use-after-free, not a wasted
+ * snapshot. The lock is held only for the construction; the returned pointer
+ * is then used outside it, which is safe because the optional is never reset
+ * for the life of the engine.
+ *
  * @return The engine-scoped SandboxManager, constructed on first use;
  *         nullptr when no repo dir is configured.
  * @req REQ-DELEG-002
- * @version 2.1.6
+ * @version 2.13.0
  */
-SandboxManager* AgentEngine::ensure_sandbox_manager() {
-    if (sandbox_mgr_) {
-        return &*sandbox_mgr_;
-    }
-    auto repo_dir = get_repo_dir();
-    if (repo_dir.empty()) {
+SandboxManager* AgentEngine::ensure_sandbox_manager(
+        const std::filesystem::path& root) {
+    if (root.empty()) {
         return nullptr;
     }
-    sandbox_mgr_.emplace(repo_dir);
-    return &*sandbox_mgr_;
+    std::lock_guard<std::mutex> guard(sandbox_mutex_);
+    auto it = sandbox_mgrs_.find(root);
+    if (it != sandbox_mgrs_.end()) {
+        return &it->second;
+    }
+    // piecewise_construct: SandboxManager holds a mutex and an atomic, so it
+    // is neither copyable nor movable — the map node must build it in place.
+    auto [pos, inserted] = sandbox_mgrs_.emplace(
+        std::piecewise_construct,
+        std::forward_as_tuple(root),
+        std::forward_as_tuple(root));
+    (void)inserted;
+    return &pos->second;
+}
+
+/**
+ * @brief Install the facade's session-root seam (gh#160).
+ * @param iface Resolver callbacks.
+ * @dg_internal
+ * @version 2.13.0
+ */
+void AgentEngine::set_session_root_interface(
+        const SessionRootInterface& iface) {
+    std::lock_guard<std::mutex> guard(sandbox_mutex_);
+    session_root_ = iface;
+}
+
+/**
+ * @brief Install the tool-directory swap callback (gh#160).
+ * @param swap_fn Swap callback (nullptr disables sandbox entry).
+ * @param user_data Forwarded to the callback.
+ * @dg_internal
+ * @version 2.13.0
+ */
+void AgentEngine::set_dir_swap(ScopedSandbox::SwapDirFn swap_fn,
+                               void* user_data) {
+    std::lock_guard<std::mutex> guard(sandbox_mutex_);
+    swap_dir_fn_ = swap_fn;
+    swap_dir_data_ = user_data;
+}
+
+/**
+ * @brief Read the swap callback pair under `sandbox_mutex_` (gh#160).
+ *
+ * Wired once at configure and read from every run thread, so the read is
+ * locked for the same reason the delegation callbacks are snapshotted:
+ * a torn (fn, user_data) pair would call the right function with the
+ * wrong handle.
+ *
+ * @return The installed (callback, user_data) pair.
+ * @dg_internal
+ * @version 2.13.0
+ */
+std::pair<ScopedSandbox::SwapDirFn, void*>
+AgentEngine::dir_swap_snapshot() const {
+    std::lock_guard<std::mutex> guard(sandbox_mutex_);
+    return {swap_dir_fn_, swap_dir_data_};
+}
+
+/**
+ * @brief Resolve the root a session's tools operate in (gh#160).
+ * @param session_key Caller-scoped session key.
+ * @return The facade's answer, else the configured/CWD project dir.
+ * @req REQ-DELEG-002
+ * @req REQ-DELEG-005
+ * @version 2.13.0
+ */
+std::filesystem::path AgentEngine::resolve_session_root(
+        const std::string& session_key) {
+    SessionRootInterface iface;
+    {
+        std::lock_guard<std::mutex> guard(sandbox_mutex_);
+        iface = session_root_;
+    }
+    if (iface.resolve_root == nullptr) {
+        return get_repo_dir();
+    }
+    auto root = iface.resolve_root(session_key, iface.user_data);
+    return root.empty() ? get_repo_dir() : root;
+}
+
+/**
+ * @brief Sandbox manager for a session, or nullptr when isolation is off.
+ * @param session_key Session the delegation belongs to.
+ * @return Manager rooted at the session's root, else nullptr.
+ * @req REQ-DELEG-005
+ * @version 2.13.0
+ */
+SandboxManager* AgentEngine::sandbox_for_session(
+        const std::string& session_key) {
+    if (!loop_config_.delegation_isolation) {
+        return nullptr;
+    }
+    return ensure_sandbox_manager(resolve_session_root(session_key));
+}
+
+/**
+ * @brief External tools a sandboxed child could write through (gh#160).
+ * @param ctx Parent loop context (session key).
+ * @param target_tier Tier the delegation targets.
+ * @return Offending fully-qualified tool names; empty when safe.
+ * @req REQ-DELEG-005
+ * @version 2.13.0
+ */
+std::vector<std::string> AgentEngine::isolation_unsafe_tools(
+        const LoopContext& ctx, const std::string& target_tier) {
+    SessionRootInterface iface;
+    {
+        std::lock_guard<std::mutex> guard(sandbox_mutex_);
+        iface = session_root_;
+    }
+    if (!loop_config_.delegation_isolation
+        || iface.unsafe_external_tools == nullptr) {
+        return {};
+    }
+    auto info = tier_res_.resolve_tier
+        ? tier_res_.resolve_tier(target_tier, tier_res_.user_data)
+        : ChildContextInfo{};
+    return iface.unsafe_external_tools(
+        ctx.session_key, info.allowed_tools, iface.user_data);
 }
 
 // ── Conversation state (v2.0.2) ─────────────────────────────
 
 /**
  * @brief Set the system prompt for conversation state.
+ *
+ * gh#158 (v2.13.0): under `prompt_mutex_`. The setter runs on the API
+ * thread (which holds `api_mutex`) and every reader runs on a run thread
+ * (which, since gh#109, holds nothing) — so `api_mutex` never made this
+ * pair safe, and keyed runs add a second concurrent reader.
+ *
  * @param prompt Assembled system prompt.
  * @dg_internal
- * @version 2.0.2
+ * @version 2.13.0
  */
 void AgentEngine::set_system_prompt(const std::string& prompt) {
+    std::lock_guard<std::mutex> guard(prompt_mutex_);
     system_prompt_ = prompt;
+}
+
+/**
+ * @brief Read the handle's system prompt (gh#158).
+ * @return A copy taken under `prompt_mutex_`; empty when none is set.
+ * @dg_internal
+ * @version 2.13.0
+ */
+std::string AgentEngine::system_prompt_copy() const {
+    std::lock_guard<std::mutex> guard(prompt_mutex_);
+    return system_prompt_;
 }
 
 /**
@@ -2892,10 +3524,243 @@ void AgentEngine::set_session_logger(SessionLogger* log) {
  *
  * @return The active session's state.
  * @dg_internal
- * @version 2.12.0
+ * @version 2.13.0 [reviewed]
  */
 ConversationState& AgentEngine::active_conversation() {
-    return conversations_[active_session_key_];
+    const auto key = active_session_key();
+    std::lock_guard<std::mutex> guard(conversations_mutex_);
+    return conversations_[key];
+}
+
+// ── Per-session run registry (gh#158, v2.13.0) ─────────────────
+
+namespace {
+
+/// @brief Session bound to THIS thread by set_active_session (gh#158).
+///
+/// Empty means "this thread never bound one", which is distinct from binding
+/// the DEFAULT session — hence the companion flag rather than a sentinel
+/// string, since `""` is a legitimate key a caller may name explicitly.
+thread_local std::string t_active_session_key;
+thread_local bool t_active_session_bound = false;
+
+/// @brief Session key this thread's `try_begin_turn` claimed (gh#158).
+thread_local std::string t_claimed_key;
+thread_local bool t_holds_claim = false;
+
+}  // namespace
+
+/**
+ * @brief Session bound to this thread, else to the handle (gh#158).
+ *
+ * A thread that bound a session gets its own answer — two concurrent runs
+ * each need one, and a single member field can hold only the last writer's.
+ * A thread that never bound one (an API call reading context, a direct
+ * engine driver in a test) falls back to the handle field, which is what
+ * keeps the legacy unkeyed accessors reading what they read in v2.12.0.
+ *
+ * Returned BY VALUE, and the handle-wide fallback is read under
+ * `session_key_mutex_`: the member is a `std::string` that every starting
+ * run assigns, so a caller on another thread reading it unsynchronized —
+ * which is precisely what the unkeyed accessors do — was a data race on a
+ * string, not merely a stale answer.
+ *
+ * @return The session key in force on this thread.
+ * @dg_internal
+ * @version 2.13.0 [reviewed]
+ */
+std::string AgentEngine::active_session_key() const {
+    if (t_active_session_bound) { return t_active_session_key; }
+    std::lock_guard<std::mutex> guard(session_key_mutex_);
+    return active_session_key_;
+}
+
+/**
+ * @brief Bind this turn to a caller-scoped session — see header.
+ *
+ * The conversation entry is created BEFORE the key is published, and that
+ * order is load-bearing. Publishing first left a window in which another
+ * thread's unkeyed accessor resolved a key that was not yet in
+ * `conversations_`; both of those accessors then indexed the map with
+ * `.at()` and threw `std::out_of_range` out of a C entry point, aborting
+ * the host. The accessors are total now as well, so this ordering is the
+ * belt to their braces rather than the only guard.
+ *
+ * @param key Session key for the turn about to run.
+ * @dg_internal
+ * @version 2.13.0 [reviewed]
+ */
+void AgentEngine::set_active_session(const std::string& key) {
+    {
+        std::lock_guard<std::mutex> guard(conversations_mutex_);
+        conversations_[key];  // default-construct on first use
+    }
+    t_active_session_key = key;
+    t_active_session_bound = true;
+    std::lock_guard<std::mutex> guard(session_key_mutex_);
+    active_session_key_ = key;
+}
+
+/**
+ * @brief Claim one turn for a named session — see header (gh#158).
+ * @param key Session key to claim.
+ * @return true when this caller now owns the turn.
+ * @dg_internal
+ * @version 2.13.0
+ */
+bool AgentEngine::try_begin_turn(const std::string& key) {
+    {
+        std::lock_guard<std::mutex> guard(runs_mutex_);
+        // Same key twice is a genuine conflict whatever the configuration:
+        // the two runs share one conversation. A DIFFERENT key is refused
+        // only while per-session concurrency is off, which is the shipped
+        // default and reproduces v2.12.0 exactly.
+        const bool blocked = active_runs_.count(key) > 0
+            || (!concurrent_sessions_ && !active_runs_.empty());
+        if (blocked) { return false; }
+        auto claimed = std::make_shared<RunState>();
+        claimed->key = key;
+        active_runs_[key] = claimed;
+        running_flag_.store(true);
+    }
+    // The claim IS the session binding. Keeping them separate was a defect:
+    // the binding is thread-local, so a binding that outlived its run stayed
+    // on that thread and silently captured the NEXT unkeyed run — including
+    // one on a different handle entirely.
+    t_claimed_key = key;
+    t_holds_claim = true;
+    t_active_session_key = key;
+    t_active_session_bound = true;
+    return true;
+}
+
+/**
+ * @brief Release a turn claimed for a named session — see header.
+ * @param key Session key that was claimed.
+ * @dg_internal
+ * @version 2.13.0
+ */
+void AgentEngine::end_turn(const std::string& key) {
+    {
+        std::lock_guard<std::mutex> guard(runs_mutex_);
+        active_runs_.erase(key);
+        running_flag_.store(!active_runs_.empty());
+    }
+    // Releasing the claim releases the binding with it — see try_begin_turn.
+    // Guarded on the key so a nested release cannot unbind an outer run.
+    if (t_holds_claim && t_claimed_key == key) {
+        t_holds_claim = false;
+        t_active_session_bound = false;
+        t_active_session_key.clear();
+    }
+}
+
+/**
+ * @brief Release the turn this thread claimed — see header (gh#158).
+ * @dg_internal
+ * @version 2.13.0
+ */
+void AgentEngine::end_turn() {
+    // Release by the key claimed on THIS thread. An unkeyed release that
+    // assumed `""` would free the wrong session for every pre-gh#158 call
+    // site the moment a consumer started naming sessions.
+    end_turn(t_holds_claim ? t_claimed_key : active_session_key());
+}
+
+/**
+ * @brief Runs currently in flight on this handle (gh#158).
+ * @return Active run count.
+ * @dg_internal
+ * @version 2.13.0
+ */
+std::size_t AgentEngine::active_run_count() const {
+    std::lock_guard<std::mutex> guard(runs_mutex_);
+    return active_runs_.size();
+}
+
+/**
+ * @brief Allow distinct session keys to run together — see header.
+ * @param enabled true to allow concurrent distinct-key runs.
+ * @dg_internal
+ * @version 2.13.0
+ */
+void AgentEngine::set_concurrent_sessions(bool enabled) {
+    std::lock_guard<std::mutex> guard(runs_mutex_);
+    concurrent_sessions_ = enabled;
+    logger->info("Per-session run concurrency {} (gh#158)",
+                 enabled ? "ENABLED" : "disabled");
+}
+
+/**
+ * @brief Whether per-session concurrency is enabled (gh#158).
+ * @return true when distinct keys may run together.
+ * @dg_internal
+ * @version 2.13.0
+ */
+bool AgentEngine::concurrent_sessions() const {
+    std::lock_guard<std::mutex> guard(runs_mutex_);
+    return concurrent_sessions_;
+}
+
+/**
+ * @brief The run this thread owns, if any (gh#158).
+ * @return This thread's run state, or nullptr outside a claimed run.
+ * @dg_internal
+ * @version 2.13.0
+ */
+std::shared_ptr<AgentEngine::RunState> AgentEngine::this_thread_run() const {
+    if (!t_holds_claim) { return nullptr; }
+    std::lock_guard<std::mutex> guard(runs_mutex_);
+    auto it = active_runs_.find(t_claimed_key);
+    return it == active_runs_.end() ? nullptr : it->second;
+}
+
+/**
+ * @brief Interrupt exactly one session's run — see header (gh#158).
+ * @param key Session whose run to interrupt.
+ * @return true when a run was found and flagged.
+ * @dg_internal
+ * @version 2.13.0
+ */
+bool AgentEngine::interrupt_session(const std::string& key) {
+    std::shared_ptr<RunState> run;
+    {
+        std::lock_guard<std::mutex> guard(runs_mutex_);
+        auto it = active_runs_.find(key);
+        if (it != active_runs_.end()) { run = it->second; }
+    }
+    if (!run) {
+        logger->info("interrupt_session('{}'): no run in flight", key);
+        return false;
+    }
+    run->interrupt.store(true, std::memory_order_release);
+    logger->info("Session '{}' interrupted", key);
+    return true;
+}
+
+/**
+ * @brief Whether a session's in-flight run carries an interrupt (gh#158).
+ * @param key Session key.
+ * @return true when that run exists and is flagged.
+ * @dg_internal
+ * @version 2.13.0
+ */
+bool AgentEngine::session_interrupted(const std::string& key) const {
+    std::lock_guard<std::mutex> guard(runs_mutex_);
+    auto it = active_runs_.find(key);
+    return it != active_runs_.end()
+        && it->second->interrupt.load(std::memory_order_acquire);
+}
+
+/**
+ * @brief The cancel flag of this thread's run — see header (gh#158).
+ * @return Reference to this run's cancel flag.
+ * @dg_internal
+ * @version 2.13.0
+ */
+std::atomic<bool>& AgentEngine::run_cancel_flag() {
+    auto run = this_thread_run();
+    return run ? run->interrupt : interrupt_flag_;
 }
 
 /**
@@ -2909,7 +3774,7 @@ ConversationState& AgentEngine::active_conversation() {
  * @param input User input string.
  * @return Result messages from engine.
  * @req REQ-LOOP-001
- * @version 2.12.0-rc1
+ * @version 2.13.0
  */
 std::vector<Message> AgentEngine::run_turn(const std::string& input) {
     // gh#40 (v2.1.10): the drain loop turns mid-generation queued user
@@ -2926,10 +3791,11 @@ std::vector<Message> AgentEngine::run_turn(const std::string& input) {
     // set for the duration, preserving the gh#40 contract.
     const bool owns_turn = try_begin_turn();
     auto& convo = active_conversation();
-    if (convo.messages.empty() && !system_prompt_.empty()) {
+    auto prompt = system_prompt_copy();
+    if (convo.messages.empty() && !prompt.empty()) {
         Message sys;
         sys.role = "system";
-        sys.content = system_prompt_;
+        sys.content = std::move(prompt);
         convo.messages.push_back(std::move(sys));
     }
     auto result = run_drain_loop(input, /*tier_override=*/"");
@@ -2975,16 +3841,16 @@ std::vector<Message> AgentEngine::run_turn_as(const std::string& tier,
  * grammar/samplers still switch; only the prompt persists). See run_turn_as.
  * @param tier Tier whose system prompt to seed.
  * @req REQ-IDEN-001
- * @version 2.12.0
+ * @version 2.13.0
  */
 void AgentEngine::seed_system_prompt_for_tier(const std::string& tier) {
     auto& convo = active_conversation();
     if (!convo.messages.empty()) { return; }
     auto it = tier_info_.find(tier);
-    const std::string& sp =
+    std::string sp =
         (it != tier_info_.end() && !it->second.system_prompt.empty())
             ? it->second.system_prompt
-            : system_prompt_;
+            : system_prompt_copy();
     if (sp.empty()) { return; }
     Message sys;
     sys.role = "system";
@@ -3044,7 +3910,7 @@ std::vector<Message> AgentEngine::run_drain_loop(
  * @brief Prepend the configured system prompt if this turn needs it.
  * @param new_messages The messages the caller is adding this turn.
  * @dg_internal
- * @version 2.12.0
+ * @version 2.13.0
  */
 void AgentEngine::seed_system_prompt(
     const std::vector<Message>& new_messages) {
@@ -3053,11 +3919,12 @@ void AgentEngine::seed_system_prompt(
         if (m.role == "system") { caller_has_system = true; break; }
     }
     auto& convo = active_conversation();
-    if (convo.messages.empty() && !system_prompt_.empty()
+    auto prompt = system_prompt_copy();
+    if (convo.messages.empty() && !prompt.empty()
             && !caller_has_system) {
         Message sys;
         sys.role = "system";
-        sys.content = system_prompt_;
+        sys.content = std::move(prompt);
         convo.messages.push_back(std::move(sys));
     }
 }
@@ -3263,22 +4130,150 @@ void AgentEngine::clear_conversation() {
 
 /**
  * @brief Get conversation message count.
- * @return Number of messages.
+ *
+ * TOTAL over keys (gh#158): an active key that is not in the map answers 0
+ * rather than throwing. `.at()` here reached the C ABI through
+ * `entropic_context_count`, where an escaping `std::out_of_range` is a
+ * `std::terminate` — the host dies because it asked how long a
+ * conversation was. Two ordinary sequences produce an absent key: dropping
+ * the session that is still the active one, and a concurrent run
+ * publishing its key (see `set_active_session`).
+ *
+ * @return Number of messages, or 0 when the active session is unknown.
  * @dg_internal
- * @version 2.12.0
+ * @version 2.13.0 [reviewed]
  */
 size_t AgentEngine::message_count() const {
-    return conversations_.at(active_session_key_).count();
+    const auto key = active_session_key();
+    std::lock_guard<std::mutex> guard(conversations_mutex_);
+    auto it = conversations_.find(key);
+    return it == conversations_.end() ? 0 : it->second.count();
+}
+
+// ── Keyed conversation accessors (gh#144; locked for gh#165) ───
+
+/**
+ * @brief Messages held by a named session — see header.
+ * @param key Session key.
+ * @return That session's messages; empty when the key is unknown.
+ * @dg_internal
+ * @version 2.13.0
+ */
+std::vector<Message> AgentEngine::messages_for(const std::string& key) const {
+    std::lock_guard<std::mutex> guard(conversations_mutex_);
+    auto it = conversations_.find(key);
+    return it == conversations_.end() ? std::vector<Message>{}
+                                      : it->second.messages;
+}
+
+/**
+ * @brief Message count for a named session — see header.
+ * @param key Session key.
+ * @return Count, or 0 when the key is unknown.
+ * @dg_internal
+ * @version 2.13.0
+ */
+std::size_t AgentEngine::message_count_for(const std::string& key) const {
+    std::lock_guard<std::mutex> guard(conversations_mutex_);
+    auto it = conversations_.find(key);
+    return it == conversations_.end() ? 0 : it->second.count();
+}
+
+/**
+ * @brief Clear one session's history, keeping the session — see header.
+ * @param key Session key.
+ * @dg_internal
+ * @version 2.13.0
+ */
+void AgentEngine::clear_conversation_for(const std::string& key) {
+    std::lock_guard<std::mutex> guard(conversations_mutex_);
+    auto it = conversations_.find(key);
+    if (it != conversations_.end()) { it->second.clear(); }
+}
+
+/**
+ * @brief Forget a session entirely — see header.
+ * @param key Session key.
+ * @return true when a session was dropped or cleared.
+ * @dg_internal
+ * @version 2.13.0
+ */
+bool AgentEngine::drop_session(const std::string& key) {
+    std::lock_guard<std::mutex> guard(conversations_mutex_);
+    if (key.empty()) {
+        conversations_[key].clear();
+        return true;
+    }
+    return conversations_.erase(key) > 0;
+}
+
+/**
+ * @brief Keys of every session the engine holds — see header.
+ * @return Session keys, unordered.
+ * @dg_internal
+ * @version 2.13.0
+ */
+std::vector<std::string> AgentEngine::session_keys() const {
+    std::lock_guard<std::mutex> guard(conversations_mutex_);
+    std::vector<std::string> keys;
+    keys.reserve(conversations_.size());
+    for (const auto& [k, v] : conversations_) { keys.push_back(k); }
+    return keys;
+}
+
+/**
+ * @brief Replace one session's conversation wholesale (gh#165) — see header.
+ *
+ * Refuses the RUNNING session and only that one. "Busy handle" would be the
+ * wrong rule: the conversation a turn appends to is the one that must not be
+ * swapped under it, and every other session is inert from that turn's point
+ * of view.
+ *
+ * @param key Session key.
+ * @param messages Replacement conversation.
+ * @return true when replaced; false when a run on that key is in flight.
+ * @req REQ-LOOP-010
+ * @dg_internal
+ * @version 2.13.0
+ */
+bool AgentEngine::set_session_messages(const std::string& key,
+                                       std::vector<Message> messages) {
+    {
+        std::lock_guard<std::mutex> guard(runs_mutex_);
+        if (active_runs_.count(key) > 0) {
+            logger->warn("session_context_set('{}') refused: a run on that "
+                         "session is in flight", key);
+            return false;
+        }
+    }
+    std::lock_guard<std::mutex> guard(conversations_mutex_);
+    auto& convo = conversations_[key];
+    convo.messages = std::move(messages);
+    logger->info("Session '{}' conversation restored: {} messages", key,
+                 convo.messages.size());
+    return true;
 }
 
 /**
  * @brief Get conversation messages.
  * @return Const reference to messages.
  * @dg_internal
- * @version 2.12.0
+ * @version 2.13.0 [reviewed]
  */
 const std::vector<Message>& AgentEngine::get_messages() const {
-    return conversations_.at(active_session_key_).messages;
+    static const std::vector<Message> kNoMessages;
+    const auto key = active_session_key();
+    // The lock guards the LOOKUP, not the returned reference — an
+    // `unordered_map` insert on another thread rehashes the bucket array,
+    // and traversing it mid-rehash is undefined behaviour whatever the
+    // caller does afterwards. Mapped values do not move on rehash, which is
+    // why this container was chosen (see the member's doc), so the
+    // reference stays valid for as long as the entry does. A caller that
+    // needs more than that wants the keyed sibling `messages_for`, which
+    // returns by value; this overload survives for pre-v2.12.0 callers.
+    std::lock_guard<std::mutex> guard(conversations_mutex_);
+    auto it = conversations_.find(key);
+    return it == conversations_.end() ? kNoMessages : it->second.messages;
 }
 
 // ── Mid-generation user-message queue (gh#40, v2.1.10) ─────────

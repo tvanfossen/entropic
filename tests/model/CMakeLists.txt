@@ -47,8 +47,12 @@ function(add_model_test NAME SOURCE)
     target_compile_definitions(${NAME} PRIVATE ${MODEL_TEST_DEFS})
     # gh#142: src/inference so a test can use the same VRAM estimator the
     # engine's admission gate uses (vram_footprint.h, device_memory.h).
+    # v2.13.0: src/facade so facade_model_helpers.h can reuse the bridge's
+    # own answer extractor (final_text.h) instead of a second copy — same
+    # precedent as tests/unit/api/final_text_test.cpp.
     target_include_directories(${NAME} PRIVATE
-        ${PROJECT_SOURCE_DIR}/src/inference)
+        ${PROJECT_SOURCE_DIR}/src/inference
+        ${PROJECT_SOURCE_DIR}/src/facade)
     add_test(NAME model/${NAME} COMMAND ${NAME})
     set_tests_properties(model/${NAME} PROPERTIES
         LABELS "model"
@@ -76,8 +80,12 @@ function(add_model_test_per_case NAME SOURCE)
     target_compile_definitions(${NAME} PRIVATE ${MODEL_TEST_DEFS})
     # gh#142: src/inference so a test can use the same VRAM estimator the
     # engine's admission gate uses (vram_footprint.h, device_memory.h).
+    # v2.13.0: src/facade so facade_model_helpers.h can reuse the bridge's
+    # own answer extractor (final_text.h) instead of a second copy — same
+    # precedent as tests/unit/api/final_text_test.cpp.
     target_include_directories(${NAME} PRIVATE
-        ${PROJECT_SOURCE_DIR}/src/inference)
+        ${PROJECT_SOURCE_DIR}/src/inference
+        ${PROJECT_SOURCE_DIR}/src/facade)
     math(EXPR _last "${ARGC} - 1")
     foreach(_i RANGE 2 ${_last})
         list(GET ARGV ${_i} _case)
@@ -99,26 +107,45 @@ endfunction()
 # indistinguishable from one hiding a real failure. Labelled "bench" instead and
 # excluded from the default run; invoke deliberately:
 #
-#   ctest --test-dir build/full -L bench
+#   inv bench [--filter <ctest -R regex>] [--resume]
 #
-function(add_bench_test NAME SOURCE)
+# which runs each bench entry in its own process through the same 1:1 runner as
+# the model gate (tasks.py). gh#153: a binary whose cases each load their own
+# model registers one entry PER CASE (add_bench_executable + add_bench_entry),
+# for the same VRAM reason as add_model_test_per_case.
+function(add_bench_executable NAME SOURCE)
     add_executable(${NAME} ${SOURCE})
     target_link_libraries(${NAME} PRIVATE ${MODEL_TEST_LIBS})
     target_compile_definitions(${NAME} PRIVATE ${MODEL_TEST_DEFS})
     # gh#142: src/inference so a test can use the same VRAM estimator the
     # engine's admission gate uses (vram_footprint.h, device_memory.h).
+    # v2.13.0: src/facade so facade_model_helpers.h can reuse the bridge's
+    # own answer extractor (final_text.h) instead of a second copy — same
+    # precedent as tests/unit/api/final_text_test.cpp.
     target_include_directories(${NAME} PRIVATE
-        ${PROJECT_SOURCE_DIR}/src/inference)
-    # The benchmark cases are tagged [.] (Catch2 "hidden"), so they are NOT
-    # collected by a bare run — the binary would exit 2 "No tests ran" and ctest
-    # would record a FAILURE for a benchmark that never executed. Naming the tag
-    # explicitly is what un-hides them, so the gate must pass it.
-    add_test(NAME bench/${NAME} COMMAND ${NAME} "[benchmark]")
-    set_tests_properties(bench/${NAME} PROPERTIES
+        ${PROJECT_SOURCE_DIR}/src/inference
+        ${PROJECT_SOURCE_DIR}/src/facade)
+endfunction()
+
+# One ctest entry (one process) running the cases SPEC selects from binary NAME.
+#
+# The benchmark cases are tagged [.] (Catch2 "hidden"), so they are NOT
+# collected by a bare run — the binary would exit 2 "No tests ran" and ctest
+# would record a FAILURE for a benchmark that never executed. Naming a tag
+# explicitly is what un-hides them, so every entry must pass one.
+function(add_bench_entry NAME TEST_NAME SPEC)
+    add_test(NAME bench/${TEST_NAME} COMMAND ${NAME} "${SPEC}")
+    set_tests_properties(bench/${TEST_NAME} PROPERTIES
         LABELS "bench"
         RUN_SERIAL TRUE
         TIMEOUT 3600
     )
+endfunction()
+
+# A bench binary whose [benchmark] cases all run in one process.
+function(add_bench_test NAME SOURCE)
+    add_bench_executable(${NAME} ${SOURCE})
+    add_bench_entry(${NAME} ${NAME} "[benchmark]")
 endfunction()
 
 # ── Subsystem tests (18) — orchestrator-level ───────────────
@@ -267,10 +294,35 @@ add_model_test_per_case(test-gh108-mtp-stream-grammar test_gh108_mtp_stream_gram
     "gh#108 (v2.10.3) CONTROL: non-streaming generate on the same tier"
     "gh#134 (v2.10.4) require_tool_call forces a tool call under MTP")
 
-# gh#108 (v2.9.3): side-by-side benchmark, E4B Q8 baseline vs the target
-# optimized config (E4B Q2-mobile + MTP + flash + q4 KV). Functional-only
-# assertions; prints both full responses + timing for human quality judgment.
-add_bench_test(test-gh108-config-benchmark test_gh108_config_benchmark.cpp)
+# Decode-configuration benchmarks, one entry (one process) per case — each
+# loads its own model, and the A4B case alone maps a 14 GB GGUF:
+#   quant-configs  gh#108 (v2.9.3): E4B Q8 baseline vs E4B Q2-mobile+MTP vs
+#                  E4B Q4_K_XL+MTP; functional-only, for human quality judgment.
+#   mtp-e4b        gh#153: four-arm MTP vs plain throughput (plain, control,
+#                  mtp, mtp-under-tier-grammar) on E4B QAT, fully offloaded.
+#   mtp-a4b        gh#153: the same four arms on 26B-A4B QAT, gpu_layers auto.
+#   mtp-a4b-experts
+#                  gh#153 #42(iii): the same four arms on the same A4B at
+#                  gpu_layers 31 (every layer) + cpu_moe_layers 31 — the
+#                  EXPERIMENTAL experts-to-host split (decision #75). Skips
+#                  itself on a card large enough to hold the trunk, where
+#                  device memory cannot prove the override engaged.
+# The gh#153 entries write build/test-reports/bench/gh153_mtp_<model>.json.
+#
+# NOTE for `inv bench --filter`: ctest -R takes a REGEX, so
+# `-mtp-a4b` also selects `-mtp-a4b-experts`. Anchor it (`mtp-a4b$`) to run
+# only the auto-offload case.
+add_bench_executable(test-gh108-config-benchmark test_gh108_config_benchmark.cpp)
+add_bench_entry(test-gh108-config-benchmark
+    test-gh108-config-benchmark-quant-configs "[quant-configs]")
+add_bench_entry(test-gh108-config-benchmark
+    test-gh108-config-benchmark-mtp-e4b "[mtp-e4b]")
+add_bench_entry(test-gh108-config-benchmark
+    test-gh108-config-benchmark-mtp-a4b "[mtp-a4b]")
+add_bench_entry(test-gh108-config-benchmark
+    test-gh108-config-benchmark-mtp-a4b-experts "[mtp-a4b-experts]")
+add_bench_entry(test-gh108-config-benchmark
+    test-gh108-config-benchmark-mtp-a4b-iq2 "[mtp-a4b-iq2]")
 
 # gh#108 (v2.9.3) follow-up: multi-turn tool-calling agentic benchmark,
 # E4B Q8 baseline vs E4B Q4_K_XL+MTP+flash+q4KV, through the orchestrator
@@ -358,6 +410,44 @@ set_tests_properties(model/test-gh96-warmkeep-oracle PROPERTIES TIMEOUT 600)
 add_model_test(test-gh97-hybrid-cache test_gh97_hybrid_cache.cpp)
 set_tests_properties(model/test-gh97-hybrid-cache PROPERTIES TIMEOUT 300)
 
+# gh#158 (v2.13.0): the EMERGENT multi-turn test for per-session concurrency.
+# Two sessions on two threads through the real C ABI, plus the batch KV
+# counter and a hybrid-arch (qwen35moe) desync gate. Interleaving cannot
+# catch what this is for — see the file header.
+add_model_test(test-gh158-concurrent test_gh158_concurrent_sessions.cpp)
+set_tests_properties(model/test-gh158-concurrent PROPERTIES TIMEOUT 1200)
+
+# gh#165 (v2.13.0): a restored conversation must actually drive the next
+# turn — over a real prefill, and with what the replaced conversation left
+# resident invalidated. Also the gh#164 pairing: release the weights, keep
+# the conversation.
+add_model_test(test-gh165-restore test_gh165_session_restore.cpp)
+set_tests_properties(model/test-gh165-restore PROPERTIES TIMEOUT 900)
+
+# gh#166 (v2.13.0): the EMERGENT multi-turn test for named workspaces. Two
+# repositories on ONE resident model, two sessions bound one each, run
+# CONCURRENTLY. The load-bearing assertion is the negative one: a
+# handle-wide tool root passes the positive one by accident.
+add_model_test(test-gh166-workspaces test_gh166_workspaces.cpp)
+set_tests_properties(model/test-gh166-workspaces PROPERTIES TIMEOUT 1200)
+
+# v2.13.0: the EMERGENT multi-turn test for outside-root approval. A real
+# model reads outside its root under `allow_outside_root: optional`; the
+# host's path approver accepts one file and rejects another, and the tool
+# results — and the model's recall two turns later — must reflect each.
+add_model_test(test-outside-root-approval test_outside_root_approval.cpp)
+set_tests_properties(model/test-outside-root-approval PROPERTIES TIMEOUT 900)
+
+# gh#169 + gh#181 (v2.13.0): the EMERGENT multi-turn test both budget
+# terminals owed. A real child does real work, hits the iteration cap in one
+# scenario and the thinking-budget hard cut in the other, and the PARENT must
+# receive that work — not the placeholder — through hook 9 and through its own
+# context, one turn later. Two scenarios, two model loads (both tiers share
+# one 2.44 GiB backend, keyed by path), a handful of short turns each.
+add_model_test(test-gh169-gh181-budget-carry test_gh169_gh181_budget_carry.cpp)
+set_tests_properties(model/test-gh169-gh181-budget-carry
+    PROPERTIES TIMEOUT 1200)
+
 # gh#99 (v2.8.0): facade-driven per-call tier grammar switching on one model.
 add_model_test(test-gh99-run-as test_gh99_run_as.cpp)
 set_tests_properties(model/test-gh99-run-as PROPERTIES TIMEOUT 300)
@@ -430,3 +520,18 @@ set_tests_properties(
 # with finish=stop, which no budget increase can fix.
 add_model_test(test-gh137-thinking-strip test_gh137_thinking_strip.cpp)
 set_tests_properties(model/test-gh137-thinking-strip PROPERTIES TIMEOUT 360)
+
+# gh#164 (v2.13.0): explicit release + lazy reload, on BOTH a plain-KV and a
+# hybrid/recurrent architecture, plus the public C ABI through configure_dir.
+# Per-case so each load/release/reload cycle gets a fresh process — this test
+# deliberately loads the same model twice, which is exactly the accumulation
+# the per-case split exists for.
+add_model_test_per_case(test-gh164-release-reload test_gh164_release_reload.cpp
+    "gh#164: release then reload decodes correctly on gemma4 (plain KV)"
+    "gh#164: release then reload decodes correctly on a hybrid arch"
+    "gh#164: entropic_release_model frees VRAM through the C ABI")
+set_tests_properties(
+    model/test-gh164-release-reload-c1
+    model/test-gh164-release-reload-c2
+    model/test-gh164-release-reload-c3
+    PROPERTIES TIMEOUT 600)

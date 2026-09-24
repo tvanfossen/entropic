@@ -26,21 +26,39 @@ Before tagging:
 
 1. **All planned proposals merged to `develop`**, with the implementation
    logs in each proposal pointing at landed commits.
-2. **`feature/v2.1.0-*` branches merged** to `develop`. Workstream A
-   (engine bug bundle), B (release infrastructure), C (cleanup) all closed.
-3. **Versions in sync**:
-   - `CMakeLists.txt:project(entropic VERSION x.y.z)`
-   - `pyproject.toml:version = "x.y.z"`
+2. **Every feature branch for this version merged** to `develop`, with each
+   issue's implementation-log comment pointing at the landed commits.
+3. **`VERSION` bumped.** Since v2.1.2 (#4) that is the whole edit —
+   `CMakeLists.txt:10` and `pyproject.toml:64` both read the repo-root
+   `VERSION` file, so there is no second place to keep in sync.
 4. **`RELEASE_NOTES.md` drafted** (see template below).
 5. **CI green** on `develop` head — `gh run list --branch develop --limit 3`
    should show the latest workflow run as "completed / success".
-6. **Re-run model tests AFTER the VERSION bump rebuild.** Surfaced in
-   v2.2.0 (model test #683): the `version-match` assertion compares
-   `entropic_version()` against the on-disk VERSION file, so any model-
-   test pass collected via `inv test --model --no-build` from a build
-   produced *before* the VERSION bump will fail this assertion. Always
-   re-run `inv build` and `inv test --model` after bumping VERSION; do
-   not reuse the pre-bump build artifacts.
+6. **Re-run model tests AFTER the VERSION bump rebuild**, so the captured
+   `model-results-vX.Y.Z.json` is stamped with the version it audits.
+   The results JSON's `version` comes from `_get_version()` — the VERSION
+   *file*, read when the run starts — so a gate collected before the bump
+   records the old version and the release's audit record then disagrees
+   with the release. That is honest reporting, not a bug, but it makes the
+   artifact useless as evidence for the version it is attached to.
+
+   Since v2.13.0 the JSON also carries `built_version`, read from the
+   tested build's generated header, and `_run_model_tests` refuses to start
+   when the two disagree. That check is what catches a build directory
+   which did not pick the bump up; `version` alone never could, because
+   both it and the filename come from the same file.
+   The assertion this step has always cited is real and still present —
+   `tests/unit/api/api_version_test.cpp`, "Library version matches the
+   canonical VERSION file", which reads `VERSION` at test time and compares
+   it to `entropic_version()`. It is a **unit** test, so it only fires on a
+   run that includes the unit lane: `inv test --model --model-only` skips
+   it, and that is the invocation used to collect the results JSON in long
+   bounded windows. A stale-version artifact therefore passes 87/87 and the
+   mislabelling is silent on that path.
+
+   Check `"version"` in the artifact against `VERSION` before attaching it,
+   or run one un-filtered `inv test --model` (no `--model-only`) so the
+   assertion runs against the same build directory the model tests used.
 7. **Verify the pip wrapper covers every ENTROPIC_EXPORT** added since
    the last minor. As of v2.2.1 this is mechanical: `inv gen-bindings
    --check` runs in pre-commit and fails loud on drift. The check is

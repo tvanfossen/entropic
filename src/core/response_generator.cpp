@@ -11,6 +11,7 @@
 #include <entropic/mcp/utf8_sanitize.h>
 #include <entropic/types/error.h>
 #include <entropic/types/logging.h>
+#include <entropic/types/run_scope.h>
 
 #include <nlohmann/json.hpp>
 
@@ -24,6 +25,33 @@
 static auto logger = entropic::log::get("core.response_generator");
 
 namespace entropic {
+
+/**
+ * @brief Whether the generation in progress must stop (gh#158).
+ *
+ * Two independent reasons, exactly as `StdioTransport::request_cancelled`
+ * has them, and for the same reason. `events.interrupt` is the HANDLE-WIDE
+ * flag — `entropic_interrupt()`, "stop everything". `current_run_cancelled()`
+ * is the token of the run decoding right now, which is what
+ * `entropic_interrupt_session(key)` sets.
+ *
+ * Pre-2.13.0 this path consulted the handle flag ALONE, which is the gap the
+ * gh#158 audit found in its own first half: keying the run guard gave a
+ * session its own cancel token, ba48877 taught the agent loop and the MCP
+ * transports to poll it, and left the DECODE — the longest-running thing a
+ * session does — answering only to the handle-wide flag. A per-session
+ * interrupt therefore could not stop the generation it named.
+ *
+ * @param events Interrupt/pause flag pair (nullable fields tolerated).
+ * @return true when this generation should cancel.
+ * @utility
+ * @version 2.13.0
+ */
+static bool generation_cancelled(const GenerationEvents& events) {
+    return (events.interrupt != nullptr
+            && events.interrupt->load(std::memory_order_acquire))
+        || current_run_cancelled();
+}
 
 /// Per-tier system prompt hash for diff detection across delegations.
 static std::unordered_map<std::string, size_t> s_tier_system_hash;
@@ -238,11 +266,17 @@ struct StreamAccumulator {
 
 /**
  * @brief Token callback for streaming generation.
+ *
+ * gh#158 (v2.13.0): the per-token interrupt poll consults this RUN's cancel
+ * token as well as the handle-wide flag, so `entropic_interrupt_session`
+ * stops the stream it names. The callback runs inline on the run's own
+ * thread, which is what makes the thread-local token readable here.
+ *
  * @param token Token string.
  * @param len Token length.
  * @param user_data StreamAccumulator pointer.
  * @req REQ-LOOP-008
- * @version 2.1.12
+ * @version 2.13.0
  */
 static void stream_token_callback(
     const char* token,
@@ -269,8 +303,8 @@ static void stream_token_callback(
     // appending the token so the content buffer is complete up to
     // the cancel point. The backend stops on its next loop iteration
     // (<= 1 token wall-time); whatever made it through is preserved.
-    bool just_interrupted = acc->events->interrupt != nullptr
-        && acc->events->interrupt->load()
+    bool just_interrupted = acc->events != nullptr
+        && generation_cancelled(*acc->events)
         && !acc->interrupted;
     if (just_interrupted) {
         acc->interrupted = true;
@@ -313,14 +347,19 @@ static void stream_token_callback(
  * @brief Resolve a stream's finish_reason from rc + content size.
  *
  * gh#20 (v2.1.5) resolution order: CANCELLED → "interrupted";
- * error with partial content → "partial"; error with none → "error";
- * clean → "stop".
+ * EVAL_CONTEXT_FULL → "context_overflow"; error with partial content →
+ * "partial"; error with none → "error"; clean → "stop".
+ *
+ * v2.13.0: the overflow refusal is given its OWN reason rather than folded
+ * into "error". "error" is not terminal for the loop — it falls through to
+ * the empty-turn ladder, which appends a correction message and retries a
+ * prompt that was already too big. Retrying it makes it bigger.
  *
  * @param rc Backend return code.
  * @param content_size Accumulated content length.
  * @return finish_reason string.
  * @utility
- * @version 2.3.7
+ * @version 2.13.0
  */
 static std::string resolve_stream_finish_reason(int rc,
                                                 size_t content_size) {
@@ -329,6 +368,11 @@ static std::string resolve_stream_finish_reason(int rc,
         logger->info("Stream cancelled by interrupt after {} chars",
                      content_size);
         reason = "interrupted";
+    } else if (rc == ENTROPIC_ERROR_EVAL_CONTEXT_FULL) {
+        logger->error("Stream refused: the prompt does not fit this tier's "
+                      "context — see the inference log for the token "
+                      "breakdown (rc={})", rc);
+        reason = "context_overflow";
     } else if (rc != 0 && content_size > 0) {
         logger->warn("Stream failed (rc={}) after {} chars — "
                      "preserving partial", rc, content_size);
@@ -418,18 +462,68 @@ GenerateResult ResponseGenerator::generate_streaming(LoopContext& ctx) {
 }
 
 /**
- * @brief Generate via batch (non-streaming).
- * @param ctx Loop context.
- * @return Generation result.
- * @dg_internal
- * @version 2.3.7
+ * @brief Whether a nullable stop flag is set (gh#158).
+ * @param flag Flag pointer; nullptr means "no such flag", never "stop".
+ * @return true when the flag exists and is set.
+ * @utility
+ * @version 2.13.0
  */
+static bool flag_raised(const std::atomic<bool>* flag) {
+    return flag != nullptr && flag->load(std::memory_order_acquire);
+}
+
+/**
+ * @brief Start the poller that mirrors the stop flags into the C-ABI int.
+ *
+ * The C boundary carries `int*`, not `std::atomic<bool>*`, so something has
+ * to bridge them; this is that something, and it polls at 10ms.
+ *
+ * gh#158 (v2.13.0): it watches TWO flags now — the handle-wide interrupt and
+ * the token of the run that issued this generation. The run token must be
+ * read HERE, on the run's own thread, because it is published as a
+ * thread-local: calling `current_run_cancelled()` inside the lambda would
+ * have run on the poller's thread, where nothing is installed, and answered
+ * false forever.
+ *
+ * @param cancel_int The backend's cancel int; set to 1 when either flag
+ *                   fires. Borrowed — must outlive the returned thread.
+ * @param done Set by the caller to retire the poller. Borrowed likewise.
+ * @return The poller thread, or a default-constructed (non-joinable) thread
+ *         when there is no flag to watch.
+ * @req REQ-LOOP-006
+ * @dg_internal
+ * @version 2.13.0
+ */
+std::thread ResponseGenerator::spawn_cancel_poller(
+    int& cancel_int, std::atomic<bool>& done) const {
+    const std::atomic<bool>* handle_flag = events_.interrupt;
+    const std::atomic<bool>* run_token = current_run_cancel();
+    if (handle_flag == nullptr && run_token == nullptr) {
+        return {};
+    }
+    return std::thread(
+        [&cancel_int, &done, handle_flag, run_token]() {
+            while (!done.load(std::memory_order_acquire)) {
+                if (flag_raised(handle_flag) || flag_raised(run_token)) {
+                    cancel_int = 1;
+                    return;
+                }
+                std::this_thread::sleep_for(
+                    std::chrono::milliseconds(10));
+            }
+        });
+}
+
 /**
  * @brief Dispatch the batch backend call. See header. (gh#81, v2.4.2)
+ *
+ * gh#158 (v2.13.0): the cancel poller now watches this RUN's token as well
+ * as the handle-wide flag — see `generation_cancelled`.
+ *
  * @return Status code from the selected generate entry point, 0 on
  *         success.
  * @req REQ-LOOP-006
- * @version 2.9.6
+ * @version 2.13.0
  */
 int ResponseGenerator::dispatch_batch_generate(
     const std::string& msgs_json,
@@ -457,24 +551,10 @@ int ResponseGenerator::dispatch_batch_generate(
     // via its own poller; this side mirrors the engine's atomic
     // interrupt_flag_ → the int. Two cheap 10ms-poll hops, but it
     // keeps the C ABI int*-only (no atomic across the .so boundary).
-    int cancel_int =
-        (events_.interrupt != nullptr
-         && events_.interrupt->load(std::memory_order_acquire)) ? 1 : 0;
+    int cancel_int = generation_cancelled(events_) ? 1 : 0;
 
     std::atomic<bool> observer_done(false);
-    std::thread observer;
-    if (events_.interrupt != nullptr) {
-        auto* flag = events_.interrupt;
-        observer = std::thread([&cancel_int, flag, &observer_done]() {
-            while (!observer_done.load(std::memory_order_acquire)) {
-                if (flag->load(std::memory_order_acquire)) {
-                    cancel_int = 1;
-                    return;
-                }
-                std::this_thread::sleep_for(std::chrono::milliseconds(10));
-            }
-        });
-    }
+    std::thread observer = spawn_cancel_poller(cancel_int, observer_done);
 
     int rc = inference_.generate_cancellable(
         msgs_json.c_str(), params_json.c_str(),
@@ -486,11 +566,55 @@ int ResponseGenerator::dispatch_batch_generate(
 }
 
 /**
+ * @brief Map a TERMINAL batch return code onto the result, if it is one.
+ *
+ * Terminal means the loop must not treat the turn as a model failure it
+ * can retry. Two codes qualify: a cancellation (gh#81, v2.4.2 — carries
+ * whatever partial content arrived, and maps to "interrupted" so the
+ * engine transitions to INTERRUPTED, mirroring
+ * `resolve_stream_finish_reason`), and a v2.13.0 context refusal (carries
+ * nothing, and no retry can shrink the prompt that caused it).
+ *
+ * Extracted from `generate_batch` so that function stays inside the knots
+ * ABC gate once the second code joined it.
+ *
+ * @param rc Backend return code.
+ * @param result_json Raw backend payload (may be NULL).
+ * @param[out] result Result populated when rc is terminal.
+ * @return true when rc was terminal and `result` is now final.
+ * @utility
+ * @version 2.13.0
+ */
+static bool apply_terminal_batch_rc(int rc, const char* result_json,
+                                    GenerateResult& result) {
+    if (rc == ENTROPIC_ERROR_CANCELLED) {
+        result.finish_reason = "interrupted";
+        if (result_json != nullptr) {
+            result.content = mcp::sanitize_utf8(result_json);
+        }
+        result.tool_calls_json = "[]";
+        logger->info("Generate cancelled (batch) after {} chars",
+                     result.content.size());
+    } else if (rc == ENTROPIC_ERROR_EVAL_CONTEXT_FULL) {
+        result.finish_reason = "context_overflow";
+        result.tool_calls_json = "[]";
+        logger->error("Generate refused (batch): the prompt does not fit "
+                      "this tier's context — see the inference log for the "
+                      "token breakdown (rc={})", rc);
+    } else {
+        return false;
+    }
+    return true;
+}
+
+/**
  * @brief Generate via batch (non-streaming). (gh#81 cancel-aware, v2.4.2)
  * @param ctx Loop context.
- * @return Generation result.
+ * @return Generation result; finish_reason "context_overflow" when the
+ *         backend refused the prompt (v2.13.0).
  * @req REQ-LOOP-003
- * @version 2.4.2
+ * @req REQ-INFER-026
+ * @version 2.13.0
  */
 GenerateResult ResponseGenerator::generate_batch(LoopContext& ctx) {
     if (inference_.generate == nullptr
@@ -507,34 +631,26 @@ GenerateResult ResponseGenerator::generate_batch(LoopContext& ctx) {
     int rc = dispatch_batch_generate(msgs_json, params_json, &result_json);
 
     GenerateResult result;
-    // gh#81 (v2.4.2): a cancelled batch is terminal, not an error —
-    // map it to "interrupted" so the engine transitions to INTERRUPTED
-    // and any partial content is preserved (mirrors the streaming
-    // resolve_stream_finish_reason policy).
-    if (rc == ENTROPIC_ERROR_CANCELLED) {
-        result.finish_reason = "interrupted";
-        if (result_json != nullptr) {
+    // Cancellation and the v2.13.0 context refusal are both terminal and
+    // both shaped unlike a retryable failure — see apply_terminal_batch_rc.
+    if (!apply_terminal_batch_rc(rc, result_json, result)) {
+        if (rc == 0 && result_json != nullptr) {
+            // Issue #3 (v2.1.1): inbound boundary, batch path. See the
+            // streaming branch above for rationale; same policy applies.
             result.content = mcp::sanitize_utf8(result_json);
+            result.finish_reason = "stop";
+            result.tool_calls_json = "[]";
+            // Fire observer once with full content so the non-streaming
+            // fallback still reaches registered observers. (2.0.6-rc16)
+            if (stream_observer_ != nullptr && !result.content.empty()) {
+                stream_observer_(result.content.data(),
+                                 result.content.size(),
+                                 stream_observer_data_);
+            }
+        } else {
+            result.finish_reason = "error";
+            logger->error("Generate failed (rc={})", rc);
         }
-        result.tool_calls_json = "[]";
-        logger->info("Generate cancelled (batch) after {} chars",
-                     result.content.size());
-    } else if (rc == 0 && result_json != nullptr) {
-        // Issue #3 (v2.1.1): inbound boundary, batch path. See the
-        // streaming branch above for rationale; same policy applies.
-        result.content = mcp::sanitize_utf8(result_json);
-        result.finish_reason = "stop";
-        result.tool_calls_json = "[]";
-        // Fire observer once with full content so the non-streaming
-        // fallback still reaches registered observers. (2.0.6-rc16)
-        if (stream_observer_ != nullptr && !result.content.empty()) {
-            stream_observer_(result.content.data(),
-                             result.content.size(),
-                             stream_observer_data_);
-        }
-    } else {
-        result.finish_reason = "error";
-        logger->error("Generate failed (rc={})", rc);
     }
     if (result_json != nullptr && inference_.free_fn != nullptr) {
         inference_.free_fn(result_json);
@@ -552,11 +668,13 @@ GenerateResult ResponseGenerator::generate_batch(LoopContext& ctx) {
  * see PAUSED during streaming runs where the legacy callbacks have
  * been overwritten by run_streaming's set_callbacks() shuffle.
  *
+ * gh#158 (v2.13.0): declining to inject cancels THIS run, not the handle.
+ *
  * @param ctx Loop context.
  * @param partial Content generated so far.
  * @return Updated content.
  * @req REQ-LOOP-006
- * @version 2.1.10
+ * @version 2.13.0
  */
 std::string ResponseGenerator::handle_pause(
     LoopContext& ctx,
@@ -583,7 +701,11 @@ std::string ResponseGenerator::handle_pause(
     }
 
     if (injection == nullptr) {
-        if (events_.interrupt != nullptr) {
+        // gh#158: "the consumer declined to inject" means abandon THIS turn,
+        // so raise this run's own token. Falling through to the handle-wide
+        // flag (the pre-2.13.0 behaviour) would abort every concurrent
+        // session's turn on one session's pause prompt.
+        if (!cancel_current_run() && events_.interrupt != nullptr) {
             events_.interrupt->store(true);
         }
         return partial;

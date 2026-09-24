@@ -11,6 +11,10 @@
 
 #include <ggml-backend.h>
 
+#include "partial_offload.h"   // kMemlockUnlimited
+
+#include <sys/resource.h>
+
 namespace {
 auto logger = entropic::log::get("inference.device_memory");
 }  // namespace
@@ -44,6 +48,25 @@ uint64_t query_device_free_vram_bytes() {
                  ggml_backend_dev_name(device),
                  free_bytes / (1024 * 1024), total_bytes / (1024 * 1024));
     return static_cast<uint64_t>(free_bytes);
+}
+
+/**
+ * @brief This process's RLIMIT_MEMLOCK soft limit (gh#148). See header.
+ *
+ * `RLIM_INFINITY` and an unreadable limit both map to `kMemlockUnlimited`:
+ * a gate that cannot measure must not refuse.
+ *
+ * @return Soft limit in bytes, or kMemlockUnlimited.
+ * @req REQ-INFER-019
+ * @version 2.13.0
+ */
+uint64_t host_memlock_limit_bytes() {
+    struct rlimit rl {};
+    if (getrlimit(RLIMIT_MEMLOCK, &rl) != 0
+        || rl.rlim_cur == RLIM_INFINITY) {
+        return kMemlockUnlimited;
+    }
+    return static_cast<uint64_t>(rl.rlim_cur);
 }
 
 }  // namespace entropic

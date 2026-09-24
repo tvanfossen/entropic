@@ -40,11 +40,25 @@ using entropic::test::facade::TierSpec;
 
 namespace {
 
-std::string run_as(entropic_handle_t h, const char* tier, const char* prompt) {
+/// @brief One run_as call, both ways round.
+///
+/// v2.13.0: `entropic_run_as` returns the WHOLE accumulated conversation,
+/// and this handle is persistent — so by the third call the transcript
+/// already contains the first call's verb. `CHECK(has_verb(npc2))` over it
+/// could not fail. The per-call claims now read `answer`.
+struct RunAs {
+    std::string answer;      ///< Final assistant message of THIS call
+    std::string transcript;  ///< Everything the handle has accumulated
+};
+
+RunAs run_as(entropic_handle_t h, const char* tier, const char* prompt) {
     char* out = nullptr;
+    // Kept inline rather than routed through run_transcript: the rc is
+    // asserted directly here, and its value is the diagnostic.
     auto rc = entropic_run_as(h, tier, prompt, &out);
-    std::string r = (out != nullptr) ? out : "";
-    if (out != nullptr) { entropic_free(out); }
+    RunAs r;
+    r.transcript = entropic::test::facade::take_owned(out);
+    r.answer = entropic::test::facade::final_answer(r.transcript);
     REQUIRE(rc == ENTROPIC_OK);
     return r;
 }
@@ -84,23 +98,27 @@ SCENARIO("gh#99: run_as emits each tier's grammar on a shared model",
         REQUIRE(h != nullptr);
 
         WHEN("alternating run_as across tiers on the same persistent handle") {
-            std::string npc1 = run_as(h, "npc", "What do you do?");
-            std::string comp1 = run_as(h, "companion", "What do you say?");
-            std::string npc2 = run_as(h, "npc", "And now?");
+            RunAs npc1 = run_as(h, "npc", "What do you do?");
+            RunAs comp1 = run_as(h, "companion", "What do you say?");
+            RunAs npc2 = run_as(h, "npc", "And now?");
 
             THEN("each call emits ITS tier's grammar, not the default's") {
-                INFO("npc1=[" << npc1 << "] comp1=[" << comp1
-                     << "] npc2=[" << npc2 << "]");
-                // The results are the accumulated persistent conversation, so
-                // "ANSWER" (which ONLY the companion grammar can emit) is the
-                // clean discriminator: absent after the npc call, present after
-                // the companion call. On the bug (run_as ignores the tier and
-                // uses the default npc grammar) the companion call emits a verb
-                // and ANSWER never appears — the genuine RED.
-                CHECK(has_verb(npc1));                              // npc grammar
-                CHECK(npc1.find("ANSWER") == std::string::npos);   // not companion's
-                CHECK(comp1.find("ANSWER") != std::string::npos);  // companion grammar
-                CHECK(has_verb(npc2));                             // switched back
+                INFO("npc1=[" << npc1.answer << "] comp1=[" << comp1.answer
+                     << "] npc2=[" << npc2.answer << "]\nfinal transcript: "
+                     << npc2.transcript);
+                // Each assertion is about what THAT call emitted, so each
+                // reads that call's own final assistant message. Over the
+                // accumulated transcript (what run_as used to return)
+                // `has_verb(npc2)` matched npc1's verb and could not fail.
+                //
+                // "ANSWER" is still the discriminator: only the companion
+                // grammar can emit it. On the bug (run_as ignores the tier
+                // and uses the default npc grammar) the companion call emits
+                // a verb and ANSWER never appears — the genuine RED.
+                CHECK(has_verb(npc1.answer));                             // npc grammar
+                CHECK(npc1.answer.find("ANSWER") == std::string::npos);   // not companion's
+                CHECK(comp1.answer.find("ANSWER") != std::string::npos);  // companion grammar
+                CHECK(has_verb(npc2.answer));                             // switched back
             }
         }
 

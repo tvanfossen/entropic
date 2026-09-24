@@ -36,6 +36,7 @@
 #include <functional>
 #include <memory>
 #include <mutex>
+#include <optional>
 #include <string>
 #include <unordered_map>
 #include <unordered_set>
@@ -270,6 +271,80 @@ public:
     InferenceBackend* get_backend(const std::string& tier_name) const;
 
     /**
+     * @brief Get a tier's backend, loading it if it is not resident (gh#157).
+     *
+     * The public face of the residency-gated activation path the generation
+     * entry points already use: admits the tier against the VRAM budget,
+     * swaps out the incumbent, activates, fires
+     * `ResidencyEvent::Loaded` and preloads the model's LoRA adapters.
+     *
+     * This exists because `models.defer_load` makes "no model is loaded yet"
+     * a normal state rather than a startup transient, and the non-generation
+     * consumers of a backend — `entropic_state_save`, `entropic_state_load`,
+     * `entropic_get_logprobs`, `entropic_compute_perplexity`,
+     * `entropic_adapter_load` — used to reach straight for `get_backend` and
+     * throw "model not active". They lazy-load through here instead.
+     *
+     * Takes the swap mutex. Callers that hold it must use `get_model`.
+     *
+     * @param tier_name Tier to make resident.
+     * @return ACTIVE backend, or nullptr when the tier is unknown, refused
+     *         by the residency gate, or fails to load.
+     * @utility
+     * @req REQ-INFER-019
+     * @version 2.13.0
+     */
+    InferenceBackend* ensure_model(const std::string& tier_name);
+
+    /**
+     * @brief Release resident model(s), keeping every registration (gh#164).
+     *
+     * Unloads the backend(s), fires `ResidencyEvent::Evicted` for every tier
+     * that was backed by one, and clears the active-tier record so the next
+     * `get_model` / `ensure_model` reloads through the residency gate.
+     *
+     * What is DELIBERATELY kept: the tier configs, the grammar registry, the
+     * footprint estimates, and the LoRA adapter REGISTRATIONS. The swap path
+     * (`deactivate_current_if_needed`) calls `unload_all_for_model`, which
+     * ERASES adapter entries — correct for a tier that is being replaced,
+     * wrong for one the consumer intends to bring back. Release frees the
+     * llama adapter handles and leaves the registrations COLD, to be re-bound
+     * by `preload_adapters_for_model` at the next activation.
+     *
+     * Takes the swap mutex. It does NOT serialize generation — the caller
+     * (the facade) holds the handle's turn claim, which is what makes
+     * unloading a live context safe.
+     *
+     * @param tier_name Tier to release, or empty for every resident model
+     *        including the secondary roles (router, draft). An MTP head is
+     *        owned by its target backend and is torn down with it.
+     * @return ENTROPIC_OK, or ENTROPIC_ERROR_MODEL_NOT_FOUND for an unknown
+     *         tier name. Releasing an already-unloaded tier is a no-op.
+     * @utility
+     * @req REQ-INFER-019
+     * @version 2.13.0
+     */
+    entropic_error_t release_models(const std::string& tier_name);
+
+    /**
+     * @brief Whether a tier is configured for vision, per CONFIG (gh#157).
+     *
+     * True when the tier declares the `"vision"` capability or carries an
+     * `mmproj` path. Deliberately does NOT consult the backend: the
+     * backend's answer comes from `has_vision_`, which is set while the
+     * mmproj context is built during ACTIVATION, so an unloaded tier
+     * reported "no vision" — a wrong answer, not an unknown one, and
+     * `models.defer_load` makes unloaded the normal state.
+     *
+     * @param tier_name Tier name.
+     * @return true when the configured tier is vision-capable.
+     * @utility
+     * @req REQ-INFER-025
+     * @version 2.13.0
+     */
+    bool tier_declares_vision(const std::string& tier_name) const;
+
+    /**
      * @brief Access the LoRA adapter manager.
      * @return Reference to AdapterManager.
      * @utility
@@ -284,6 +359,25 @@ public:
      * @version 1.9.3
      */
     GrammarRegistry& grammar_registry() { return grammar_registry_; }
+
+    /**
+     * @brief Per-generation metric records, oldest first (gh#154).
+     *
+     * A bounded ring — the last `kMaxGenerationRecords` generations this
+     * orchestrator ran. Serialized into `entropic_metrics_json` as
+     * `generations[]`, which is the only route by which any
+     * `GenerationResult` field has ever reached a C consumer: `tok/s`,
+     * `prefill_tokens`, the speculative draft/accept counts and the
+     * grammar provenance were all computed, logged and then dropped.
+     *
+     * @return A copy, so the caller never holds the lock.
+     * @version 2.13.0
+     */
+    std::vector<GenerationRecord> generation_records() const;
+
+    /// @brief Ring capacity for generation_records().
+    /// @version 2.13.0
+    static constexpr size_t kMaxGenerationRecords = 64;
 
     /**
      * @brief Access the GPU resource profile registry.
@@ -440,6 +534,26 @@ public:
     std::string residency_snapshot_json() const;
 
     /**
+     * @brief Drop one session's resident KV on every loaded tier (gh#165).
+     *
+     * Called after `entropic_session_context_set` replaces a conversation, so
+     * the restored history cannot decode against the prefix the conversation
+     * it replaced left in the cache.
+     *
+     * Takes `generation_mutex_` — it touches the live `llama_context`, which
+     * a concurrent decode is using. The resulting order from the facade is
+     * `api_mutex` -> `generation_mutex_` -> `swap_mutex_`, and it does not
+     * close a cycle: gh#109 removed `api_mutex` from every run entry point,
+     * so nothing holds it while taking `generation_mutex_` from the other
+     * side.
+     *
+     * @param session_key Session whose KV to drop; `""` is the default.
+     * @req REQ-LOOP-010
+     * @version 2.13.0
+     */
+    void forget_session_kv(const std::string& session_key);
+
+    /**
      * @brief Engine-tracked VRAM budget in bytes (0 = unknown).
      *
      * Sources, in priority order: `ENTROPIC_VRAM_BUDGET_BYTES`
@@ -526,6 +640,55 @@ public:
     }
 
 private:
+    /**
+     * @brief Attach grammar provenance and append a metric record (gh#154).
+     *
+     * One call at the tail of every orchestrated generation, so "one
+     * record per generation" is structural rather than a convention each
+     * path has to remember. Provenance is computed from the resolved
+     * params plus the backend's staged tool grammar — the same two inputs
+     * the sampler's application site reads.
+     *
+     * @param result Completed result (mutated: `grammar` populated).
+     * @param resolved_params Params as the backend saw them.
+     * @param model Backend that ran the decode (may be null).
+     * @version 2.13.0
+     */
+    void record_generation(GenerationResult& result,
+                           const GenerationParams& resolved_params,
+                           const InferenceBackend* model);
+
+    /**
+     * @brief Shared tail of both non-streaming generate() overloads.
+     *
+     * Adapter parse, turn diagnostics, timing, the gh#154 metric record
+     * and the orchestration log line — byte-identical in both overloads
+     * before v2.13.0, and the ABC budget said so once the record was
+     * added. One tail also means a new step cannot land on one overload
+     * and not the other, which is how the batch path came to bypass
+     * speculative dispatch (#49).
+     *
+     * @param result Completed result (mutated throughout).
+     * @param model Backend that ran the decode.
+     * @param resolved_params Params as the backend saw them.
+     * @param selected Tier that ran.
+     * @param routing_ms Router classification time.
+     * @param swap_ms Model-swap time.
+     * @param t_start Start of the whole orchestration.
+     * @version 2.13.0
+     */
+    void finish_generation(GenerationResult& result,
+                           InferenceBackend* model,
+                           const GenerationParams& resolved_params,
+                           const std::string& selected,
+                           double routing_ms,
+                           double swap_ms,
+                           std::chrono::steady_clock::time_point t_start);
+
+    /* ── gh#154: bounded per-generation metric ring ──────── */
+    mutable std::mutex records_mutex_;
+    std::vector<GenerationRecord> generation_records_;
+
     /* ── Model pool (one backend per unique path) ────────── */
     std::unordered_map<std::string, std::shared_ptr<InferenceBackend>> model_pool_;
 
@@ -557,6 +720,48 @@ private:
     std::vector<std::string> tier_history_;  ///< Recent tiers, max 5
 
     mutable std::mutex swap_mutex_;  ///< Guards tier swap + residency mutations
+
+    /**
+     * @brief gh#158 (v2.13.0): the ONE lock on the generation path.
+     *
+     * @par What it protects
+     * Everything a generation touches that is one-per-backend: the shared
+     * `llama_context` and its KV cache, `LlamaCppBackend::active_slot_` and
+     * `residency_`, the staged tool arena, the sampler chain, and
+     * `last_routing_result_` / `loaded_main_tier_` / `tier_history_` here.
+     * Nothing but the (then per-handle) run guard serialized `llama_decode`
+     * before gh#158; keying runs per session removes that accidental
+     * serialization, so it has to become a deliberate one.
+     *
+     * @par Scope: one GENERATION, not one decode
+     * Held across a whole `generate*` call, which is what makes concurrent
+     * runs interleave at GENERATION boundaries — a side request waits for
+     * the current generation, not for the whole multi-iteration turn. That
+     * is the property gh#158 asks for; a finer lock around `llama_decode`
+     * alone would leave `active_slot_` and the staged arena racing.
+     *
+     * @par Lock ORDER — the whole rule, in one line
+     * `generation_mutex_` → `swap_mutex_` / `records_mutex_` → the backend's
+     * `transition_mutex_` / `mtp_mutex_`.
+     *
+     * It is IMPOSSIBLE TO INVERT by construction, not by discipline: this
+     * lock is acquired at exactly five sites, all of them entry points of
+     * this class (`generate` x2, `generate_batch`, `generate_streaming`,
+     * `classify_task`), and no holder of any inner lock calls any of them.
+     * `get_model` takes `swap_mutex_` and RELEASES it before returning, so
+     * no caller ever holds an inner lock across a generation. If a future
+     * change makes a `swap_mutex_` holder generate, THAT is the inversion —
+     * and it is a compile-visible call from inside a `lock_guard` scope.
+     *
+     * @par Why recursive
+     * `generate()` routes, and `route()` → `classify_task()` decodes on the
+     * router. Both are generation entry points, so the outer one re-enters
+     * the lock on the SAME thread. A plain mutex would self-deadlock the
+     * first time a run routed; a recursive one makes re-entry a non-event
+     * rather than a rule someone has to remember. It does not weaken the
+     * exclusion: a different thread still waits.
+     */
+    mutable std::recursive_mutex generation_mutex_;
 
     ParsedConfig config_;
 
@@ -609,6 +814,16 @@ private:
      * @version 2.2.4
      */
     entropic_error_t last_residency_error_{ENTROPIC_OK};
+
+    /**
+     * @brief Operator-actionable text for `last_residency_error_` (gh#148).
+     *
+     * Empty falls back to the gh#57 VRAM-budget wording. A typed refusal
+     * that cannot say WHICH setting to change is only half a diagnosis,
+     * and the two gh#148 refusals each name a different one.
+     * @version 2.13.0
+     */
+    std::string last_residency_message_;
 
     /**
      * @brief Compute the cached/estimated footprint for a tier in bytes.
@@ -716,11 +931,49 @@ private:
     /**
      * @brief Run the VRAM-budget gate for a tier. Returns true to
      *        proceed with load; false (with `last_residency_error_`
-     *        set to `TIER_MODEL_TOO_LARGE`) means refuse the activation.
+     *        set) means refuse the activation.
+     *
+     * gh#148 (v2.13.0) added two steps ahead of the footprint check:
+     * `gpu_layers: auto` is resolved, and an explicit configuration that
+     * provably cannot work is refused with a typed code.
+     *
      * @dg_internal
-     * @version 2.2.4
+     * @req REQ-INFER-019
+     * @version 2.13.0
      */
     bool residency_admits(const std::string& tier_name);
+
+    /**
+     * @brief Resolve `gpu_layers: auto` from measured free VRAM (gh#148).
+     * @param tier_name Tier being admitted.
+     * @dg_internal
+     * @req REQ-INFER-019
+     * @version 2.13.0
+     */
+    void resolve_auto_gpu_layers(const std::string& tier_name);
+
+    /**
+     * @brief Refuse an explicit config that provably cannot work (gh#148).
+     * @param tier_name Tier being admitted.
+     * @return true to proceed; false with `last_residency_error_` set.
+     * @dg_internal
+     * @req REQ-INFER-019
+     * @version 2.13.0
+     */
+    bool config_admits(const std::string& tier_name);
+
+    /**
+     * @brief Log a refusal and stash its typed code + message (gh#148).
+     * @param tier_name Tier being refused.
+     * @param code Typed error the facade will surface.
+     * @param why Operator-actionable explanation.
+     * @dg_internal
+     * @req REQ-INFER-019
+     * @version 2.13.0
+     */
+    void refuse_residency(const std::string& tier_name,
+                          entropic_error_t code,
+                          const std::string& why);
 
     /**
      * @brief Load + activate a tier with residency bookkeeping. Returns
@@ -804,10 +1057,54 @@ private:
         const std::string& tier_name, llama_context* ctx);
 
     /**
-     * @brief Preload all configured tier adapters to WARM.
-     * @version 1.9.2
+     * @brief Unload one backend, keeping its adapter registrations (gh#164).
+     * @param backend Backend to release. Null or already-COLD is a no-op.
+     * @dg_internal
+     * @req REQ-INFER-019
+     * @version 2.13.0
      */
-    void preload_adapters();
+    void release_backend(InferenceBackend* backend);
+
+    /**
+     * @brief Fire Evicted for every tier backed by `backend` (gh#164), and
+     *        clear the active-tier record when it names one of them.
+     * @param backend Backend that was just unloaded.
+     * @dg_internal
+     * @req REQ-INFER-019
+     * @version 2.13.0
+     */
+    void announce_eviction(const InferenceBackend* backend);
+
+    /**
+     * @brief Re-ensure the secondary roles (router, draft) after a release
+     *        (gh#164).
+     *
+     * `entropic_release_model(NULL)` drops them along with the tiers, and
+     * neither `classify_task` nor the speculative path reloads a role on
+     * its own — routing would have degraded to the default tier, silently
+     * and permanently, for the rest of the handle's life. Both calls are
+     * no-ops when the role is already loaded.
+     *
+     * @dg_internal
+     * @req REQ-INFER-020
+     * @version 2.13.0
+     */
+    void ensure_secondary_roles();
+
+    /**
+     * @brief Preload the LoRA adapters of every tier sharing one backend,
+     *        at that backend's activation (gh#157).
+     *
+     * Replaces the init-time `preload_adapters()`, which required the base
+     * model to be loaded already and therefore skipped — permanently, with
+     * only a warning — every tier whose GGUF was not the default tier's.
+     *
+     * @param backend Freshly activated backend.
+     * @dg_internal
+     * @req REQ-INFER-023
+     * @version 2.13.0
+     */
+    void preload_adapters_for_model(InferenceBackend* backend);
 
     /**
      * @brief Build per-tier backends and adapters from config.
@@ -876,6 +1173,78 @@ private:
                              const std::string& tier_name);
 
     /**
+     * @brief Resolve this dispatch's grammar, refusing an unregistered
+     *        TIER grammar before anything decodes (gh#154).
+     *
+     * gh#154 first refused an unresolvable tier stem at CONFIGURE. That
+     * broke the documented register-after-configure workflow:
+     * `entropic_grammar_register` and `entropic_grammar_register_file`
+     * both require an orchestrator, which exists only after configure, so
+     * a consumer holding its grammar in memory (or at a path the engine
+     * cannot discover) had no legal order of calls left. Configure now
+     * warns; the refusal lands HERE, at first use, where "not registered
+     * yet" and "never going to be" are finally distinguishable.
+     *
+     * Runs BEFORE `get_model`, so a doomed run costs no model swap and
+     * cannot decode. The rule itself is not re-implemented: this calls
+     * `resolve_grammar_key` and asks `tier_grammar_unresolved` about the
+     * result.
+     *
+     * @param params Params for this dispatch (mutated: grammar resolved).
+     * @param tier_name Selected tier.
+     * @return A refusal result carrying `ENTROPIC_ERROR_GRAMMAR_NOT_FOUND`
+     *         when the tier named a grammar the registry does not hold;
+     *         `std::nullopt` otherwise.
+     * @req REQ-INFER-007
+     * @dg_internal
+     * @version 2.13.0
+     */
+    std::optional<GenerationResult> refuse_unresolved_tier_grammar(
+        GenerationParams& params, const std::string& tier_name);
+
+    /**
+     * @brief Resolve each batch arm's grammar, refusing the whole batch
+     *        if any arm's tier grammar is unregistered (gh#154).
+     *
+     * A batch is ONE decode over a shared prefill, so it cannot run
+     * half-constrained: one unresolved arm refuses all of them, with the
+     * offending tier named.
+     *
+     * @param params_list Per-request base params.
+     * @param tiers Per-request tier names ("" = `lead`).
+     * @param lead Lead tier name, used for empty entries.
+     * @param[out] out Grammar-resolved params, one per request.
+     * @return The refusal result, or `std::nullopt` when every arm resolves.
+     * @req REQ-INFER-007
+     * @dg_internal
+     * @version 2.13.0
+     */
+    std::optional<GenerationResult> refuse_unresolved_batch_grammars(
+        const std::vector<GenerationParams>& params_list,
+        const std::vector<std::string>& tiers,
+        const std::string& lead,
+        std::vector<GenerationParams>& out);
+
+    /**
+     * @brief Apply tier sampler defaults + stage tools for every batch arm.
+     *
+     * Split out of `generate_batch` when the gh#154 grammar gate pushed it
+     * past the ABC gate. Runs after the shared model is resolved — which
+     * is precisely why the grammar refusal cannot live here.
+     *
+     * @param model Backend all arms share.
+     * @param tiers Per-request tier names ("" = `lead`).
+     * @param lead Lead tier name.
+     * @param resolved Grammar-resolved params, staged in place.
+     * @dg_internal
+     * @version 2.13.0
+     */
+    void stage_batch_arms(InferenceBackend* model,
+                          const std::vector<std::string>& tiers,
+                          const std::string& lead,
+                          std::vector<GenerationParams>& resolved);
+
+    /**
      * @brief Apply per-tier sampler config to params. (gh#82, v2.4.4)
      *
      * Sets `params.temperature` / `params.max_tokens` from the tier's
@@ -891,19 +1260,26 @@ private:
                                      const std::string& tier_name);
 
     /**
-     * @brief Resolve params + stage tools for a generate dispatch (gh#87).
+     * @brief Apply tier sampler defaults + stage tools for a generate
+     *        dispatch (gh#87).
      *
-     * Copies params, applies grammar_key resolution + per-tier sampler
-     * defaults, and stages the turn's tool defs on the backend for
-     * common_chat rendering. Single call so the generate entry points stay
-     * under the knots ABC/SLOC gates.
+     * Copies params, applies per-tier sampler defaults, and stages the
+     * turn's tool defs on the backend for common_chat rendering. Single
+     * call so the generate entry points stay under the knots ABC/SLOC
+     * gates.
+     *
+     * gh#154 (v2.13.0): grammar resolution moved OUT of here to
+     * `refuse_unresolved_tier_grammar`, which every entry point calls
+     * before `get_model` — the refusal has to happen before a model is
+     * resolved, and this runs after one. `params` therefore arrives with
+     * its grammar already resolved.
      *
      * @param model Active backend (tools staged here).
-     * @param params Incoming generation params.
+     * @param params Grammar-resolved generation params.
      * @param tier_name Selected tier.
      * @return Resolved params (tools staged as a side effect on `model`).
      * @dg_internal
-     * @version 2.7.0
+     * @version 2.13.0
      */
     GenerationParams resolve_and_stage(InferenceBackend* model,
                                        const GenerationParams& params,

@@ -208,3 +208,103 @@ SCENARIO("v2.12.0: the large-model waiver cannot mute the whole suite",
         }
     }
 }
+
+// ── gh#148 (v2.13.0): typed refusals for unsafe explicit configs ──
+
+SCENARIO("gh#148: use_mlock on an oversized model is refused, not flipped",
+         "[partial_offload][gh148][2.13.0]") {
+    constexpr uint64_t kLimit = 3ull * kGiB;   // a typical RLIMIT_MEMLOCK
+
+    GIVEN("a 13.2 GB model partially offloaded with use_mlock left on") {
+        WHEN("the lock would exceed RLIMIT_MEMLOCK") {
+            THEN("the configuration is refused") {
+                // v2.12.0 measured this: llama.cpp locks what it can, the
+                // pinned pages cannot be reclaimed, and the suite was
+                // OOM-KILLED rather than paging through the model. The
+                // harness silently set use_mlock=false; the engine says so.
+                CHECK(entropic::mlock_refused(true, kQwen36Bytes, 15, kLimit));
+            }
+        }
+
+        WHEN("the operator already set use_mlock: false") {
+            THEN("there is nothing to refuse") {
+                CHECK_FALSE(
+                    entropic::mlock_refused(false, kQwen36Bytes, 15, kLimit));
+            }
+        }
+
+        WHEN("the model is fully offloaded") {
+            THEN("the host side is transient and the rule does not apply") {
+                CHECK_FALSE(
+                    entropic::mlock_refused(true, kQwen36Bytes, -1, kLimit));
+            }
+        }
+
+        WHEN("the limit is unlimited") {
+            THEN("a gate with nothing to measure refuses nothing") {
+                CHECK_FALSE(entropic::mlock_refused(
+                    true, kQwen36Bytes, 15, entropic::kMemlockUnlimited));
+            }
+        }
+    }
+
+    GIVEN("an ordinary model") {
+        // THE property. use_mlock DEFAULTS to true, so an un-floored rule
+        // would refuse the everyday case of a CPU-resident 4 GB model on a
+        // box with the usual small limit — a configuration that works.
+        THEN("it is never refused, whatever the limit") {
+            CHECK_FALSE(entropic::mlock_refused(true, kSmallModelBytes, 0,
+                                                8ull * 1024 * 1024));
+            CHECK_FALSE(entropic::mlock_refused(
+                true, entropic::kLargeModelThresholdBytes, 15, kLimit));
+        }
+    }
+}
+
+SCENARIO("gh#148: an offload with no room for compute buffers is refused",
+         "[partial_offload][gh148][2.13.0]") {
+    GIVEN("a 13.2 GB model on a card with almost nothing free") {
+        WHEN("free VRAM is below the compute reserve") {
+            THEN("no positive layer count can work, so it is refused") {
+                // Robust WITHOUT the model's layer count: if the compute
+                // buffers alone do not fit, how the file divides into
+                // layers cannot rescue it.
+                CHECK(entropic::gpu_offload_refused(
+                    kQwen36Bytes, 15, 1ull * kGiB));
+                CHECK(entropic::gpu_offload_refused(
+                    kQwen36Bytes, -1, entropic::kPartialOffloadReserveBytes));
+            }
+        }
+
+        WHEN("the card has room") {
+            THEN("the split is a judgement call, not a refusal") {
+                // Deliberately NOT refused: judging a specific partial split
+                // needs the layer count the gate does not read, and guessing
+                // it refuses configurations that work.
+                CHECK_FALSE(entropic::gpu_offload_refused(
+                    kQwen36Bytes, 15, 10248ull * 1024 * 1024));
+            }
+        }
+
+        WHEN("the tier is CPU-only") {
+            THEN("there is no offload to refuse") {
+                CHECK_FALSE(
+                    entropic::gpu_offload_refused(kQwen36Bytes, 0, 1ull * kGiB));
+            }
+        }
+
+        WHEN("free VRAM was never measured") {
+            THEN("a gate that cannot measure refuses nothing") {
+                CHECK_FALSE(
+                    entropic::gpu_offload_refused(kQwen36Bytes, 15, 0));
+            }
+        }
+    }
+
+    GIVEN("an ordinary model on a busy card") {
+        THEN("it is never refused — 1.5 GB is plenty for a 500 MB model") {
+            CHECK_FALSE(entropic::gpu_offload_refused(
+                kSmallModelBytes, 15, 1536ull * 1024 * 1024));
+        }
+    }
+}

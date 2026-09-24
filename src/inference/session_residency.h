@@ -155,6 +155,38 @@ public:
     }
 
     /**
+     * @brief Drop one SESSION's residency and release its slot (gh#165).
+     *
+     * `invalidate(slot)` needs a slot; a restore only knows a key, and after
+     * a restore the session should not hold a slot at all — it has no
+     * resident prefix worth keeping and another session may want the
+     * sequence.
+     *
+     * Warm-keep is prefix-correct on its own (it reuses only the common
+     * token prefix and seq_rm's the divergent tail), so this is belt AND
+     * braces — deliberately. The reuse gate is token equality, not
+     * conversation identity, so a future change that coarsened it would
+     * silently decode a restored session against the prefix of the one it
+     * replaced. Dropping the residency makes the restore correct by
+     * construction rather than by an argument about the gate.
+     *
+     * @param key Session key.
+     * @return The slot that was released, or kNoSessionSlot when the key
+     *         held none. The caller must clear that slot's KV cells.
+     * @req REQ-INFER-019
+     * @req REQ-LOOP-010
+     * @version 2.13.0
+     */
+    int forget_session(const std::string& key) {
+        auto it = assigned_.find(key);
+        if (it == assigned_.end()) { return kNoSessionSlot; }
+        const int slot = it->second;
+        invalidate(slot);
+        forget(key);
+        return slot;
+    }
+
+    /**
      * @brief Number of sequence slots in the pool.
      * @return Slot count (always >= 1).
      * @utility

@@ -10,6 +10,9 @@
 
 #include <nlohmann/json.hpp>
 
+#include <string>
+#include <unordered_map>
+
 namespace entropic {
 
 namespace {
@@ -19,7 +22,7 @@ namespace {
  * @param part JSON object with "type" and content fields.
  * @return Parsed ContentPart (TEXT if type is anything other than "image").
  * @dg_internal
- * @version 2.1.8
+ * @version 2.13.0
  */
 ContentPart parse_content_part(const nlohmann::json& part) {
     ContentPart cp;
@@ -28,6 +31,12 @@ ContentPart parse_content_part(const nlohmann::json& part) {
         cp.type = ContentPartType::IMAGE;
         cp.image_path = part.value("path", "");
         cp.image_url = part.value("url", "");
+        // gh#165 (v2.13.0): geometry is set by the image preprocessor, so a
+        // restore that dropped it would silently re-run preprocessing on a
+        // conversation that had already paid for it. Absent = 0 = "not yet
+        // processed", which is the struct's own default.
+        cp.width = part.value("width", 0);
+        cp.height = part.value("height", 0);
     } else {
         cp.type = ContentPartType::TEXT;
         cp.text = part.value("text", "");
@@ -36,23 +45,56 @@ ContentPart parse_content_part(const nlohmann::json& part) {
 }
 
 /**
+ * @brief Read a message's metadata object, if present (gh#165).
+ *
+ * Values are read as strings because `Message::metadata` is
+ * `unordered_map<string,string>` — a number or bool in the wire form is
+ * dumped back through nlohmann so the round trip stays total rather than
+ * throwing on a consumer-authored payload.
+ *
+ * @param m JSON message object.
+ * @param[out] out Metadata map to fill.
+ * @dg_internal
+ * @version 2.13.0
+ */
+void parse_metadata(const nlohmann::json& m,
+                    std::unordered_map<std::string, std::string>& out) {
+    if (!m.contains("metadata") || !m["metadata"].is_object()) { return; }
+    for (const auto& [k, v] : m["metadata"].items()) {
+        out[k] = v.is_string() ? v.get<std::string>() : v.dump();
+    }
+}
+
+/**
  * @brief Populate a Message from a JSON object.
  * @param m JSON message object.
  * @return Filled Message struct.
  * @dg_internal
- * @version 2.1.8
+ * @version 2.13.0
  */
 Message parse_one_message(const nlohmann::json& m) {
     Message msg;
     msg.role = m.value("role", "user");
     if (m.contains("content") && m["content"].is_array()) {
+        // The INBOUND multimodal shape (entropic_run_messages): parts live
+        // in `content` and the text is derived from them.
         for (const auto& part : m["content"]) {
             msg.content_parts.push_back(parse_content_part(part));
         }
         msg.content = extract_text(msg.content_parts);
     } else {
         msg.content = m.value("content", "");
+        // gh#165 (v2.13.0): the OUTBOUND shape `serialize_messages` emits —
+        // `content` stays a string (so a consumer reading it is unaffected)
+        // and parts ride alongside. Reading both here is what closes the
+        // get -> set -> get round trip.
+        if (m.contains("content_parts") && m["content_parts"].is_array()) {
+            for (const auto& part : m["content_parts"]) {
+                msg.content_parts.push_back(parse_content_part(part));
+            }
+        }
     }
+    parse_metadata(m, msg.metadata);
     return msg;
 }
 

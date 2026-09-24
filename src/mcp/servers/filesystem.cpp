@@ -14,6 +14,7 @@
 #include <entropic/mcp/tool_base.h>
 #include <entropic/mcp/server_base.h>
 #include <entropic/types/logging.h>
+#include <entropic/types/run_scope.h>
 
 #include <nlohmann/json.hpp>
 
@@ -34,34 +35,76 @@ namespace entropic {
 // ── FileAccessTracker ────────────────────────────────────
 
 /**
- * @brief Record that a file was read with its content hash.
+ * @brief Record that a session read a file, with its content hash.
  *
- * The tracker is what makes read-before-write enforceable: the hash
- * stored here is compared at write time to detect external
- * modification.
+ * The tracker is what makes read-before-write enforceable: write_file
+ * and edit_file refuse an existing file with no recorded read.
  *
+ * gh#158 (v2.13.0): recorded under the READING session's key, so the
+ * read unlocks that session's writes and nobody else's; the map is
+ * locked because concurrent sessions record from several run threads.
+ *
+ * @param session Session key the read belongs to.
  * @param path Canonical file path.
  * @param hash Content hash at time of read.
  * @req REQ-MCP-021
- * @version 1.8.5
+ * @req REQ-LOOP-009
+ * @version 2.13.0 [reviewed]
  */
-void FileAccessTracker::record_read(const std::string& path,
+void FileAccessTracker::record_read(const std::string& session,
+                                    const std::string& path,
                                     size_t hash) {
-    reads_[path] = hash;
-    logger->info("Tracked read: {}", path);
+    reads_.with(session, [&](auto& reads) { reads[path] = hash; });
+    logger->info("Tracked read: session='{}' {}", session, path);
 }
 
 
 /**
- * @brief Check if a file was ever read in this session.
+ * @brief Check whether a session has read a file.
+ *
+ * gh#158 (v2.13.0): consults ONLY `session`'s reads. A lookup never
+ * creates an entry, so asking on behalf of a session that read nothing
+ * does not grow the map.
+ *
+ * @param session Session key asking.
  * @param path Canonical file path.
- * @return true when a read was recorded for this path, regardless of
- *         whether the content has since changed.
+ * @return true when this session recorded a read of this path,
+ *         regardless of whether the content has since changed.
  * @req REQ-MCP-021
- * @version 1.8.5
+ * @req REQ-LOOP-009
+ * @version 2.13.0 [reviewed]
  */
-bool FileAccessTracker::was_read(const std::string& path) const {
-    return reads_.count(path) > 0;
+bool FileAccessTracker::was_read(const std::string& session,
+                                 const std::string& path) const {
+    return reads_.peek(session, [&](const auto* reads) {
+        return reads != nullptr && reads->count(path) > 0;
+    });
+}
+
+/**
+ * @brief Forget every read a session recorded (gh#158).
+ *
+ * Called when the session's conversation ends — the model no longer
+ * holds the content it read, so a later write must read again.
+ *
+ * @param session Session key.
+ * @return true when the session had recorded reads.
+ * @req REQ-MCP-021
+ * @req REQ-LOOP-009
+ * @version 2.13.0
+ */
+bool FileAccessTracker::release_session(const std::string& session) {
+    return reads_.release(session);
+}
+
+/**
+ * @brief Sessions currently holding recorded reads (gh#158).
+ * @return Session count.
+ * @req REQ-LOOP-009
+ * @version 2.13.0
+ */
+std::size_t FileAccessTracker::session_count() const {
+    return reads_.session_count();
 }
 
 // ── File-local helpers ───────────────────────────────────
@@ -69,28 +112,312 @@ bool FileAccessTracker::was_read(const std::string& path) const {
 namespace {
 
 /**
- * @brief Directories to skip during recursive traversal.
- * @dg_internal
- * @version 1.8.5
- */
-const std::vector<std::string> SKIP_DIRS = {
-    ".git", "node_modules", "__pycache__", ".venv"
-};
-
-/**
  * @brief Check if a directory name should be skipped.
+ *
+ * gh#161: the list itself now lives on IgnoreMatcher, because the
+ * `.gitignore` DISCOVERY walk has to honour exactly the same names.
+ * Two private copies were how discovery came to walk `.git` while
+ * glob/grep pruned it.
+ *
  * @param name Directory name to check.
  * @return true if name is in the skip list.
  * @dg_internal
- * @version 1.8.5
+ * @version 2.13.0
  */
 bool should_skip_dir(const std::string& name) {
-    for (const auto& skip : SKIP_DIRS) {
-        if (name == skip) {
-            return true;
+    return IgnoreMatcher::is_skipped_dir_name(name);
+}
+
+/**
+ * @brief Whether `path` lies in the subtree rooted at `base`.
+ *
+ * `lexically_relative`, never string prefix, so `/home/u/project` does
+ * not contain `/home/u/projectile` and `/opt/data` does not contain
+ * `/opt/database`. `base` itself is inside its own subtree. Both paths
+ * are expected canonical — the caller canonicalises.
+ *
+ * @param path Canonical candidate path.
+ * @param base Canonical subtree root.
+ * @return true when `path` is `base` or below it.
+ * @req REQ-MCP-021
+ * @version 2.13.0
+ */
+bool path_within(const fs::path& path, const fs::path& base) {
+    fs::path rel = path.lexically_relative(base);
+    return !rel.empty()
+        && *rel.begin() != fs::path("..")
+        && rel != fs::path("..");
+}
+
+/**
+ * @brief Canonicalise a configured list entry without throwing.
+ * @param entry Configured path (absolute after load).
+ * @return weakly_canonical form, or the lexically normal form when the
+ *         filesystem cannot be queried.
+ * @dg_internal
+ * @version 2.13.0
+ */
+fs::path canonical_entry(const fs::path& entry) {
+    std::error_code ec;
+    auto c = fs::weakly_canonical(entry, ec);
+    return ec ? entry.lexically_normal() : c;
+}
+
+/**
+ * @brief The first list entry whose subtree holds `resolved`.
+ *
+ * Entries are canonicalised at CHECK time, not load time, so a symlinked
+ * entry is matched by where it points now — a deny entry that is a
+ * symlink denies its target however the model spells the path.
+ *
+ * @param entries Configured `outside_root_allow` / `outside_root_deny`.
+ * @param resolved Canonical requested path.
+ * @return The matching canonical entry, or nullopt.
+ * @req REQ-MCP-021
+ * @version 2.13.0
+ */
+std::optional<fs::path> first_containing(
+    const std::vector<fs::path>& entries, const fs::path& resolved) {
+    std::optional<fs::path> hit;
+    for (const auto& e : entries) {
+        auto base = canonical_entry(e);
+        if (path_within(resolved, base)) {
+            hit = base;
+            break;
         }
     }
-    return false;
+    return hit;
+}
+
+/**
+ * @brief The YAML spelling of an outside-root mode, for logs.
+ * @param mode Configured mode.
+ * @return "false", "true" or "optional".
+ * @dg_internal
+ * @version 2.13.0
+ */
+const char* outside_root_mode_name(OutsideRootAccess mode) {
+    const char* name = "optional";
+    if (mode == OutsideRootAccess::refuse) { name = "false"; }
+    if (mode == OutsideRootAccess::allow) { name = "true"; }
+    return name;
+}
+
+/**
+ * @brief "read" or "write", for approval requests and messages.
+ * @param access Access kind.
+ * @return Lower-case verb.
+ * @dg_internal
+ * @version 2.13.0
+ */
+const char* access_verb(PathAccess access) {
+    return access == PathAccess::write ? "write" : "read";
+}
+
+/**
+ * @brief The refusal text for an approver verdict other than `approved`.
+ *
+ * Each message leads with a stable type token the model and an operator's
+ * log grep can both branch on, keeps the pre-2.13 "Path escapes project
+ * root: <path>" phrase, and then says what to change — because a refusal
+ * nobody can act on just becomes a retry loop.
+ *
+ * @param verdict `rejected` or `no_approver`.
+ * @param req The request that was refused.
+ * @return Human-readable, typed refusal message.
+ * @req REQ-MCP-021
+ * @version 2.13.0
+ */
+std::string outside_root_refusal(OutsideRootVerdict verdict,
+                                 const OutsideRootRequest& req) {
+    std::string head = "Path escapes project root: " + req.path
+        + " (root: " + req.root + ")";
+    if (verdict == OutsideRootVerdict::rejected) {
+        return "outside_root_rejected: " + head + " — the host's path "
+               "approver refused this " + access_verb(req.access) + ".";
+    }
+    return "outside_root_approval_required: " + head + " — "
+        + access_verb(req.access) + " access outside the project root "
+        "needs approval (mcp.filesystem.allow_outside_root: optional) and "
+        "no path approver is registered, so it is refused. Pre-approve "
+        "the directory with mcp.filesystem.outside_root_allow, set "
+        "allow_outside_root: true, or register an approver with "
+        "entropic_set_path_approval_callback.";
+}
+
+/**
+ * @brief Refuse a path under an `outside_root_deny` entry (logs, throws).
+ * @param resolved Canonical requested path.
+ * @param entry The canonical deny entry it falls under.
+ * @param access Read or write.
+ * @param root Canonical project root.
+ * @throws std::runtime_error always, typed `outside_root_denied`.
+ * @req REQ-MCP-021
+ * @version 2.13.0
+ */
+[[noreturn]] void refuse_denied(const fs::path& resolved,
+                                const fs::path& entry, PathAccess access,
+                                const fs::path& root) {
+    logger->error("Path escape blocked by outside_root_deny: {} {} "
+                  "(entry: {}, root: {})", access_verb(access),
+                  resolved.string(), entry.string(), root.string());
+    throw std::runtime_error(
+        "outside_root_denied: " + resolved.string() + " is under "
+        "mcp.filesystem.outside_root_deny entry " + entry.string()
+        + " — refused regardless of allow_outside_root.");
+}
+
+/**
+ * @brief Refuse an escape under `allow_outside_root: false` (logs, throws).
+ *
+ * The message is the pre-2.13 one, verbatim, so an explicit `false`
+ * behaves — and reads — exactly as it always did.
+ *
+ * @param resolved Canonical requested path.
+ * @param root Canonical project root.
+ * @throws std::runtime_error always.
+ * @req REQ-MCP-021
+ * @version 2.13.0
+ */
+[[noreturn]] void refuse_escape(const fs::path& resolved,
+                                const fs::path& root) {
+    logger->error("Path escape blocked: {} (root: {})",
+                  resolved.string(), root.string());
+    throw std::runtime_error(
+        "Path escapes project root: " + resolved.string());
+}
+
+/**
+ * @brief Log an outside-root access served without a prompt.
+ * @param resolved Canonical requested path.
+ * @param access Read or write.
+ * @param allowed_by The `outside_root_allow` entry, or nullopt when
+ *        `allow_outside_root: true` served it.
+ * @dg_internal
+ * @version 2.13.0
+ */
+void log_outside_root_served(const fs::path& resolved, PathAccess access,
+                             const std::optional<fs::path>& allowed_by) {
+    std::string why = allowed_by.has_value()
+        ? "outside_root_allow entry " + allowed_by->string()
+        : std::string("allow_outside_root: true");
+    logger->info("Outside-root {} served ({}): {}", access_verb(access),
+                 why, resolved.string());
+}
+
+/**
+ * @brief Render a path list for a log line.
+ * @param paths Paths.
+ * @return `[a, b]`.
+ * @dg_internal
+ * @version 2.13.0
+ */
+std::string join_paths(const std::vector<fs::path>& paths) {
+    std::string s;
+    for (const auto& p : paths) {
+        s += (s.empty() ? "" : ", ") + p.string();
+    }
+    return "[" + s + "]";
+}
+
+/**
+ * @brief Warn about deny entries that lie inside the root.
+ *
+ * The lists govern OUTSIDE-root paths only; an operator who denies a
+ * directory inside the root believes something is protected that is not.
+ * Silence would be a silent no-op of a security setting.
+ *
+ * @param deny Configured `outside_root_deny`.
+ * @param root Canonical project root.
+ * @dg_internal
+ * @version 2.13.0
+ */
+void warn_deny_entries_inside_root(const std::vector<fs::path>& deny,
+                                   const fs::path& root) {
+    for (const auto& e : deny) {
+        if (path_within(canonical_entry(e), root)) {
+            logger->warn("outside_root_deny entry {} is INSIDE the root {} "
+                         "— the outside-root lists govern paths outside "
+                         "the root only, so it has no effect there",
+                         e.string(), root.string());
+        }
+    }
+}
+
+/**
+ * @brief Entry budget for one glob/grep tree walk (gh#161).
+ *
+ * The pre-2.13.0 caps bounded MATCHES, not work: a pattern matching
+ * nothing still visited every entry in the tree. This bounds the walk
+ * itself and records that it was cut short, so the result can say so.
+ *
+ * @dg_internal
+ * @version 2.13.0
+ */
+struct WalkBudget {
+    int max_entries = 0;   ///< <= 0 means unbounded
+    long visited = 0;      ///< Entries visited so far
+    bool truncated = false; ///< Walk stopped on the cap
+};
+
+/**
+ * @brief Charge one visited entry to the budget.
+ * @param[in,out] budget Walk budget.
+ * @return true when the cap is now spent and the walk must stop.
+ * @dg_internal
+ * @version 2.13.0
+ */
+bool walk_budget_spent(WalkBudget& budget) {
+    ++budget.visited;
+    bool spent = budget.max_entries > 0
+        && budget.visited >= static_cast<long>(budget.max_entries);
+    if (spent) { budget.truncated = true; }
+    return spent;
+}
+
+/**
+ * @brief The truncation sentinel appended to a cut-short result.
+ *
+ * Appended as a trailing element rather than wrapping the array,
+ * because glob and grep results are arrays of paths and match objects
+ * respectively and both shapes are already contracted. A truncation
+ * the model cannot see would be worse than the 87 s hang it replaces —
+ * it would look like a complete, empty answer.
+ *
+ * @param budget Spent walk budget.
+ * @return JSON object carrying the human-readable notice.
+ * @dg_internal
+ * @version 2.13.0
+ */
+json walk_truncation_notice(const WalkBudget& budget) {
+    json note;
+    note["truncated"] = true;
+    note["note"] = "walk truncated at " + std::to_string(budget.visited)
+        + " entries — narrow the pattern";
+    return note;
+}
+
+/**
+ * @brief Append the truncation sentinel when the walk was cut short.
+ *
+ * Shared by glob and grep so the two can never disagree about how a
+ * bounded walk is reported (gh#161).
+ *
+ * @param[in,out] result Result array to annotate.
+ * @param budget Walk budget after the walk.
+ * @param tool Tool name, for the log line.
+ * @param pattern Requested pattern, for the log line.
+ * @dg_internal
+ * @version 2.13.0
+ */
+void note_truncated_walk(json& result, const WalkBudget& budget,
+                         const std::string& tool,
+                         const std::string& pattern) {
+    if (!budget.truncated) { return; }
+    auto note = walk_truncation_notice(budget);
+    logger->warn("{} '{}': {}", tool, pattern,
+                 note.at("note").get<std::string>());
+    result.push_back(note);
 }
 
 /**
@@ -357,7 +684,9 @@ std::vector<std::string> expand_braces(const std::string& pattern) {
  * @brief Enforce read-before-write policy on existing files.
  *
  * A file that does not yet exist is creatable without a prior read;
- * an existing one must have been read this session.
+ * an existing one must have been read by THE CALLING SESSION (gh#158) —
+ * the session the dispatch routed on, published to this thread by the
+ * ToolExecutor. Another session's read of the same file does not count.
  *
  * @param tracker File access tracker.
  * @param path Canonical path string.
@@ -365,13 +694,15 @@ std::vector<std::string> expand_braces(const std::string& pattern) {
  *         structured `read_before_write` error naming the file, logged
  *         at warning level.
  * @req REQ-MCP-021
- * @version 1.8.5
+ * @version 2.13.0
  */
 std::string check_read_before_write(
     const FileAccessTracker& tracker,
     const std::string& path) {
-    if (fs::exists(path) && !tracker.was_read(path)) {
-        logger->warn("Read-before-write violation: {}", path);
+    const auto session = current_run_session();
+    if (fs::exists(path) && !tracker.was_read(session, path)) {
+        logger->warn("Read-before-write violation: session='{}' {}",
+                     session, path);
         return make_error("read_before_write",
             "File must be read before writing: " + path);
     }
@@ -566,19 +897,22 @@ EntryAction classify_glob_entry(
  * @param pattern Glob pattern (may contain `{a,b,c}`).
  * @param max_results Maximum number of results.
  * @param ignore Optional ignore matcher (nullptr disables filtering).
+ * @param[in,out] budget Entry budget; the walk stops when it is spent
+ *                and the budget records that it was (gh#161).
  * @return Absolute paths of matching regular files, capped at
  *         `max_results`, with ignored files omitted and ignored
  *         directories never descended into. `**` matches files at the
  *         root as well as in subdirectories (gh#126).
  * @req REQ-MCP-022
  * @req REQ-MCP-021
- * @version 2.1.4
+ * @version 2.13.0
  */
 std::vector<std::string> collect_glob_matches(
     const fs::path& root,
     const std::string& pattern,
     int max_results,
-    const IgnoreMatcher* ignore = nullptr) {
+    const IgnoreMatcher* ignore,
+    WalkBudget& budget) {
 
     auto patterns = expand_braces(pattern);
     std::vector<std::string> matches;
@@ -596,6 +930,7 @@ std::vector<std::string> collect_glob_matches(
         } else if (action == EntryAction::kTake) {
             matches.push_back(entry.path().string());
         }
+        if (walk_budget_spent(budget)) { break; }
     }
     return matches;
 }
@@ -929,24 +1264,29 @@ std::string check_read_gates(FilesystemServer& server,
  * which is why read_file must always execute and opts out of duplicate
  * detection.
  *
+ * v2.13.0: the path is resolved as a READ, so an outside-root read under
+ * `optional` asks the approver with access=read. gh#158: the read is
+ * recorded for the calling session only.
+ *
  * @param args_json JSON with a "path" key.
  * @return A ServerResponse with no directives whose result is either
  *         the numbered-lines JSON or the first failing gate's
  *         structured error.
  * @req REQ-MCP-021
- * @version 2.1.4
+ * @version 2.13.0 [reviewed]
  */
 ServerResponse ReadFileTool::execute(const std::string& args_json) {
     auto args = json::parse(args_json);
     auto requested = args.at("path").get<std::string>();
-    auto resolved = server_.resolve_path(requested);
+    auto resolved = server_.resolve_path(requested, PathAccess::read,
+                                         name());
     auto path_str = resolved.string();
 
     auto err = check_read_gates(server_, resolved, path_str);
     if (!err.empty()) { return {err, {}}; }
 
     auto content = read_file_contents(resolved);
-    server_.tracker().record_read(path_str,
+    server_.tracker().record_read(current_run_session(), path_str,
                                   hash_content(content));
     auto size = static_cast<int>(fs::file_size(resolved));
     logger->info("Read file: {} ({} bytes)", path_str, size);
@@ -994,6 +1334,7 @@ private:
  *
  * The path is resolved against the root first (so a traversal attempt
  * never reaches the write), then the read-before-write gate runs.
+ * v2.13.0: resolved as a WRITE, so an approver sees "wants to write".
  *
  * @param args_json JSON with "path" and "content" keys.
  * @return A ServerResponse with no directives whose result is either a
@@ -1001,7 +1342,7 @@ private:
  *         structured `read_before_write` error — in which case nothing
  *         is written.
  * @req REQ-MCP-021
- * @version 1.8.5
+ * @version 2.13.0
  */
 ServerResponse WriteFileTool::execute(
     const std::string& args_json) {
@@ -1009,7 +1350,8 @@ ServerResponse WriteFileTool::execute(
     auto args = json::parse(args_json);
     auto requested = args.at("path").get<std::string>();
     auto content = args.at("content").get<std::string>();
-    auto resolved = server_.resolve_path(requested);
+    auto resolved = server_.resolve_path(requested, PathAccess::write,
+                                         name());
     auto path_str = resolved.string();
 
     auto violation = check_read_before_write(
@@ -1067,15 +1409,19 @@ private:
 
 /**
  * @brief Execute edit_file: read, apply edit, write back.
+ *
+ * v2.13.0: resolved as a WRITE — an edit modifies the file.
+ *
  * @param args_json JSON arguments.
  * @return ServerResponse with result.
  * @dg_internal
- * @version 1.8.5
+ * @version 2.13.0
  */
 ServerResponse EditFileTool::execute(const std::string& args_json) {
     auto args = json::parse(args_json);
     auto requested = args.at("path").get<std::string>();
-    auto resolved = server_.resolve_path(requested);
+    auto resolved = server_.resolve_path(requested, PathAccess::write,
+                                         name());
     auto path_str = resolved.string();
 
     auto violation = check_read_before_write(
@@ -1145,7 +1491,7 @@ private:
  * @param args_json JSON arguments.
  * @return ServerResponse with matched paths.
  * @dg_internal
- * @version 2.1.4
+ * @version 2.13.0
  */
 ServerResponse GlobTool::execute(const std::string& args_json) {
     auto args = json::parse(args_json);
@@ -1156,13 +1502,16 @@ ServerResponse GlobTool::execute(const std::string& args_json) {
     // doxygen/, and anything else listed in .gitignore + .explorerignore
     // is filtered out. Pre-2.1.4 only the hardcoded SKIP_DIRS were honored.
     // Issue #13 (v2.1.4): brace expansion handled inside.
+    WalkBudget budget{server_.config().max_walk_entries, 0, false};
     auto matches = collect_glob_matches(
         server_.root_dir(), pattern, MAX_GLOB_RESULTS,
-        &server_.ignore());
+        &server_.ignore(), budget);
 
-    logger->info("Glob '{}': {} matches (after ignore filtering)",
-                 pattern, matches.size());
+    logger->info("Glob '{}': {} matches, {} entries walked "
+                 "(after ignore filtering)",
+                 pattern, matches.size(), budget.visited);
     json result = matches;
+    note_truncated_walk(result, budget, "Glob", pattern);
     return {result.dump(), {}};
 }
 
@@ -1249,16 +1598,21 @@ std::regex compile_grep_or_error(const std::string& pattern,
  * @param file_patterns Brace-expanded glob patterns.
  * @param re Compiled content regex.
  * @param ignore Ignore matcher.
+ * @param[in,out] budget Entry budget; the walk stops when it is spent
+ *                and the budget records that it was (gh#161). grep
+ *                needs this MORE than glob does — it also opens and
+ *                reads every matching file.
  * @return Up to MAX_GREP_RESULTS match objects. Uses exactly the same
  *         classify_glob_entry filter glob does, so grep and glob honour
  *         .gitignore/.explorerignore identically and ignored
  *         directories are pruned rather than walked.
  * @req REQ-MCP-022
- * @version 2.3.7
+ * @version 2.13.0
  */
 static std::vector<json> grep_search(
     const fs::path& root, const std::vector<std::string>& file_patterns,
-    const std::regex& re, const IgnoreMatcher& ignore) {
+    const std::regex& re, const IgnoreMatcher& ignore,
+    WalkBudget& budget) {
     constexpr int MAX_GREP_RESULTS = 100;
     std::vector<json> matches;
     auto it = fs::recursive_directory_iterator(
@@ -1274,6 +1628,7 @@ static std::vector<json> grep_search(
         } else if (action == EntryAction::kTake) {
             grep_file(entry.path(), re, matches, MAX_GREP_RESULTS);
         }
+        if (walk_budget_spent(budget)) { break; }
     }
     return matches;
 }
@@ -1287,7 +1642,7 @@ static std::vector<json> grep_search(
  *         when the pattern would not compile.
  * @req REQ-MCP-022
  * @req REQ-MCP-021
- * @version 2.3.7
+ * @version 2.13.0
  */
 ServerResponse GrepTool::execute(const std::string& args_json) {
     auto args = json::parse(args_json);
@@ -1299,12 +1654,15 @@ ServerResponse GrepTool::execute(const std::string& args_json) {
     if (!err.empty()) { return {err, {}}; }
 
     auto file_patterns = expand_braces(file_glob);
+    WalkBudget budget{server_.config().max_walk_entries, 0, false};
     auto matches = grep_search(server_.root_dir(), file_patterns, re,
-                               server_.ignore());
+                               server_.ignore(), budget);
 
-    logger->info("Grep '{}': {} matches (after ignore filtering)",
-                 pattern, matches.size());
+    logger->info("Grep '{}': {} matches, {} entries walked "
+                 "(after ignore filtering)",
+                 pattern, matches.size(), budget.visited);
     json result = matches;
+    note_truncated_walk(result, budget, "Grep", pattern);
     return {result.dump(), {}};
 }
 
@@ -1360,6 +1718,7 @@ private:
  *
  * The optional parameters carry documented defaults (gh#116): `path`
  * defaults to the project root, `recursive` to false, `max_depth` to 3.
+ * v2.13.0: resolved as a READ for the outside-root policy.
  *
  * @param args_json JSON with optional "path", "recursive" and
  *                  "max_depth" keys — all three may be omitted.
@@ -1367,7 +1726,7 @@ private:
  *         array of entries, or a structured `not_directory` error when
  *         the resolved path is not a directory.
  * @req REQ-MCP-021
- * @version 2.9.13
+ * @version 2.13.0
  */
 ServerResponse ListDirectoryTool::execute(
     const std::string& args_json) {
@@ -1377,7 +1736,8 @@ ServerResponse ListDirectoryTool::execute(
     auto recursive = args.value("recursive", false);
     auto max_depth = args.value("max_depth", 3);
 
-    auto resolved = server_.resolve_path(requested);
+    auto resolved = server_.resolve_path(requested, PathAccess::read,
+                                         name());
     if (!fs::is_directory(resolved)) {
         return {make_error("not_directory",
             "Not a directory: " + resolved.string()), {}};
@@ -1434,7 +1794,7 @@ static int compute_max_read_bytes(const FilesystemConfig& config,
  * @req REQ-MCP-001
  * @req REQ-MCP-021
  * @req REQ-MCP-022
- * @version 2.3.7
+ * @version 2.13.0
  */
 FilesystemServer::FilesystemServer(
     const fs::path& root_dir,
@@ -1460,6 +1820,7 @@ FilesystemServer::FilesystemServer(
                  root_dir_.string(),
                  max_read_bytes_,
                  ignore_.rule_count());
+    log_outside_root_policy();  // v2.13.0: the posture is observable
 }
 
 /**
@@ -1537,7 +1898,7 @@ bool FilesystemServer::skip_duplicate_check(
  *         root; false when it is not, leaving the server untouched.
  * @req REQ-MCP-021
  * @req REQ-MCP-022
- * @version 2.1.4
+ * @version 2.13.0
  */
 bool FilesystemServer::set_working_dir(const std::string& path) {
     auto canonical = fs::weakly_canonical(path);
@@ -1551,6 +1912,8 @@ bool FilesystemServer::set_working_dir(const std::string& path) {
     ignore_.load(root_dir_);
     logger->info("Working directory changed to: {} (ignore_rules={})",
                  root_dir_.string(), ignore_.rule_count());
+    // v2.13.0: "outside the root" just moved; say what that now means.
+    log_outside_root_policy();
     return true;
 }
 
@@ -1568,12 +1931,35 @@ const fs::path& FilesystemServer::root_dir() const {
 /**
  * @brief Get the file access tracker.
  * @return Mutable reference to the read-before-write tracker shared by
- *         read_file (which records) and write_file (which enforces).
+ *         read_file (which records) and write_file (which enforces),
+ *         both under the calling session's key (gh#158).
  * @req REQ-MCP-021
  * @version 1.8.5
  */
 FileAccessTracker& FilesystemServer::tracker() {
     return tracker_;
+}
+
+/**
+ * @brief Release a session's recorded reads (gh#158).
+ * @param key Session key.
+ * @return true when the session had recorded reads.
+ * @req REQ-MCP-021
+ * @req REQ-LOOP-009
+ * @version 2.13.0
+ */
+bool FilesystemServer::release_session(const std::string& key) {
+    return tracker_.release_session(key);
+}
+
+/**
+ * @brief Sessions whose reads this server tracks (gh#158).
+ * @return Session count.
+ * @req REQ-LOOP-009
+ * @version 2.13.0
+ */
+std::size_t FilesystemServer::session_count() const {
+    return tracker_.session_count();
 }
 
 /**
@@ -1610,47 +1996,166 @@ int FilesystemServer::max_read_bytes() const {
 }
 
 /**
- * @brief Resolve and validate a path against root directory.
+ * @brief Resolve a path and apply the outside-root policy.
  *
- * Resolves relative paths against root_dir_, canonicalizes, and
- * checks that the result does not escape root. Throws on escape
- * unless allow_outside_root is configured.
+ * Resolves relative paths against root_dir_ and canonicalizes. A result
+ * under the root is served. One outside it goes to
+ * authorize_outside_root, which throws on any refusal.
  *
  * Containment uses lexically_relative so that "/home/user/project"
- * does not falsely contain "/home/user/projectile" via string-prefix.
+ * does not falsely contain "/home/user/projectile" via string-prefix —
+ * and the SAME test decides the outside-root allow/deny subtrees.
  *
- * The single confinement point every filesystem tool goes through, so
- * no tool can traverse outside the project.
+ * The single confinement point every path-taking filesystem tool goes
+ * through, so no tool can reach outside the project without the policy
+ * saying so.
  *
  * @param requested User-requested path string (absolute or relative to
  *                  the root).
- * @return The canonical path when it lies under the root — or anywhere,
- *         when allow_outside_root is configured.
- * @throws std::runtime_error when the canonical result leaves the root,
- *         logged as "Path escape blocked".
+ * @param access Whether the calling tool reads or writes the path.
+ * @param tool Bare calling tool name (e.g. "write_file").
+ * @return The canonical path when it lies under the root, or when the
+ *         outside-root policy served it.
+ * @throws std::runtime_error when the policy refuses the path — thrown,
+ *         so MCPServerBase's barrier returns it as a tool error AND skips
+ *         the ContextAnchor a refused read must not get.
  * @req REQ-MCP-021
- * @version 2.1.1-rc1
+ * @version 2.13.0
  */
 fs::path FilesystemServer::resolve_path(
-    const std::string& requested) const {
+    const std::string& requested, PathAccess access,
+    const std::string& tool) const {
 
     fs::path req_path(requested);
     fs::path resolved = req_path.is_absolute()
         ? fs::weakly_canonical(req_path)
         : fs::weakly_canonical(root_dir_ / req_path);
 
-    fs::path rel = resolved.lexically_relative(root_dir_);
-    bool under_root = !rel.empty()
-        && *rel.begin() != fs::path("..")
-        && rel != fs::path("..");
-
-    if (!under_root && !config_.allow_outside_root) {
-        logger->error("Path escape blocked: {} (root: {})",
-                      resolved.string(), root_dir_.string());
-        throw std::runtime_error(
-            "Path escapes project root: " + resolved.string());
+    if (!path_within(resolved, root_dir_)) {
+        authorize_outside_root(resolved, access, tool);
     }
     return resolved;
+}
+
+/**
+ * @brief Decide one path that resolved outside the root (v2.13.0).
+ *
+ * Precedence, highest first: `outside_root_deny` refuses; then
+ * `outside_root_allow` serves without a prompt; then
+ * `allow_outside_root` — `true` serves, `false` refuses with the
+ * pre-2.13 message, `optional` asks the approver.
+ *
+ * `permissions.auto_approve` is deliberately not consulted: it skips
+ * per-TOOL prompts and says nothing about the filesystem boundary.
+ *
+ * @param resolved Canonical path outside the root.
+ * @param access Read or write.
+ * @param tool Bare tool name.
+ * @throws std::runtime_error when refused, each kind logged.
+ * @req REQ-MCP-021
+ * @version 2.13.0
+ */
+void FilesystemServer::authorize_outside_root(
+    const fs::path& resolved, PathAccess access,
+    const std::string& tool) const {
+    auto denied = first_containing(config_.outside_root_deny, resolved);
+    auto allowed = first_containing(config_.outside_root_allow, resolved);
+    const auto mode = config_.allow_outside_root;
+    if (denied.has_value()) {
+        refuse_denied(resolved, *denied, access, root_dir_);
+    } else if (allowed.has_value() || mode == OutsideRootAccess::allow) {
+        log_outside_root_served(resolved, access, allowed);
+    } else if (mode == OutsideRootAccess::refuse) {
+        refuse_escape(resolved, root_dir_);
+    } else {
+        ask_outside_root_approver(resolved, access, tool);
+    }
+}
+
+/**
+ * @brief Put one outside-root access to the host's approver (v2.13.0).
+ *
+ * The approver pair is copied under the lock and called outside it: a
+ * host prompt can block for as long as a person takes to answer, and
+ * must not hold up a concurrent install. No approver means refuse —
+ * `optional` never fails open.
+ *
+ * @param resolved Canonical path outside the root.
+ * @param access Read or write.
+ * @param tool Bare tool name.
+ * @throws std::runtime_error unless the verdict is `approved`, with a
+ *         typed `outside_root_rejected` / `outside_root_approval_required`
+ *         message.
+ * @req REQ-MCP-021
+ * @version 2.13.0
+ */
+void FilesystemServer::ask_outside_root_approver(
+    const fs::path& resolved, PathAccess access,
+    const std::string& tool) const {
+    OutsideRootApprover fn = nullptr;
+    void* ud = nullptr;
+    {
+        std::lock_guard<std::mutex> lock(approver_mutex_);
+        fn = approver_;
+        ud = approver_data_;
+    }
+    OutsideRootRequest req{resolved.string(), root_dir_.string(),
+                           name() + "." + tool, access};
+    auto verdict = fn != nullptr ? fn(req, ud)
+                                 : OutsideRootVerdict::no_approver;
+    if (verdict == OutsideRootVerdict::approved) {
+        logger->info("Outside-root {} APPROVED by host: {} ({})",
+                     access_verb(access), req.path, req.tool);
+    } else {
+        auto msg = outside_root_refusal(verdict, req);
+        logger->error("Path escape blocked: {}", msg);
+        throw std::runtime_error(msg);
+    }
+}
+
+/**
+ * @brief Install the approver consulted under `optional` (v2.13.0).
+ * @param fn Approver, or nullptr to clear.
+ * @param user_data Forwarded to `fn`.
+ * @req REQ-MCP-021
+ * @version 2.13.0
+ */
+void FilesystemServer::set_outside_root_approver(
+    OutsideRootApprover fn, void* user_data) {
+    std::lock_guard<std::mutex> lock(approver_mutex_);
+    approver_ = fn;
+    approver_data_ = user_data;
+    logger->info("Outside-root approver {} (root: {})",
+                 fn != nullptr ? "installed" : "cleared",
+                 root_dir_.string());
+}
+
+/**
+ * @brief Log the outside-root policy; warn on entries with no effect.
+ *
+ * Observability for a security posture: the mode and both lists are
+ * logged whenever the root is (re)set. A `true` mode is a WARN, because
+ * it is the one setting that serves the whole disk. A deny entry inside
+ * the root is warned about, because the lists govern OUTSIDE-root paths
+ * only and an operator who wrote it believes something is protected.
+ *
+ * @req REQ-MCP-021
+ * @version 2.13.0
+ */
+void FilesystemServer::log_outside_root_policy() const {
+    const auto& deny = config_.outside_root_deny;
+    if (config_.allow_outside_root == OutsideRootAccess::allow) {
+        logger->warn("Outside-root policy: allow_outside_root=true — every "
+                     "path outside {} is served (deny={})",
+                     root_dir_.string(), join_paths(deny));
+    } else {
+        logger->info("Outside-root policy: allow_outside_root={} allow={} "
+                     "deny={} (root: {})",
+                     outside_root_mode_name(config_.allow_outside_root),
+                     join_paths(config_.outside_root_allow),
+                     join_paths(deny), root_dir_.string());
+    }
+    warn_deny_entries_inside_root(deny, root_dir_);
 }
 
 } // namespace entropic

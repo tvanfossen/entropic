@@ -106,6 +106,13 @@ struct LoopConfig {
     /// routing entirely (see orchestrator.cpp `generate(...cancel...)`
     /// doc comment).
     bool speculative_enabled = false;
+    /// @brief gh#160 (v2.13.0): mirrors `delegation.isolation == sandbox`.
+    ///
+    /// Plumbed like `speculative_enabled` above — core.so has no
+    /// dependency on config.so. OFF (the default and every shipped
+    /// release's real behaviour) means no sandbox is created at all, so
+    /// the snapshot cost gh#160 reported disappears with it.
+    bool delegation_isolation = false;
     bool auto_approve_tools = false;    ///< Skip tool approval (v1.8.5)
     /// @brief Anti-spiral SOFT threshold: after N consecutive calls of
     /// the SAME tool (regardless of arg similarity, since exact-arg
@@ -123,6 +130,20 @@ struct LoopConfig {
     /// effectively disable the hard block while keeping the soft
     /// advisory warning. (#14, v2.1.4)
     int max_consecutive_same_tool_hard_block = -1;
+    /// @brief How many times one EXACT call (tool + sorted arguments) may
+    /// fail before the engine refuses it pre-dispatch.
+    ///
+    /// Distinct from the two thresholds above, which count consecutive
+    /// calls by tool NAME and so cannot see a single call repeating with
+    /// identical arguments — and which reset per delegation, since each
+    /// child gets a fresh LoopContext.
+    ///
+    /// 3 tolerates the retry that v1.8.5 deliberately allows (a genuinely
+    /// transient failure gets a second attempt) and refuses the third. A
+    /// third identical attempt against an identical error is not a retry,
+    /// it is a spiral: nothing about the call or the world has changed.
+    /// (v2.13.0, from the gate's test-e7-delegation timeout)
+    int max_identical_failures = 3;
     /// @brief gh#64: cap on N consecutive failed delegations targeting
     /// the same tier. When the lead re-delegates to a target that has
     /// just failed `max_consecutive_failed_delegations` times in a row,
@@ -199,6 +220,12 @@ struct PendingDelegation {
     std::string task;                      ///< Task description
     int max_turns = -1;                    ///< Max turns for child (-1 = default)
     std::string resume_from_delegation_id; ///< gh#32 (v2.1.6): empty = cold start
+    /// @brief gh#162 (v2.13.0): file references the lead already earned,
+    /// seeded into the child's opening message as references (not excerpts).
+    std::vector<ContextRef> context;
+    /// @brief gh#162 (v2.13.0): resume the latest delegation to `target`.
+    /// The engine resolves the storage id at admission.
+    bool resume_by_target = false;
 };
 
 /**
@@ -208,15 +235,24 @@ struct PendingDelegation {
 struct PendingPipeline {
     std::vector<std::string> stages; ///< Tier names in order
     std::string task;                ///< Task description
+    std::vector<ContextRef> context; ///< gh#162 (v2.13.0): seeded file references
 };
 
 /**
  * @brief Resolved tier information for building child delegation contexts.
- * @version 2.0.6-rc16
+ *
+ * v2.13.0 removed a `tools` member carrying tool JSON definitions. The
+ * facade never populated it and nothing in `src/` or `include/` ever read
+ * what it fed (`LoopContext::all_tools`). A child's tool menu comes from
+ * tier config — `get_tool_prompt(tier)` → `resolve_allowed_tools(h, tier)`
+ * — and its dispatch gate from `allowed_tools` below, which IS live: it
+ * feeds `AgentEngine::tri_get_tier_param`, `get_tier_allowed_tools` and
+ * gh#160's `isolation_unsafe_tools` readOnlyHint refusal.
+ *
+ * @version 2.13.0
  */
 struct ChildContextInfo {
     std::string system_prompt;              ///< Built for target tier
-    std::vector<std::string> tools;         ///< Tool JSON definitions for tier
     std::vector<std::string> allowed_tools; ///< Allowed tool names (gh#121)
     bool explicit_completion = false;       ///< Requires entropic.complete?
     std::string completion_instructions;    ///< Instructions for explicit completion
@@ -258,6 +294,49 @@ struct TierResolutionInterface {
 };
 
 /**
+ * @brief Where a session's tools live, and what it can reach (gh#160).
+ *
+ * Injected by the facade, like `TierResolutionInterface` (decision #23):
+ * core.so cannot see the `ServerManager` — it lives on the facade handle —
+ * yet the sandbox root has to BE the root the tools actually resolve
+ * against, or the snapshot diffs a tree nobody wrote to. That mismatch is
+ * gh#160: the engine snapshotted its own `repo_dir`, the filesystem/bash/
+ * git servers used `mcp.working_dir`, and the resulting patch was 0 bytes.
+ *
+ * This is deliberately ONE seam. gh#166 re-points `resolve_root` at the
+ * session's named workspace without any other part of the delegation
+ * wiring changing.
+ *
+ * @version 2.13.0
+ */
+struct SessionRootInterface {
+    /// @brief Root directory this session's MCP tools resolve against.
+    /// @param session_key Caller-scoped session key ("" = default session).
+    /// @param user_data Opaque pointer (facade handle).
+    /// @return Absolute root, or empty when none is configured.
+    std::filesystem::path (*resolve_root)(
+        const std::string& session_key, void* user_data) = nullptr;
+
+    /// @brief Child-visible EXTERNAL tools that are not declared read-only.
+    ///
+    /// An external (stdio/SSE) MCP server is a separate process with its
+    /// own cwd; nothing the engine does can move it into a sandbox. If the
+    /// child can call one that may write, the isolation guarantee is false,
+    /// so the delegation is refused rather than silently downgraded.
+    ///
+    /// @param session_key Session the delegation runs under.
+    /// @param allowed_tools Child's tool allow-list (empty = everything).
+    /// @param user_data Opaque pointer (facade handle).
+    /// @return Fully-qualified names of tools lacking `readOnlyHint: true`.
+    std::vector<std::string> (*unsafe_external_tools)(
+        const std::string& session_key,
+        const std::vector<std::string>& allowed_tools,
+        void* user_data) = nullptr;
+
+    void* user_data = nullptr; ///< Opaque pointer (facade context)
+};
+
+/**
  * @brief Mutable state carried through the agentic loop.
  *
  * All mutable loop state lives here. The engine itself is stateless
@@ -282,9 +361,17 @@ struct LoopContext {
     /// is opaque, caller-supplied and stable — the backend maps it to a KV
     /// sequence.
     std::string session_key;
+    /// @brief Directory this loop's tools are currently pointed at (gh#160).
+    ///
+    /// Empty for a loop running against the session's own root. Set by
+    /// `DelegationManager` on a child context when that child runs inside a
+    /// sandbox, so a NESTED delegation restores its parent's sandbox rather
+    /// than the project root when it finishes. Pre-gh#160 the restore target
+    /// was always the repo root, which handed the outer delegation's
+    /// remaining turns straight back to the user's working tree.
+    std::string active_root;
     std::string conversation_id;                             ///< Conversation ID for storage (v1.8.8)
     std::string source = "human";                          ///< Message source
-    std::vector<std::string> all_tools;                    ///< Full tool list as raw JSON strings
     std::string base_system;                               ///< Base system prompt (pre-tier formatting)
     std::unordered_map<std::string, std::string> metadata; ///< Runtime metadata
     int delegation_depth = 0;                              ///< 0 = root, 1+ = child
@@ -293,10 +380,33 @@ struct LoopContext {
     std::vector<std::string> child_conversation_ids;       ///< Spawned child IDs
     std::string active_phase = "default";                  ///< Active inference phase
     std::unordered_map<std::string, std::string> recent_tool_calls; ///< Duplicate detection cache (v1.8.5)
+    /// @brief How often each exact call (tool + sorted args) has FAILED.
+    ///
+    /// v2.13.0: `record_tool_call` deliberately keeps error results out of
+    /// `recent_tool_calls` so a transient failure does not poison the call
+    /// for the rest of the turn (v1.8.5). Correct for one retry, but it
+    /// left the retry count unbounded — a delegated child re-issued one
+    /// byte-identical refused read four times and died on its timeout.
+    /// Counted separately so the transient retry survives and only the
+    /// repeat is bounded.
+    std::unordered_map<std::string, int> failed_tool_calls;
     std::optional<PendingDelegation> pending_delegation;  ///< Stored by dir_delegate (v1.8.6)
     std::optional<PendingPipeline> pending_pipeline;      ///< Stored by dir_pipeline (v1.8.6)
     int effective_max_iterations = -1;           ///< Per-identity override (-1 = LoopConfig, P3-18)
     int effective_max_tool_calls_per_turn = -1;  ///< Per-identity override (-1 = LoopConfig, P3-18)
+    /// @brief gh#182 (v2.13.0): the `max_turns` the MODEL asked for when it
+    /// issued this child's `entropic.delegate` call. -1 (or any value < 1)
+    /// means the argument was omitted, which leaves the bound exactly where
+    /// it was before this field existed.
+    ///
+    /// Deliberately NOT folded into `effective_max_iterations`: that field
+    /// is the OPERATOR's setting (identity frontmatter, else LoopConfig),
+    /// and the two are resolved together by `resolve_max_iterations`, which
+    /// takes the STRICTER. Keeping them apart is what makes "a model may
+    /// lower a bound, never raise one" a property of the resolver rather
+    /// than of the order in which two writers happened to run.
+    /// @version 2.13.0
+    int delegated_max_turns = -1;
     /// @brief One-shot reminder text consumed by the next per-turn
     /// system prompt assembly. Engine populates after a rejected
     /// validation; ResponseGenerator emits as a "[engine] previous
@@ -556,6 +666,20 @@ struct StorageInterface {
     bool (*load_delegation_with_messages)(
         const char* delegation_id,
         std::string& result_json,
+        void* user_data) = nullptr;
+
+    /// @brief Most recent COMPLETED delegation to a tier (gh#162, v2.13.0).
+    ///
+    /// Backs `entropic.resume_delegation`'s `target` form: the lead names
+    /// the specialist, not a storage id it would have to fetch first.
+    ///
+    /// @param target_tier Tier to search for.
+    /// @param[out] delegation_id Resolved id on success.
+    /// @param user_data Opaque pointer (storage backend).
+    /// @return true when a completed delegation to that tier exists.
+    bool (*latest_delegation_for_target)(
+        const char* target_tier,
+        std::string& delegation_id,
         void* user_data) = nullptr;
 
     void* user_data = nullptr; ///< Opaque pointer (storage backend)

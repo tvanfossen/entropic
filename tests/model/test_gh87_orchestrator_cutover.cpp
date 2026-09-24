@@ -26,7 +26,7 @@ SCENARIO("gh#87 cutover: params.tools drives common_chat through the orchestrato
          "[model][gh87][cutover]")
 {
     if (!g_ctx.initialized) {
-        SKIP("gemma4_a4b GGUF not present — run `entropic download gemma4_a4b`");
+        SKIP(skip_reason_or_default("gemma4_a4b"));
     }
     GIVEN("a read_file tool supplied via params.tools (no system-msg injection)") {
         start_test_log("gh87_orchestrator_cutover");

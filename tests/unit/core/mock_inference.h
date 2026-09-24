@@ -14,6 +14,7 @@
 #include <entropic/interfaces/i_inference_callbacks.h>
 
 #include <cstring>
+#include <mutex>
 #include <string>
 #include <vector>
 
@@ -45,6 +46,26 @@ struct MockInference {
     // content from the RAW generation (not the engine-sanitized result.content)
     // — so a split multi-byte UTF-8 codepoint from MTP survives into *cleaned.
     std::string parse_cleaned_override;
+
+    /// @brief v2.13.0: return code the generate callbacks report.
+    ///
+    /// The inference ABI reports failure as the callback's int return, and
+    /// nothing in the harness could produce a non-zero one — so the engine's
+    /// handling of a typed backend refusal (ENTROPIC_ERROR_EVAL_CONTEXT_FULL,
+    /// "this prompt cannot fit the tier context") had no CPU coverage at all.
+    int generate_rc = 0;
+
+    /// @brief gh#158 (v2.13.0): guards the mutable fields above.
+    ///
+    /// One AgentEngine now serves several concurrent runs, so the
+    /// concurrency suite drives TWO turns through ONE MockInference — and
+    /// `generate_call_count++` plus `response_queue.erase()` from two
+    /// threads is a data race in the HARNESS. ThreadSanitizer reported it
+    /// inside `mock_generate_stream`, which would otherwise have been read
+    /// as a finding about the engine. Every single-threaded test is
+    /// unaffected: the lock is uncontended and the fields keep their types,
+    /// so `mock.generate_call_count == 3` still compiles everywhere.
+    mutable std::mutex mutex;
 };
 
 /**
@@ -86,6 +107,7 @@ inline int mock_generate(
     char** result_json,
     void* user_data) {
     auto* mock = static_cast<MockInference*>(user_data);
+    std::lock_guard<std::mutex> lock(mock->mutex);
     mock->generate_call_count++;
     if (!mock->response_queue.empty()) {
         *result_json = mock_strdup(mock->response_queue.front());
@@ -93,7 +115,7 @@ inline int mock_generate(
     } else {
         *result_json = mock_strdup(mock->response);
     }
-    return 0;
+    return mock->generate_rc;
 }
 
 /**
@@ -116,13 +138,32 @@ inline int mock_generate_stream(
     int* cancel,
     void* user_data) {
     auto* mock = static_cast<MockInference*>(user_data);
-    mock->generate_call_count++;
+    // gh#158: take the scripted response and pop it under the lock, then
+    // stream the COPY outside it. Holding the lock across on_token would
+    // serialize the two runs at the generate call, which is exactly the
+    // overlap the concurrency scenario exists to produce.
+    std::string resp;
+    bool token_by_token = false;
+    int rc = 0;
+    {
+        std::lock_guard<std::mutex> lock(mock->mutex);
+        mock->generate_call_count++;
+        rc = mock->generate_rc;
+        resp = mock->response_queue.empty()
+            ? mock->response
+            : mock->response_queue.front();
+        if (!mock->response_queue.empty()) {
+            mock->response_queue.erase(mock->response_queue.begin());
+        }
+        token_by_token = mock->stream_token_by_token;
+    }
 
-    const auto& resp = mock->response_queue.empty()
-        ? mock->response
-        : mock->response_queue.front();
+    // v2.13.0: a refused turn emits nothing. Streaming tokens first and
+    // THEN reporting the failure would give the engine partial content to
+    // work with, which is not what a pre-decode refusal looks like.
+    if (rc != 0) { return rc; }
 
-    if (mock->stream_token_by_token) {
+    if (token_by_token) {
         for (size_t i = 0; i < resp.size(); ++i) {
             if (cancel != nullptr && *cancel != 0) {
                 return 0;
@@ -133,9 +174,6 @@ inline int mock_generate_stream(
         on_token(resp.c_str(), resp.size(), token_ud);
     }
 
-    if (!mock->response_queue.empty()) {
-        mock->response_queue.erase(mock->response_queue.begin());
-    }
     return 0;
 }
 
@@ -149,6 +187,7 @@ inline int mock_route(
     char** result_json,
     void* user_data) {
     auto* mock = static_cast<MockInference*>(user_data);
+    std::lock_guard<std::mutex> lock(mock->mutex);
     mock->route_call_count++;
     *result_json = mock_strdup(mock->tier);
     return 0;
@@ -170,6 +209,7 @@ inline int mock_complete(
     char** result_json,
     void* user_data) {
     auto* mock = static_cast<MockInference*>(user_data);
+    std::lock_guard<std::mutex> lock(mock->mutex);
     mock->complete_call_count++;
     *result_json = mock_strdup(mock->complete_response);
     return 0;
@@ -191,6 +231,7 @@ inline int mock_parse_tool_calls(
     char** tool_calls_json,
     void* user_data) {
     auto* mock = static_cast<MockInference*>(user_data);
+    std::lock_guard<std::mutex> lock(mock->mutex);
     // gh#111: emulate a backend parse that returns raw-derived cleaned content
     // (bypassing the engine's content sanitize) when an override is set.
     *cleaned_content = mock_strdup(

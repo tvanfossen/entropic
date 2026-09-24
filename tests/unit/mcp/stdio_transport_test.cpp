@@ -17,8 +17,10 @@
 
 #include <catch2/catch_test_macros.hpp>
 
+#include <chrono>
 #include <filesystem>
 #include <string>
+#include <thread>
 #include <vector>
 
 using namespace entropic;
@@ -138,4 +140,33 @@ TEST_CASE("StdioTransport.close() with no prior open() is safe",
                      std::vector<std::string>{}, {}, 100U);
     t.close();  // no-op path
     REQUIRE_FALSE(t.is_connected());
+}
+
+TEST_CASE("gh#158: an abandoned request's late reply is drained, not returned",
+          "[mcp][stdio][gh158][2.13.0]") {
+    // The cross-session leak in its smallest form, with a real pipe. The
+    // child answers 300ms late. The first request gives up at 100ms — the
+    // shape a read timeout or a per-session interrupt produces — and the
+    // child's answer lands in the pipe AFTERWARDS. Pre-2.13.0 the next
+    // request read that line and returned it as its own result; with keyed
+    // runs that line belongs to another session.
+    if (!std::filesystem::exists("/bin/sh")) { return; }
+    StdioTransport t(
+        "slow", "/bin/sh",
+        std::vector<std::string>{
+            "-c",
+            R"(while read line; do sleep 0.3; printf '%s\n' "$line"; done)"},
+        {}, 2000U);
+    REQUIRE(t.open());
+
+    const auto first = t.send_request(R"({"id":1})", 100U);
+    REQUIRE(first.empty());  // abandoned while the child was still thinking
+
+    // Let the orphaned reply arrive.
+    std::this_thread::sleep_for(std::chrono::milliseconds(700));
+
+    const auto second = t.send_request(R"({"id":2})", 3000U);
+    INFO("second response: " << second);
+    CHECK(second.find("\"id\":2") != std::string::npos);
+    CHECK(second.find("\"id\":1") == std::string::npos);
 }

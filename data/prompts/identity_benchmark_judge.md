@@ -5,7 +5,6 @@ name: benchmark_judge
 focus:
   - grade model outputs for accuracy and quality
   - assess whether responses correctly address the prompt
-grammar: grammars/benchmark_judge.gbnf
 auto_chain: null
 allowed_tools: []
 max_output_tokens: 256

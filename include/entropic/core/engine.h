@@ -39,6 +39,8 @@
 #include <atomic>
 #include <deque>
 #include <filesystem>
+#include <map>
+#include <memory>
 #include <mutex>
 #include <optional>
 #include <string>
@@ -162,6 +164,83 @@ public:
      * @version 2.1.6
      */
     void set_project_dir(const std::filesystem::path& project_dir);
+
+    /**
+     * @brief Inject the session-root / tool-reach seam (gh#160, v2.13.0).
+     *
+     * The facade owns the `ServerManager` and therefore the only truthful
+     * answer to "which directory do this session's tools resolve against".
+     * Without this the engine snapshotted its own `repo_dir` while the
+     * servers worked somewhere else, and delegation patches came out
+     * empty — the gh#160 report.
+     *
+     * @param iface Resolver callbacks (a default-constructed value clears
+     *        the wiring and restores the `get_repo_dir()` fallback).
+     * @version 2.13.0
+     */
+    void set_session_root_interface(const SessionRootInterface& iface);
+
+    /**
+     * @brief Install the directory-swap callback used by sandboxing.
+     *
+     * gh#160: `DelegationManager::set_dir_swap` existed from v2.1.5 and
+     * had NO production caller, so every `ScopedSandbox` took the
+     * non-sandboxed branch and children wrote straight into the user's
+     * tree. The engine now holds the callback and hands it to every
+     * `DelegationManager` it builds.
+     *
+     * @param swap_fn Swap callback (nullptr disables sandbox entry).
+     * @param user_data Forwarded to the callback.
+     * @version 2.13.0
+     */
+    void set_dir_swap(ScopedSandbox::SwapDirFn swap_fn, void* user_data);
+
+    /**
+     * @brief Resolve the root a session's tools operate in (gh#160).
+     *
+     * THE seam: sandbox roots, sandbox restore targets and (gh#166)
+     * workspace roots all come from here. Falls back to `get_repo_dir()`
+     * when the facade has not injected a resolver — which is what every
+     * unit test that builds a bare `AgentEngine` gets.
+     *
+     * @param session_key Caller-scoped session key ("" = default).
+     * @return Root directory, or empty when none resolves.
+     * @version 2.13.0
+     */
+    std::filesystem::path resolve_session_root(
+        const std::string& session_key);
+
+    /**
+     * @brief Sandbox manager for a session, or nullptr when isolation
+     *        is off (gh#160).
+     *
+     * Public for the same reason `is_delegation_cycle` is: it is the
+     * observable decision point of the isolation wiring, and a test that
+     * cannot see it can only assert on a real model run.
+     *
+     * @param session_key Session the delegation belongs to.
+     * @return Manager rooted at the session's root, or nullptr when
+     *         `delegation.isolation` is `none` or no root resolves.
+     * @dg_internal
+     * @version 2.13.0
+     */
+    SandboxManager* sandbox_for_session(const std::string& session_key);
+
+    /**
+     * @brief Child-visible external tools that break the isolation claim.
+     *
+     * Empty when isolation is off (nothing is being claimed), when no
+     * resolver is wired, or when every reachable external tool declares
+     * `readOnlyHint: true`.
+     *
+     * @param ctx Parent loop context (supplies the session key).
+     * @param target_tier Tier the delegation targets.
+     * @return Offending fully-qualified tool names.
+     * @dg_internal
+     * @version 2.13.0
+     */
+    std::vector<std::string> isolation_unsafe_tools(
+        const LoopContext& ctx, const std::string& target_tier);
 
     /**
      * @brief Set the global stream observer.
@@ -354,13 +433,20 @@ public:
      *
      * Returns a copy of the LoopMetrics snapped at the end of the last
      * call to run() or run_turn(). Zero-initialized before any run has
-     * completed. Thread-safe: read-only copy is returned. (P2-15)
+     * completed. (P2-15)
+     *
+     * gh#158 (v2.13.0): the copy is taken under `metrics_mutex_`. "Returns a
+     * copy" was never sufficient on its own — `LoopMetrics` is a multi-field
+     * struct, so an unlocked copy taken while a finishing run assigns it
+     * reads a TORN snapshot (new `iterations`, old `tokens_used`). Under
+     * per-handle serialization that write could not overlap a read from the
+     * consumer's thread often enough to matter; with keyed runs it can.
      *
      * @return LoopMetrics from last run.
      * @utility
-     * @version 2.0.6-rc16
+     * @version 2.13.0
      */
-    LoopMetrics last_loop_metrics() const { return last_metrics_; }
+    LoopMetrics last_loop_metrics() const;
 
     /**
      * @brief Per-tier aggregated metrics since engine start.
@@ -370,12 +456,17 @@ public:
      * across every run_loop entered with that locked_tier. Empty map
      * before any run. (P2-15 follow-up, 2.0.6-rc16.2)
      *
+     * gh#158 (v2.13.0): copied under `metrics_mutex_`. This one was the
+     * sharper of the two — `entropic_metrics_json` copied the map while a
+     * concurrent run did `per_tier_metrics_[tier]`, and an insert that
+     * rehashes relocates every bucket under the copy's iterators. Not a torn
+     * number: undefined behaviour.
+     *
      * @return Copy of the per-tier metrics map.
      * @utility
-     * @version 2.0.6-rc16.2
+     * @version 2.13.0
      */
-    std::unordered_map<std::string, LoopMetrics>
-        per_tier_metrics() const { return per_tier_metrics_; }
+    std::unordered_map<std::string, LoopMetrics> per_tier_metrics() const;
 
     // ── Conversation state (v2.0.2) ─────────────────────────
 
@@ -546,15 +637,26 @@ public:
 
     /**
      * @brief Get conversation message count.
-     * @return Number of messages.
-     * @version 2.0.2
+     *
+     * TOTAL over keys since gh#158 (v2.13.0): an active session key that is
+     * not in the map answers 0. It used to `.at()`, and both this and
+     * `get_messages()` are reached from the C ABI, where an escaping
+     * `std::out_of_range` is a `std::terminate`.
+     *
+     * @return Number of messages; 0 when the active session is unknown.
+     * @version 2.13.0
      */
     size_t message_count() const;
 
     /**
      * @brief Get conversation messages (read-only).
-     * @return Const reference to message vector.
-     * @version 2.0.2
+     *
+     * TOTAL over keys since gh#158 (v2.13.0) — see `message_count()`. An
+     * unknown active session yields an empty vector rather than throwing.
+     *
+     * @return Const reference to the active session's message vector, or to
+     *         an empty one when that session is unknown.
+     * @version 2.13.0
      */
     const std::vector<Message>& get_messages() const;
 
@@ -616,39 +718,151 @@ public:
     bool is_running() const { return running_flag_.load(); }
 
     /**
-     * @brief Try to claim the engine for one turn (gh#144, v2.12.0).
+     * @brief Try to claim one turn for a named session (gh#144 / gh#158).
      *
-     * A single compare-exchange on `running_flag_` — deliberately NOT a
-     * mutex. gh#109 removed `api_mutex` from every run entry point so a
-     * long turn could not block `entropic_interrupt()` called from another
-     * thread, and that property must survive: a second thread interrupting
-     * a 40-second turn must touch only atomics. Reintroducing a lock on
-     * this path would silently re-break gh#109.
+     * @par What the claim costs
+     * gh#144 made it a compare-exchange on `running_flag_` — deliberately NOT
+     * a mutex, because gh#109 removed `api_mutex` from every run entry point
+     * so a long turn could not block `entropic_interrupt()` from another
+     * thread. gh#158 keys the claim, which needs a map, which needs a lock —
+     * but `runs_mutex_` is held only for the O(1) insert and is NEVER held
+     * across a decode, a prefill or a tool call. That is the property gh#109
+     * actually protects; a lock held for nanoseconds does not violate it,
+     * whereas `api_mutex` (held for the whole turn) did.
      *
-     * Until v2.12.0 nothing claimed at all. `ENTROPIC_ERROR_ALREADY_RUNNING`
-     * was declared, documented on two run entry points, and returned from
-     * nowhere; two concurrent runs raced into the shared conversation
-     * vector and decoded on one llama_context (gh#144).
+     * @par What the key changes
+     * Two runs on the SAME key are always a genuine conflict — they share one
+     * conversation — so the second is refused whatever the configuration.
+     * Two runs on DIFFERENT keys proceed together unless
+     * `set_concurrent_sessions(false)` has been called; with the kill switch
+     * thrown the guard is handle-exclusive again and v2.12.0 semantics hold
+     * byte for byte.
      *
+     * @param key Session key to claim; `""` is the default session.
      * @return true when this caller now owns the turn and MUST call
-     *         end_turn(); false when a turn is already in flight, in which
-     *         case the caller owns nothing and must not release.
+     *         `end_turn(key)`; false when the claim is refused, in which case
+     *         the caller owns nothing and must not release.
      * @req REQ-API-009
-     * @version 2.12.0
+     * @req REQ-LOOP-009
+     * @version 2.13.0 [reviewed]
      */
-    bool try_begin_turn() {
-        bool expected = false;
-        return running_flag_.compare_exchange_strong(expected, true);
-    }
+    bool try_begin_turn(const std::string& key);
 
     /**
-     * @brief Release a turn claimed by try_begin_turn (gh#144, v2.12.0).
+     * @brief Claim a turn for the session bound to THIS thread (gh#158).
      *
-     * Only the caller whose try_begin_turn() returned true may call this.
+     * The no-argument form every pre-gh#158 call site already uses. It
+     * resolves to whatever `set_active_session` published on this thread, so
+     * `run_turn`'s internal "claim only if the caller has not already" probe
+     * asks about the right session rather than always about `""`.
+     *
+     * @return As `try_begin_turn(key)`.
      * @req REQ-API-009
-     * @version 2.12.0
+     * @version 2.13.0
      */
-    void end_turn() { running_flag_.store(false); }
+    bool try_begin_turn() { return try_begin_turn(active_session_key()); }
+
+    /**
+     * @brief Release a turn claimed by try_begin_turn (gh#144 / gh#158).
+     *
+     * Only the caller whose `try_begin_turn` returned true may call this.
+     * @param key Session key that was claimed.
+     * @req REQ-API-009
+     * @version 2.13.0
+     */
+    void end_turn(const std::string& key);
+
+    /**
+     * @brief Release the turn this thread claimed (gh#158).
+     *
+     * Releases by the key recorded at claim time, so a caller that claimed
+     * `"A"` cannot accidentally release `""` — which is what an unkeyed
+     * release would have done for every pre-gh#158 call site.
+     *
+     * @req REQ-API-009
+     * @version 2.13.0
+     */
+    void end_turn();
+
+    /**
+     * @brief Number of runs currently in flight on this handle (gh#158).
+     * @return Active run count; 0 when idle.
+     * @utility
+     * @version 2.13.0
+     */
+    std::size_t active_run_count() const;
+
+    /**
+     * @brief Allow runs on DIFFERENT session keys to proceed together.
+     *
+     * @par Why this defaults ON, and what turning it off buys
+     * Per-key runs are only safe once every piece of per-handle mutable state
+     * a turn touches is either per-run or locked. That audit is recorded in
+     * decision #66 of `docs/architecture-cpp.md`, and it is COMPLETE — which
+     * is the only reason the default moved. Passing `false` restores v2.12.0
+     * semantics exactly (a second run on any key is refused), so a consumer
+     * who hits a concurrency defect in the field has a one-line escape hatch
+     * instead of a version pin.
+     *
+     * Config key: `concurrent_sessions: false`.
+     *
+     * @param enabled true to allow concurrent distinct-key runs.
+     * @req REQ-LOOP-009
+     * @version 2.13.0 [reviewed]
+     */
+    void set_concurrent_sessions(bool enabled);
+
+    /**
+     * @brief Whether per-session concurrency is enabled (gh#158).
+     * @return true when distinct keys may run together.
+     * @utility
+     * @version 2.13.0
+     */
+    bool concurrent_sessions() const;
+
+    /**
+     * @brief Interrupt exactly one session's run (gh#158).
+     *
+     * `interrupt()` means "every run on this handle" and keeps that meaning.
+     * This means "that one", and deliberately does NOT fire the external
+     * transport latch: `ServerManager::interrupt_external_tools()` trips
+     * EVERY transport at once, so using it here would abort another session's
+     * in-flight MCP call — the gh#150 failure mode, re-introduced through a
+     * different door. The interrupted run's own tool call still aborts,
+     * because the run publishes its cancel token to its own thread
+     * (`RunCancelScope`) and the transport polls it.
+     *
+     * @param key Session whose run to interrupt. No-op when it is not running.
+     * @return true when a run was found and flagged.
+     * @req REQ-LOOP-006
+     * @version 2.13.0
+     */
+    bool interrupt_session(const std::string& key);
+
+    /**
+     * @brief Whether a named session's in-flight run carries an interrupt.
+     * @param key Session key.
+     * @return true when that run exists and is flagged.
+     * @utility
+     * @version 2.13.0
+     */
+    bool session_interrupted(const std::string& key) const;
+
+    /**
+     * @brief The cancel flag of the run executing on THIS thread (gh#158).
+     *
+     * Handed to paths that take a `std::atomic<bool>&` cancel token —
+     * `entropic_run_batch` is the one that had a LOCAL flag nobody could
+     * ever set, which is why it was uninterruptible.
+     *
+     * Falls back to the handle-wide interrupt flag when no run is claimed on
+     * this thread, so the reference is always valid.
+     *
+     * @return Reference to this run's cancel flag.
+     * @req REQ-LOOP-006
+     * @version 2.13.0
+     */
+    std::atomic<bool>& run_cancel_flag();
 
     /**
      * @brief Bind this turn to a caller-scoped session (gh#144, v2.12.0).
@@ -663,24 +877,33 @@ public:
      * minted fresh per run() and is neither caller-supplied nor stable, and
      * from the per-handle log scope. One word, one meaning.
      *
+     * gh#158 (v2.13.0): the binding is published to the CALLING THREAD as
+     * well as to the handle. Two concurrent runs each need their own answer
+     * to "which session am I", and a single member field can only hold one.
+     * The member remains the answer for a thread that never bound a session,
+     * which is what keeps the legacy unkeyed accessors behaving as they did.
+     *
      * @param key Session key for the turn about to run.
      * @req REQ-LOOP-001
-     * @version 2.12.0
+     * @version 2.13.0
      */
-    void set_active_session(const std::string& key) {
-        active_session_key_ = key;
-        conversations_[key];  // default-construct on first use
-    }
+    void set_active_session(const std::string& key);
 
     /**
      * @brief Session whose turn is currently running.
+     *
+     * gh#158 (v2.13.0): returns BY VALUE. The handle-wide fallback is a
+     * `std::string` every starting run assigns, and a caller on another
+     * thread — a host polling context, which is the whole point of the
+     * fallback — read it with no synchronization at all. A reference
+     * handed out across that write is a data race on the string itself,
+     * not a merely stale answer.
+     *
      * @return The active key; `""` when idle or unkeyed.
      * @utility
-     * @version 2.12.0
+     * @version 2.13.0
      */
-    const std::string& active_session_key() const {
-        return active_session_key_;
-    }
+    std::string active_session_key() const;
 
     /**
      * @brief Messages held by a named session.
@@ -696,11 +919,30 @@ public:
      * @req REQ-LOOP-001
      * @version 2.12.0
      */
-    std::vector<Message> messages_for(const std::string& key) const {
-        auto it = conversations_.find(key);
-        return it == conversations_.end() ? std::vector<Message>{}
-                                          : it->second.messages;
-    }
+    std::vector<Message> messages_for(const std::string& key) const;
+
+    /**
+     * @brief Replace one session's conversation wholesale (gh#165, v2.13.0).
+     *
+     * The write counterpart `entropic_session_context_get` never had, so a
+     * session could be read out but not restored: a host that stopped the
+     * engine to free VRAM lost every conversation, and the only way to put
+     * messages back — `entropic_run_session` — RUNS a turn per message,
+     * re-executing the whole agentic loop including tool calls.
+     *
+     * Refuses the session that is CURRENTLY RUNNING. Every other session
+     * stays mutable mid-run: the restriction is about the conversation this
+     * turn is appending to, not about the handle being busy.
+     *
+     * @param key Session key; `""` is the default session.
+     * @param messages Replacement conversation.
+     * @return true when the session was replaced; false when a run on that
+     *         key is in flight and the conversation was left untouched.
+     * @req REQ-LOOP-010
+     * @version 2.13.0
+     */
+    bool set_session_messages(const std::string& key,
+                              std::vector<Message> messages);
 
     /**
      * @brief Message count for a named session.
@@ -709,10 +951,7 @@ public:
      * @utility
      * @version 2.12.0
      */
-    std::size_t message_count_for(const std::string& key) const {
-        auto it = conversations_.find(key);
-        return it == conversations_.end() ? 0 : it->second.count();
-    }
+    std::size_t message_count_for(const std::string& key) const;
 
     /**
      * @brief Clear one session's history, keeping the session itself.
@@ -720,10 +959,7 @@ public:
      * @req REQ-LOOP-001
      * @version 2.12.0
      */
-    void clear_conversation_for(const std::string& key) {
-        auto it = conversations_.find(key);
-        if (it != conversations_.end()) { it->second.clear(); }
-    }
+    void clear_conversation_for(const std::string& key);
 
     /**
      * @brief Forget a session entirely.
@@ -736,13 +972,7 @@ public:
      * @req REQ-LOOP-001
      * @version 2.12.0
      */
-    bool drop_session(const std::string& key) {
-        if (key.empty()) {
-            conversations_[key].clear();
-            return true;
-        }
-        return conversations_.erase(key) > 0;
-    }
+    bool drop_session(const std::string& key);
 
     /**
      * @brief Keys of every session the engine currently holds.
@@ -750,12 +980,7 @@ public:
      * @utility
      * @version 2.12.0
      */
-    std::vector<std::string> session_keys() const {
-        std::vector<std::string> keys;
-        keys.reserve(conversations_.size());
-        for (const auto& [k, v] : conversations_) { keys.push_back(k); }
-        return keys;
-    }
+    std::vector<std::string> session_keys() const;
 
     /**
      * @brief Register an observer that fires when a queued user
@@ -1034,13 +1259,44 @@ private:
      * @brief Fold a finished run's metrics into the per-tier totals.
      *
      * Extracted from run() to keep it knots-clean. Snapshots
-     * last_metrics_ and accumulates into per_tier_metrics_.
+     * last_metrics_ and accumulates into per_tier_metrics_, both under
+     * `metrics_mutex_` (gh#158).
      *
      * @param ctx Loop context (with completed metrics).
      * @dg_internal
-     * @version 2.3.7
+     * @version 2.13.0
      */
     void accumulate_run_metrics(LoopContext& ctx);
+
+    /**
+     * @brief Fold one run's metrics into the per-tier accumulator (gh#158).
+     *
+     * The half of `accumulate_run_metrics` that `run_loop`'s tail also does.
+     * It was copy-pasted at both sites, so adding the lock in one place would
+     * have left the other racing — which is the argument for extracting it
+     * rather than adding a second `lock_guard`.
+     *
+     * @param ctx Loop context (with completed metrics).
+     * @dg_internal
+     * @version 2.13.0
+     */
+    void accumulate_per_tier(const LoopContext& ctx);
+
+    /**
+     * @brief Clear the handle-wide pause at the start of a fresh turn.
+     *
+     * gh#158 (v2.13.0). See the definition for why pause stays handle-wide
+     * and why the clear had to become conditional.
+     *
+     * @dg_internal
+     * @version 2.13.0
+     */
+    void clear_pause_for_fresh_turn();
+
+    /// @brief gh#158: guards `last_metrics_` and `per_tier_metrics_`.
+    ///
+    /// Held for the fold and for the copy-out, never across a generation.
+    mutable std::mutex metrics_mutex_;
 
     /**
      * @brief Main loop implementation.
@@ -1048,6 +1304,67 @@ private:
      * @version 1.8.4
      */
     void loop(LoopContext& ctx);
+
+    /**
+     * @brief Force the synthetic completion the iteration cap owes.
+     *
+     * gh#169 (v2.13.0). The cap ANNOTATES the run's last substantive
+     * assistant content rather than replacing it: a delegation result
+     * is taken from the last assistant message
+     * (DelegationManager::extract_summary), so the pre-2.13.0
+     * placeholder — "[iteration cap reached after N iterations —
+     * returning current state]" — handed the parent that string where
+     * the child's work belonged, on every capped delegation.
+     *
+     * Unchanged and relied on downstream: ``terminal_reason`` is still
+     * set to "budget_exhausted", so DelegationResult::success stays
+     * false, the parent-tier relay still tags the result
+     * ``[partial — budget_exhausted]`` and ON_DELEGATE_COMPLETE still
+     * reports ``success: false`` / ``result_kind: delegation_failed``.
+     *
+     * Also writes ``ctx.metadata["cap_carried_content"]`` ("true" /
+     * "false") so a consumer can tell a child that produced work and
+     * ran out from one that produced nothing without matching prose.
+     *
+     * @param ctx Loop context (messages, metadata, state mutated).
+     * @version 2.13.0
+     */
+    void force_iteration_cap_completion(LoopContext& ctx);
+
+    /**
+     * @brief Synthesize the final assistant message a forced stop owes.
+     *
+     * The mechanism BOTH engine-authored terminals share — the
+     * iteration cap (gh#169) and the thinking-budget hard cut (gh#181,
+     * v2.13.0). Carries the run's last substantive assistant content,
+     * annotates it with @p reason rather than replacing it, writes
+     * @p terminal_reason and the typed
+     * ``ctx.metadata["cap_carried_content"]`` ("true" / "false"), and
+     * forces COMPLETE.
+     *
+     * One implementation on purpose: the two stops differ only in their
+     * reason text and their terminal_reason value, and two hand-rolled
+     * copies of the same annotation is how they drift apart.
+     * ``cap_carried_content`` is likewise ONE key for both, so a
+     * consumer asks "did the handed-back text contain the agent's own
+     * work?" in one place; ``terminal_reason`` already says which stop
+     * fired.
+     *
+     * @param ctx Loop context (messages, metadata, state mutated).
+     * @param reason Reason clause rendered inside the trailing bracket.
+     * @param stop_noun What stopped the run ("cap" / "cut"), used only
+     *                  in the nothing-was-produced wording.
+     * @param terminal_reason Value written to
+     *                        ``metadata["terminal_reason"]`` —
+     *                        "budget_exhausted" for the cap,
+     *                        "budget_exhausted_thinking" for the cut.
+     *                        Both values are unchanged by gh#181.
+     * @version 2.13.0
+     */
+    void finish_with_carried_output(LoopContext& ctx,
+                                    const std::string& reason,
+                                    const std::string& stop_noun,
+                                    const std::string& terminal_reason);
 
     /**
      * @brief Execute a single loop iteration.
@@ -1230,6 +1547,22 @@ private:
                                       const PendingDelegation& pending);
 
     /**
+     * @brief Apply the pre-run pipeline guards (depth, isolation reach).
+     *
+     * gh#160 (v2.13.0): the depth check moved here from
+     * `execute_pending_pipeline` so the isolation refusal could join it
+     * without adding a return to that function.
+     *
+     * @param ctx Loop context.
+     * @param pending The pipeline about to run.
+     * @return true if the pipeline was rejected (already handled).
+     * @dg_internal
+     * @version 2.13.0
+     */
+    bool reject_pipeline_if_guarded(LoopContext& ctx,
+                                    const PendingPipeline& pending);
+
+    /**
      * @brief Execute a pending pipeline after tool processing.
      * @param ctx Loop context with pending_pipeline set.
      * @version 1.8.6
@@ -1394,9 +1727,19 @@ private:
 
     /**
      * @brief Second-exhaustion hard cut (failure note + terminal).
+     *
+     * gh#181 (v2.13.0): the note ANNOTATES the run's last substantive
+     * assistant content instead of replacing it. Pre-2.13.0 the cut
+     * message's CONTENT was the placeholder, and a child hard-cut by
+     * the thinking budget therefore handed its parent that string
+     * where its result belonged (DelegationManager::extract_summary
+     * reads the last assistant message) — the sibling of gh#169.
+     * ``terminal_reason`` is still "budget_exhausted_thinking", a
+     * distinct value from the iteration cap's.
+     *
      * @param ctx Loop context.
      * @dg_internal
-     * @version 2.5.0
+     * @version 2.13.0
      */
     void hard_cut_budget(LoopContext& ctx);
 
@@ -1454,13 +1797,35 @@ private:
      * handles non-git projects natively (gh#29, v2.1.5). The engine never
      * mutates the user's project directory.
      *
+     * gh#158 (v2.13.0): the lazy cache is filled under `sandbox_mutex_`.
+     *
      * @return Project directory path.
-     * @version 2.1.6
+     * @version 2.13.0
      */
     std::filesystem::path get_repo_dir();                       ///< @dg_internal
 
     /**
+     * @brief `get_repo_dir` with `sandbox_mutex_` already held (gh#158).
+     * @return Project directory path; empty when none resolves.
+     * @dg_internal
+     * @version 2.13.0
+     */
+    std::filesystem::path get_repo_dir_locked();
+
+    /**
+     * @brief Read the handle's system prompt under `prompt_mutex_` (gh#158).
+     * @return A copy; empty when no system prompt is set.
+     * @dg_internal
+     * @version 2.13.0
+     */
+    std::string system_prompt_copy() const;
+
+    /**
      * @brief Lazily construct (or return) the session-scoped SandboxManager.
+     *
+     * gh#158 (v2.13.0): serialized on `sandbox_mutex_` — the pre-2.13.0
+     * check-then-emplace let two concurrent delegating runs each construct
+     * one, the second destroying the manager the first had already returned.
      *
      * gh#33 (v2.1.6): pre-2.1.6 each delegation built a fresh
      * `DelegationManager` as a stack local, which owned a fresh
@@ -1476,10 +1841,31 @@ private:
      *
      * @return Pointer to the engine-scoped sandbox manager, or nullptr
      *         when no project_dir is available.
-     * @threadsafety Construction is serialized by the facade's api_mutex.
-     * @version 2.1.6
+     * @threadsafety Construction is serialized by `sandbox_mutex_`. The
+     *         pre-2.13.0 note claimed the facade's `api_mutex` did it; that
+     *         was never true for a delegation, which reaches here from a run
+     *         thread holding nothing (gh#109).
+     * gh#160 (v2.13.0): keyed by ROOT, because a root is no longer a
+     * per-handle constant — `resolve_session_root` answers per session and
+     * gh#166 gives two sessions two different roots. `std::map` nodes are
+     * stable, so a pointer handed out here stays valid for the life of the
+     * engine even as other roots are added.
+     *
+     * @param root Directory to snapshot from.
+     * @return Pointer to the engine-owned manager for `root`, or nullptr
+     *         when `root` is empty.
+     * @version 2.13.0
      */
-    SandboxManager* ensure_sandbox_manager();                   ///< @dg_internal
+    SandboxManager* ensure_sandbox_manager(
+        const std::filesystem::path& root);                     ///< @dg_internal
+
+    /**
+     * @brief Read the gh#160 dir-swap callback pair under the mutex.
+     * @return The installed (callback, user_data) pair.
+     * @dg_internal
+     * @version 2.13.0
+     */
+    std::pair<ScopedSandbox::SwapDirFn, void*> dir_swap_snapshot() const;
 
     /**
      * @brief Resolve a resume_delegation pending request against storage.
@@ -1498,6 +1884,17 @@ private:
      * @dg_internal
      * @version 2.1.6
      */
+    /**
+     * @brief Resolve a resume-by-tier request to a storage id (gh#162).
+     * @param ctx Parent loop context (typed failure lands here).
+     * @param[in,out] pending Resume request; id filled on success.
+     * @return true when the tier has a prior delegation in storage.
+     * @dg_internal
+     * @version 2.13.0
+     */
+    bool resolve_latest_for_target(LoopContext& ctx,
+                                   PendingDelegation& pending);
+
     bool resolve_resume_delegation(
         LoopContext& ctx,
         PendingDelegation& pending,
@@ -1573,7 +1970,17 @@ private:
     LoopConfig loop_config_;                             ///< Loop config
     EngineCallbacks callbacks_;                          ///< Event callbacks
     std::atomic<bool> interrupt_flag_{false};             ///< Hard interrupt
-    std::atomic<bool> pause_flag_{false};                 ///< Pause signal
+    /// @brief Pause signal — handle-wide by design (gh#158, decision #66).
+    ///
+    /// The interrupt went per-run; this did not, and the asymmetry is the
+    /// point. `interrupt_session(key)` can route because the ENGINE owns the
+    /// map from key to run. `pause()` is raised from a thread that owns no
+    /// run and names no key, so there is nothing to route it by; routing it
+    /// would need an `entropic_pause_session` that no consumer has asked
+    /// for. Every consumer of pause today is a single-session TUI holding
+    /// one conversation, for which "pause the handle" is what it means.
+    /// What gh#158 DID fix is the clear — see `clear_pause_for_fresh_turn`.
+    std::atomic<bool> pause_flag_{false};
     void (*external_interrupt_cb_)(void*) = nullptr;      ///< P1-10 transport abort
     void* external_interrupt_data_ = nullptr;             ///< Forwarded to cb
     void (*external_reset_cb_)(void*) = nullptr;          ///< gh#150 transport un-abort
@@ -1588,6 +1995,10 @@ private:
     char* (*validation_provider_)(void*) = nullptr;       ///< E3: ON_COMPLETE validation JSON
     void* validation_provider_data_ = nullptr;            ///< Forwarded to provider
     std::unordered_map<std::string, std::string> context_anchors_; ///< Persistent anchors
+    /// @brief gh#158: guards `context_anchors_` as a container. Anchors are
+    /// handle-wide but written from INSIDE the loop by the `context_anchor`
+    /// directive, so two concurrent runs both anchoring raced on the map.
+    mutable std::mutex anchors_mutex_;
     ToolExecutionInterface tool_exec_;                     ///< Tool execution (v1.8.5)
     TierResolutionInterface tier_res_;                    ///< Tier resolution (v1.8.6)
     StorageInterface storage_;                             ///< Storage persistence (v1.8.8)
@@ -1600,7 +2011,17 @@ private:
     std::optional<std::filesystem::path> cached_repo_dir_; ///< Cached repo path (v1.8.6)
     bool repo_dir_checked_ = false;                        ///< Repo discovery done (v1.8.6)
     std::filesystem::path project_dir_override_;           ///< gh#31 (v2.1.6): set by configure_dir
-    std::optional<SandboxManager> sandbox_mgr_;            ///< gh#33 (v2.1.6): session-scoped
+    /// @brief gh#33 (v2.1.6) engine-scoped sandbox managers, keyed by root
+    /// (gh#160, v2.13.0 — one root per workspace once gh#166 lands).
+    std::map<std::filesystem::path, SandboxManager> sandbox_mgrs_;
+    SessionRootInterface session_root_;                    ///< gh#160: facade seam
+    ScopedSandbox::SwapDirFn swap_dir_fn_ = nullptr;       ///< gh#160: tool dir swap
+    void* swap_dir_data_ = nullptr;                        ///< gh#160: swap user data
+    /// @brief gh#158: guards the lazily-built sandbox state as ONE unit —
+    /// `sandbox_mgr_`, `cached_repo_dir_`, `repo_dir_checked_` and
+    /// `project_dir_override_`. The manager is constructed FROM the cached
+    /// path, so a half-resolved pair must never be observable.
+    mutable std::mutex sandbox_mutex_;
 
     // ── Mid-generation user-message queue (gh#40, v2.1.10) ──
     mutable std::mutex queue_mutex_;          ///< Guards user_message_queue_
@@ -1657,6 +2078,68 @@ private:
     /// accessors are total — they never have to invent an empty vector.
     std::unordered_map<std::string, ConversationState> conversations_;
 
+    /// @brief gh#165 (v2.13.0): guards `conversations_` as a CONTAINER.
+    ///
+    /// The session APIs take `api_mutex` but not the run guard, so
+    /// `entropic_session_context_clear` / `_drop` could already mutate this
+    /// map while a turn appended to it — a latent race since v2.12.0 that
+    /// keying runs per session turns into a likely one. Readers copy under
+    /// it; `set_session_messages` / `drop_session` mutate under it.
+    ///
+    /// Held for map operations ONLY, never across a decode: `run_turn` takes
+    /// a reference to one mapped value and works outside the lock, which is
+    /// safe because `unordered_map` guarantees reference stability and the
+    /// running key cannot be erased or replaced (both refuse it).
+    mutable std::mutex conversations_mutex_;
+
+    /**
+     * @brief State private to ONE in-flight run (gh#158, v2.13.0).
+     *
+     * Every field here used to be one per HANDLE, which is exactly why a
+     * handle could only run one turn: `interrupt()` clearing a shared flag at
+     * the start of run B would have cleared run A's interrupt.
+     *
+     * Held by `shared_ptr` so a poller that captured the run (the cancel
+     * reference handed to `entropic_run_batch`, the token published to the
+     * run's thread) cannot outlive its storage when the run ends.
+     *
+     * @version 2.13.0
+     */
+    struct RunState {
+        std::atomic<bool> interrupt{false};  ///< This run's cancel token
+        std::string key;                     ///< Session this run owns
+    };
+
+    /// @brief gh#158: guards `active_runs_` and `concurrent_sessions_`.
+    ///
+    /// Held for O(1) map operations only — NEVER across a decode, a prefill
+    /// or a tool call. That distinction is what keeps gh#109's property
+    /// (a long turn must not block `entropic_interrupt()`) true.
+    mutable std::mutex runs_mutex_;
+
+    /// @brief gh#158: the runs currently in flight, keyed by session.
+    std::unordered_map<std::string, std::shared_ptr<RunState>> active_runs_;
+
+    /// @brief gh#158: may DIFFERENT keys run together? Default YES since the
+    /// decision-#66 audit completed; `false` is the kill switch.
+    bool concurrent_sessions_ = true;
+
+    /**
+     * @brief Resolve the run this thread owns, if any (gh#158).
+     * @return This thread's run state, or nullptr outside a claimed run.
+     * @dg_internal
+     * @version 2.13.0
+     */
+    std::shared_ptr<RunState> this_thread_run() const;
+
+    /**
+     * @brief Whether the run on THIS thread should stop (gh#158).
+     * @return true when the handle-wide flag or this run's token is set.
+     * @dg_internal
+     * @version 2.13.0
+     */
+    bool run_interrupted() const;
+
     /// @brief Session whose turn is currently running (gh#144).
     ///
     /// Set for the duration of a turn. Read by the StateProvider bridge so a
@@ -1664,7 +2147,17 @@ private:
     /// vtable change needed, because `get_history` is only ever invoked from
     /// inside a tool call, i.e. inside a turn.
     std::string active_session_key_;
+    /// @brief gh#158: guards `active_session_key_`, for the same reason
+    /// `prompt_mutex_` below guards `system_prompt_`. Written by every
+    /// starting run, read by unkeyed accessors on threads that never bound
+    /// a session — and `api_mutex` covers neither side, since gh#109 took
+    /// it off the run path.
+    mutable std::mutex session_key_mutex_;
     std::string system_prompt_;                            ///< Cached system prompt
+    /// @brief gh#158: guards `system_prompt_`. Written on the API thread
+    /// under `api_mutex`, read on every run thread — which holds nothing
+    /// since gh#109 — so `api_mutex` never covered the pair.
+    mutable std::mutex prompt_mutex_;
     SessionLogger* session_logger_ = nullptr;              ///< Non-owning model log
 
     // ── Pre-resolved tier data (v2.0.2) ─────────────────────
@@ -1692,6 +2185,22 @@ private:
      * @version 2.0.6-rc16
      */
     void apply_identity_overrides(LoopContext& ctx);
+
+    /**
+     * @brief The setup both loop entry points share (gh#183).
+     *
+     * Applies per-identity overrides, reinjects context anchors, starts
+     * the metrics clock if it is not already running and moves the
+     * context to PLANNING. Called by `run()` and by `run_loop()`; the
+     * interrupt reset and pause clear stay OUT of it, because those are
+     * precisely what a top-level turn and a delegated child must keep
+     * doing differently.
+     *
+     * @param ctx Loop context, mutated in place.
+     * @dg_internal
+     * @version 2.13.0
+     */
+    void begin_loop_preamble(LoopContext& ctx);
 
     /**
      * @brief Resolve effective max_iterations, honouring per-identity override.

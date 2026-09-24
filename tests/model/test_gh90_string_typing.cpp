@@ -31,7 +31,7 @@ SCENARIO("gh#90: gemma <|\"|> escape on a numeric value keeps string typing",
          "[model][gh90][gemma4]")
 {
     if (!g_ctx.initialized) {
-        SKIP("gemma4_e4b GGUF not present — run `entropic download gemma4_e4b`");
+        SKIP(skip_reason_or_default("gemma4_e4b"));
     }
     GIVEN("the gemma backend warmed with a string-typed param via tools") {
         start_test_log("gh90_string_typing");

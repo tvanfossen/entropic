@@ -156,8 +156,67 @@ struct ModelConfig {
     std::string adapter = "qwen35";          ///< Chat adapter name
     int context_length = 16384;              ///< Context window size (512–131072)
     int gpu_layers = -1;                     ///< GPU offload layers (-1 = all)
-    bool keep_warm = false;                  ///< Pre-warm model at startup
+
+    /// @brief Derive `gpu_layers` from free VRAM at admission (gh#148).
+    ///
+    /// Set by `gpu_layers: auto` in YAML. The engine then computes the
+    /// split from the GGUF's size and the VRAM the device reports free,
+    /// and LOGS the number it chose. Opt-in, because a derived split is a
+    /// decision the operator should have asked for: the engine otherwise
+    /// takes `gpu_layers` verbatim, and a clamp it applied on its own
+    /// would be exactly the silent behaviour this codebase refuses.
+    ///
+    /// It derives the LAYER SPLIT and nothing else — in particular it does
+    /// not touch `use_mlock`, which the model-test harness used to flip off
+    /// behind the operator's back for oversized models. That combination is
+    /// refused loudly instead.
+    /// @version 2.13.0
+    bool gpu_layers_auto = false;
+
+    /// @brief Keep this model resident in host RAM (WARM) when it leaves the
+    /// active slot, instead of unloading it (gh#157).
+    ///
+    /// Read by the swap-out path only. It has never controlled STARTUP
+    /// loading, though it was documented as "pre-warm model at startup"
+    /// from v1.8.0 to v2.12.2 — the default tier loaded at init regardless
+    /// of this flag. Startup behaviour is `ModelsConfig::defer_load`.
+    /// @version 2.13.0
+    bool keep_warm = false;
+
     bool use_mlock = true;                   ///< Lock model in system RAM
+
+    /// @brief EXPERIMENTAL: layers whose ROUTED-EXPERT tensors go to the host
+    /// while everything else follows `gpu_layers` (gh#153, decision #42(iii)).
+    ///
+    /// `gpu_layers` is role-blind — a layer is wholly on the card or wholly
+    /// on the host — so a model that does not fit spends VRAM on rarely
+    /// touched expert weights and exiles attention AND ITS KV to system RAM.
+    /// This places the first `N` layers' expert FFN tensors
+    /// (`ffn_{gate,up,down,gate_up}_exps` and their per-expert scales) on the
+    /// CPU; attention, KV, the router, the shared/dense FFN, norms and
+    /// embeddings are untouched and still follow `gpu_layers`.
+    ///
+    /// It maps 1:1 onto llama.cpp's `--n-cpu-moe` / `-ncmoe`
+    /// (`LLAMA_ARG_N_CPU_MOE`) and is named for it deliberately: the
+    /// mechanism, the semantics ("the FIRST N layers") and the tensor
+    /// patterns are upstream's, so an operator who has read llama.cpp's docs
+    /// transfers what they know without translation.
+    ///
+    /// `0` (default) installs no overrides at all and is byte-identical to
+    /// every release before v2.13.0. There is no "all layers" sentinel:
+    /// negative values are REFUSED, not reinterpreted.
+    ///
+    /// @warning PROTOTYPE, pending measurement. The gh#148 residency math
+    ///          (`estimate_footprint_bytes`, `gpu_layers: auto`) prices a
+    ///          layer as a whole layer and knows nothing about expert
+    ///          placement, so `gpu_layers: auto` is refused in combination
+    ///          with this key and an explicit `gpu_layers` is required. Also
+    ///          refused: a negative count, `gpu_layers: 0` (nothing is on the
+    ///          card to move off), a model that declares no experts, and a
+    ///          count beyond the model's layer count — the last two at load
+    ///          time, since they need GGUF metadata.
+    /// @version 2.13.0
+    int cpu_moe_layers = 0;
 
     /* ── llama.cpp pass-through ────────────────────────── */
     int reasoning_budget = -1;               ///< Think token budget (-1 = unlimited)
@@ -399,6 +458,26 @@ struct GenerationParams {
     /// grammar (raw string) takes precedence.
     /// @version 1.9.3
     std::string grammar_key;
+
+    /// @brief The key or frontmatter stem that was NAMED for this call,
+    ///        set by ModelOrchestrator::resolve_grammar_key (gh#154).
+    ///
+    /// Carries the name even when the lookup MISSED, because a named key
+    /// that resolved to nothing is the state gh#154 exists to make
+    /// visible — `GrammarProvenance::resolved` is what says whether a
+    /// grammar text actually reached the sampler.
+    /// @version 2.13.0
+    std::string resolved_grammar_key;
+
+    /// @brief true when `resolved_grammar_key` came from the TIER's
+    ///        frontmatter `grammar:` rather than the caller (gh#154).
+    ///
+    /// All three request-side sources arrive as `grammar`, so without
+    /// this a consumer cannot tell a tier-configured grammar from one
+    /// they passed themselves.
+    /// @version 2.13.0
+    bool grammar_from_tier = false;
+
     std::vector<std::string> stop;           ///< Stop sequences
     /// @brief Per-call tool-call generation mode (gh#103). Empty = defer to
     /// tier/default ("batch"). "sequential" → the orchestrator appends the
@@ -471,6 +550,18 @@ struct TierConfig : ModelConfig {
     std::optional<std::filesystem::path> grammar;   ///< Grammar file path
     std::optional<std::string> auto_chain;           ///< Target tier name (nullopt = defer to identity)
     std::optional<bool> routable;                   ///< None = defer to identity frontmatter
+
+    /// @brief gh#162 (v2.13.0): refuse a delegation to this tier that
+    /// carries no `context` file references.
+    ///
+    /// For a tier whose tool set cannot SEARCH — a reader with read_file
+    /// and nothing else — a contextless task is structurally unanswerable,
+    /// and the observed failure is the child inventing a path. The tool
+    /// boundary refuses instead, so the lead gets an error it can fix in
+    /// the same turn rather than a confident answer about a file that does
+    /// not exist. YAML: `models.tiers.<name>.requires_context: true`.
+    /// @version 2.13.0
+    bool requires_context = false;
 
     /// @brief Optional path to LoRA adapter .gguf file.
     /// If set, orchestrator loads and activates on tier transition.
@@ -600,6 +691,24 @@ struct ModelsConfig {
     std::optional<ModelConfig> router;                  ///< Router model (separate from tiers)
     std::string default_tier = "lead";                  ///< Default tier name
 
+    /// @brief Defer the default tier's model load to first use (gh#157).
+    ///
+    /// `false` (default) keeps the pre-2.13.0 behaviour exactly: the default
+    /// tier is loaded and activated during `entropic_configure*`. `true`
+    /// leaves it COLD until the first thing that needs it asks — a
+    /// generation, or any of the evaluation / state APIs — at which point it
+    /// loads through the same residency gate and fires the same
+    /// `ENTROPIC_RESIDENCY_LOADED` event as a mid-session tier swap.
+    ///
+    /// This is a NEW key rather than a meaning for `keep_warm`
+    /// (which governs swap-out, not startup, and defaults to false): reusing
+    /// it would have made every existing consumer lazy without their
+    /// asking — a behaviour change disguised as a doc fix.
+    ///
+    /// @par YAML key: models.defer_load
+    /// @version 2.13.0
+    bool defer_load = false;
+
     /**
      * @brief Find tier name by model path.
      *
@@ -649,16 +758,91 @@ struct PermissionsConfig {
 };
 
 /**
+ * @brief What the filesystem server does with a path outside its root.
+ *
+ * The YAML spelling of `mcp.filesystem.allow_outside_root`: `false`,
+ * `true`, or `optional` (v2.13.0). An enum rather than `optional<bool>`
+ * on purpose — `if (cfg.allow_outside_root)` on an `optional<bool>`
+ * compiles and is TRUE for an explicit `false`, which is exactly the
+ * mistake a security switch cannot afford.
+ *
+ * @version 2.13.0
+ */
+enum class OutsideRootAccess {
+    refuse,    ///< `false`: every escape refused ("Path escapes project root")
+    allow,     ///< `true`: every escape served, no prompt
+    optional,  ///< `optional`: every escape asks the host's path approver
+};
+
+/**
  * @brief Filesystem MCP server configuration.
- * @version 1.8.1
+ * @version 2.13.0
  */
 struct FilesystemConfig {
     bool diagnostics_on_edit = true;   ///< Proactive diagnostics on edit/write
     bool fail_on_errors = true;        ///< Rollback edit if it introduces errors
     float diagnostics_timeout = 1.0f;  ///< Diagnostics timeout (0.1–5.0)
-    bool allow_outside_root = false;   ///< Allow file ops outside workspace root
+
+    /// @brief Paths OUTSIDE the root: refuse, allow, or ask (v2.13.0).
+    ///
+    /// Defaults to `optional`. Until v2.13.0 this was a bool and
+    /// `data/default_config.yaml` shipped it `true`, so every consumer on
+    /// the bundled defaults gave the model unconfined READ and WRITE of the
+    /// whole filesystem — through read_file, write_file, edit_file and
+    /// list_directory — without anyone having chosen that. `optional`
+    /// sends each escaping path to the host's path approver
+    /// (`entropic_set_path_approval_callback`) with the resolved path and
+    /// read/write; with no approver registered the call is REFUSED with a
+    /// typed `outside_root_approval_required` message. It never fails
+    /// open.
+    ///
+    /// Precedence, highest first: `outside_root_deny` (always refused),
+    /// `outside_root_allow` (served, no prompt), then this setting. A path
+    /// inside the root is always served. `permissions.auto_approve` does
+    /// NOT approve an escape: it skips per-TOOL prompts, it does not widen
+    /// the filesystem boundary. A named workspace's own servers are forced
+    /// to `refuse` with an empty allow list and no approver (gh#166).
+    /// @version 2.13.0
+    OutsideRootAccess allow_outside_root = OutsideRootAccess::optional;
+
+    /// @brief Pre-approved subtrees outside the root — no prompt (v2.13.0).
+    ///
+    /// Absolute paths (`~` expanded at load). Matching is by canonical
+    /// SUBTREE: `/opt/data` covers `/opt/data/x`, never `/opt/database`.
+    /// @version 2.13.0
+    std::vector<std::filesystem::path> outside_root_allow;
+
+    /// @brief Subtrees outside the root that are ALWAYS refused (v2.13.0).
+    ///
+    /// Beats `outside_root_allow` and `allow_outside_root: true`. Same
+    /// subtree matching. Governs outside-root paths only — a deny entry
+    /// inside the root has no effect there and is warned about.
+    /// @version 2.13.0
+    std::vector<std::filesystem::path> outside_root_deny;
+
     std::optional<int> max_read_bytes; ///< Max file read size (nullopt = derive from context)
     float max_read_context_pct = 0.25f; ///< Max context % for single file read
+
+    /// @brief Hard cap on directory entries visited by ONE glob or grep
+    ///        walk; <= 0 disables the cap (gh#161).
+    ///
+    /// The pre-2.13.0 caps were on MATCHES only (500 for glob, 100 for
+    /// grep), so a pattern that matched almost nothing still walked the
+    /// whole tree — 187,855 entries on the repository that reported
+    /// gh#161, where a single `glob **/*.hpp` took 87 seconds. A tool
+    /// call that blocks the agent loop for a minute and a half is a
+    /// hang from the model's point of view: it cannot see that it is
+    /// waiting, and a consumer with a request timeout drops the turn.
+    ///
+    /// 250,000 is deliberately generous — larger than any first-party
+    /// checkout, so it never fires on a normal workspace and is not a
+    /// silent result filter. It is a CEILING that converts an
+    /// open-ended stall into a bounded, ANNOUNCED result: hitting it
+    /// appends an explicit truncation notice to the tool result (and a
+    /// warning to the log), because a silently short answer would be
+    /// worse than the hang it replaces.
+    /// @version 2.13.0
+    int max_walk_entries = 250000;
 };
 
 /**
@@ -707,6 +891,22 @@ struct ExternalMCPConfig {
 };
 
 /**
+ * @brief Bash MCP server configuration (v2.13.0).
+ *
+ * `mcp.bash.timeout_seconds` is the wall-clock limit on one `bash.execute`
+ * call. On expiry the command's WHOLE process group is killed (background
+ * children included), the shell is reaped, and the model receives a typed
+ * `timeout` error naming the limit and the elapsed time. Until v2.13.0 the
+ * limit was a constructor default nothing enforced. Must be >= 1: a zero or
+ * negative value fails the config load rather than meaning "unbounded".
+ *
+ * @version 2.13.0
+ */
+struct BashConfig {
+    int timeout_seconds = 30;  ///< Per-command wall-clock limit (>= 1)
+};
+
+/**
  * @brief Reconnection policy configuration for external MCP servers.
  * @version 1.8.7
  */
@@ -740,8 +940,12 @@ struct MCPConfig {
     bool enable_diagnostics = true;  ///< Enable diagnostics server
     bool enable_web = true;          ///< Enable web server
     FilesystemConfig filesystem;     ///< Filesystem server config
+    BashConfig bash;                 ///< Bash server config (v2.13.0)
     ExternalMCPConfig external;      ///< External MCP server config (Entropic-as-server)
-    int server_timeout_seconds = 30; ///< Server timeout (5–300)
+    /// Parsed since v1.8.1 and read by NOTHING in the C++ engine — the bash
+    /// limit is `bash.timeout_seconds`, external tool calls use
+    /// `tool_call_timeout_ms`. Kept only so existing configs still load.
+    int server_timeout_seconds = 30;
     std::string working_dir;         ///< Server working directory (empty = CWD) (v2.0.4)
 
     /**
@@ -805,6 +1009,42 @@ struct CompactionConfig {
     bool save_full_history = true;             ///< Save full history before compaction
     int tool_result_ttl = 10;                  ///< Tool result TTL in turns (>= 1; v2.1.3 #6: gated on fill, no upper bound)
     float warning_threshold_percent = 0.6f;    ///< Warning trigger (0.3–0.9)
+};
+
+/**
+ * @brief How a delegation's filesystem writes are contained (gh#160).
+ * @version 2.13.0
+ */
+enum class DelegationIsolation {
+    none,     ///< Child tools share the session's working dir (default)
+    sandbox,  ///< Child tools run in a copy; output is a patch
+};
+
+/**
+ * @brief Delegation behaviour knobs (gh#160, v2.13.0).
+ *
+ * `isolation` defaults to `none`, which is what every release through
+ * v2.12.2 actually did: `DelegationManager::set_dir_swap` had no
+ * production caller, so the sandbox snapshot was taken, never entered,
+ * and diffed to nothing. Turning isolation ON by default would instead
+ * park every delegated edit in `pending/<id>.patch` for the many
+ * consumers that register no `on_complete` callback — a silent loss of
+ * work. So the fix wires the machinery and leaves the switch off.
+ *
+ * With `sandbox`:
+ *  - each delegation gets `~/.entropic/sandbox/<session>/d<...>/`,
+ *  - the session's MCP servers are pointed at it for the child's turns,
+ *  - the diff is delivered through `ent_delegation_complete_cb`,
+ *  - a delegation whose child can reach a NON-read-only external MCP
+ *    tool is refused, because an external server cannot be moved into
+ *    the sandbox and the containment claim would be false.
+ *
+ * YAML: `delegation: { isolation: sandbox }`.
+ *
+ * @version 2.13.0
+ */
+struct DelegationConfig {
+    DelegationIsolation isolation = DelegationIsolation::none; ///< Default: none
 };
 
 /**
@@ -1046,6 +1286,7 @@ struct ParsedConfig {
     PermissionsConfig permissions;    ///< Tool permissions
     MCPConfig mcp;                    ///< MCP server settings
     CompactionConfig compaction;      ///< Auto-compaction settings
+    DelegationConfig delegation;      ///< Delegation isolation (gh#160)
     LSPConfig lsp;                    ///< LSP integration
     PromptCacheConfig prompt_cache;   ///< Prompt KV cache settings
     StorageConfig storage;            ///< Storage backend settings (v1.8.8)
@@ -1068,6 +1309,31 @@ struct ParsedConfig {
      * writable path to point at.
      */
     std::optional<std::string> app_context_content;
+
+    /**
+     * @brief gh#158 (v2.13.0): may DIFFERENT session keys run together?
+     *
+     * ON by default since the audit that decision #66 records was completed:
+     * every piece of per-handle mutable state a turn touches is now per-run
+     * or locked. The flag shipped `false` in the first half of gh#158
+     * precisely because that audit was outstanding — a racy default is worse
+     * than honest serialization — so turning it on is the audit's conclusion,
+     * not a change of mind about the risk.
+     *
+     * It stays as a KILL SWITCH, not as an opt-in. Set
+     * `concurrent_sessions: false` to restore v2.12.0 semantics exactly: a
+     * second run on ANY key returns `ENTROPIC_ERROR_ALREADY_RUNNING` and the
+     * handle serializes every turn. That is the escape hatch for a consumer
+     * who hits a concurrency defect in the field and needs a one-line
+     * configuration change rather than a version pin.
+     *
+     * With it on (the default), only a second run on the SAME key is
+     * refused — that one is a genuine conflict, because the two runs share
+     * one conversation.
+     *
+     * YAML: `concurrent_sessions: false`.
+     */
+    bool concurrent_sessions = true;
 
     bool inject_model_context = true;  ///< Auto-inject model context into system prompt
     int vram_reserve_mb = 512;         ///< Reserved VRAM headroom (MB, 0–65536)

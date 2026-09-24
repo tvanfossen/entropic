@@ -121,6 +121,27 @@ typedef enum {
  * *modified_json without applying the transform — silently breaking
  * redaction/enrichment/normalization hooks.
  *
+ * For PRE_TOOL_CALL specifically (since v2.13.0, gh#168): a proceed
+ * (return 0) that writes *modified_json rewrites the ARGUMENTS of the
+ * call about to be dispatched. The payload is an OBJECT of the same
+ * shape the hook received, and only ``args`` is read:
+ * @code{.json}
+ * { "tool_name": "<must equal the call's own name, or be omitted>",
+ *   "args": { ... the complete replacement argument object ... } }
+ * @endcode
+ * ``args`` REPLACES the call's arguments wholesale — a hook that means
+ * to add one field echoes back the others it read from context_json.
+ * The engine refuses, loudly and in full, any payload that is not valid
+ * JSON, is not an object, carries no ``args`` object, or names a
+ * different tool: a hook may enrich a call, never re-route it past
+ * per-tier allowed_tools. A refusal logs at ERROR with the reason and
+ * the verbatim payload and dispatches the call with the model's own
+ * arguments; it does NOT cancel, because cancellation has exactly one
+ * channel (a non-zero return). Bytes crossing in are sanitized to valid
+ * UTF-8 before parsing. Pre-2.13.0 the engine called free() on
+ * *modified_json without applying it, so no PRE_TOOL_CALL hook could
+ * ever change a call — the defect that closed gh#168.
+ *
  * The engine frees *modified_json after consuming it. The callback
  * MUST allocate it with entropic_alloc() (not malloc, not new, not stack).
  *

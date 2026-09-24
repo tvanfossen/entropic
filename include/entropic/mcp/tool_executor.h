@@ -75,6 +75,23 @@ public:
     void set_permission_persist(const PermissionPersistInterface& persist);
 
     /**
+     * @brief Resolve a session's MCP servers (gh#166, v2.13.0).
+     *
+     * Injected by the facade: only it knows which workspace a session is
+     * bound to, and a workspace owns its OWN server instances because a
+     * server holds one working directory. Unset (the default) means every
+     * session uses the manager this executor was constructed with — the
+     * pre-2.13.0 behaviour exactly.
+     *
+     * @param fn Resolver, or nullptr to clear.
+     * @param user_data Forwarded to the resolver.
+     * @version 2.13.0
+     */
+    void set_server_resolver(
+        ServerManager* (*fn)(const std::string& session_key, void* user_data),
+        void* user_data);
+
+    /**
      * @brief Wire the per-tier allowed_tools map for dispatch-time
      *        enforcement. (gh#83, v2.5.2)
      *
@@ -326,14 +343,19 @@ private:
 
     /**
      * @brief Process a single tool call (precondition check + execute).
+     *
+     * Works on a COPY of @p incoming: gh#168 lets the PRE_TOOL_CALL hook
+     * rewrite the call's arguments, and everything after that point must
+     * observe the rewritten call.
+     *
      * @param ctx Loop context.
-     * @param call Tool call.
+     * @param incoming Tool call as the model emitted it.
      * @return Result messages.
      * @dg_internal
-     * @version 1.8.5
+     * @version 2.13.0
      */
     std::vector<Message> process_single_call(
-        LoopContext& ctx, const ToolCall& call);
+        LoopContext& ctx, const ToolCall& incoming);
 
     /**
      * @brief Check if batch should stop.
@@ -471,6 +493,49 @@ private:
         const LoopContext& ctx, const ToolCall& call) const;
 
     /**
+     * @brief Refuse a call whose exact arguments have already failed
+     *        @c max_identical_failures times.
+     *
+     * The sibling above counts consecutive calls by tool NAME, so a
+     * single call repeating with identical arguments registers as one
+     * name and never reaches that threshold; its counter also resets per
+     * delegation, since each child gets a fresh LoopContext. Duplicate
+     * detection cannot see it either, because record_tool_call keeps
+     * error results out of the cache on purpose (v1.8.5).
+     *
+     * Found by the v2.13.0 gate: a delegated child re-issued one
+     * byte-identical refused read four times and the test died on its
+     * 120s timeout with the iteration cap never binding.
+     *
+     * @param ctx Loop context (read-only).
+     * @param call Tool call about to be dispatched.
+     * @return PreconditionCheck with rejection + kind=rejected_anti_spiral
+     *         when the repeat budget is spent; default-constructed
+     *         otherwise.
+     * @req REQ-MCP-016
+     * @dg_internal
+     * @version 2.13.0
+     */
+    PreconditionCheck check_repeated_failure(
+        const LoopContext& ctx, const ToolCall& call) const;
+
+    /**
+     * @brief Run both pre-dispatch spiral blocks in order.
+     *
+     * Grouped so check_call_preconditions states one pre-dispatch step
+     * rather than two, and so a third spiral rule lands here instead of
+     * growing that function past its complexity budget.
+     *
+     * @param ctx Loop context (read-only).
+     * @param call Tool call about to be dispatched.
+     * @return The first rejection of the two, or default-constructed.
+     * @dg_internal
+     * @version 2.13.0
+     */
+    PreconditionCheck check_spiral_blocks(
+        const LoopContext& ctx, const ToolCall& call) const;
+
+    /**
      * @brief Truncate @p content in-place if it exceeds the byte cap.
      *
      * Reads loop_config_.max_tool_result_bytes; when 0, no-op. When
@@ -539,14 +604,58 @@ private:
 
     /**
      * @brief Fire PRE_TOOL_CALL hook; returns true if cancelled.
-     * @param ctx Loop context.
-     * @param call Tool call.
+     *
+     * gh#168 (v2.13.0): when the hook returns 0 AND writes
+     * ``*modified_json``, the modification is APPLIED to @p call before
+     * dispatch. Pre-2.13.0 this path did ``free(mod); return rc != 0;``
+     * — the channel ``entropic.h`` advertises in its allocation
+     * contract was discarded for every tool on every call.
+     *
+     * @param ctx Loop context (read-only).
+     * @param[in,out] call Tool call; its ARGUMENTS may be rewritten by
+     *                the hook. Untouched when the hook cancels, writes
+     *                nothing, or hands back a payload the guard refuses.
      * @return true if hook returned non-zero (cancel).
      * @dg_internal
-     * @version 2.0.6-rc19
+     * @version 2.13.0
      */
-    bool fire_pre_tool_hook(const LoopContext& ctx,
-                            const ToolCall& call);
+    bool fire_pre_tool_hook(const LoopContext& ctx, ToolCall& call);
+
+    /**
+     * @brief Apply a PRE_TOOL_CALL hook's ``*modified_json`` to a call.
+     *
+     * gh#168 (v2.13.0). The payload is the same object shape the hook
+     * received in its ``context_json``; only ``args`` is read, and only
+     * ``args`` may change:
+     *
+     * - ``args`` MUST be present and MUST be a JSON object. It replaces
+     *   both ``ToolCall::arguments_json`` and ``ToolCall::arguments``,
+     *   so everything computed downstream — schema validation, the
+     *   duplicate-detection key, permission patterns, the POST hook's
+     *   context — sees one consistent call.
+     * - ``tool_name``, if present, MUST equal the call's own name. A
+     *   hook may enrich a call; it may NOT re-route it to a different
+     *   tool, which would let a plugin bypass per-tier allowed_tools.
+     * - The payload crosses a plugin ``.so``, so it is run through
+     *   mcp::sanitize_utf8 BEFORE parsing (gh#113/#114/#132 class);
+     *   nlohmann rejects an ill-formed byte inside a string, so
+     *   sanitizing after the parse would refuse a merely-dirty payload.
+     *
+     * REFUSAL IS LOUD AND TOTAL: any violation logs at ERROR with the
+     * reason and the verbatim payload, and the call is then dispatched
+     * with the model's ORIGINAL arguments. Cancellation keeps exactly
+     * one channel (a non-zero return), so a buggy host hook can never
+     * turn itself into an agent-visible tool denial, and a partly-valid
+     * payload is never half-applied.
+     *
+     * @param[in,out] call Tool call whose arguments are rewritten.
+     * @param modified The hook's NUL-terminated payload (non-null).
+     * @return true when the rewrite was applied, false when refused.
+     * @dg_internal
+     * @version 2.13.0
+     */
+    static bool apply_pre_tool_modification(ToolCall& call,
+                                            const char* modified);
 
     /**
      * @brief Fire tool complete callback.
@@ -560,7 +669,19 @@ private:
                                      const std::string& result,
                                      long long ms);
 
-    ServerManager& server_manager_;       ///< Server manager reference
+    ServerManager& server_manager_;       ///< Default server manager
+    /// @brief gh#166: resolves the session's workspace servers (nullable).
+    ServerManager* (*server_resolver_)(const std::string&, void*) = nullptr;
+    void* server_resolver_data_ = nullptr;   ///< gh#166: resolver user data
+
+    /**
+     * @brief The servers a session's tool call must run against (gh#166).
+     * @param session_key Session the call belongs to.
+     * @return The bound workspace's manager, else the constructed one.
+     * @version 2.13.0
+     */
+    ServerManager& servers_for(const std::string& session_key) const;
+
     const LoopConfig& loop_config_;       ///< Loop configuration
     EngineCallbacks& callbacks_;          ///< Shared callbacks
     ToolExecutorHooks hooks_;             ///< Engine hooks

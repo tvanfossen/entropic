@@ -26,6 +26,10 @@ add_executable(entropic-config-tests
     config/validate_test.cpp
     config/loader_test.cpp
     config/app_context_content_test.cpp
+    # gh#163 (v2.13.0): does a top-level app_context path survive the layered
+    # merge, and can a consumer tell "not configured" from "turned off" from
+    # "rejected"? One log line served all three.
+    config/app_context_layering_test.cpp
     config/yaml_util_test.cpp
     config/env_overrides_test.cpp
     prompts/prompt_parse_test.cpp
@@ -75,6 +79,11 @@ add_executable(entropic-inference-tests
     # gh#134 (v2.10.4): every grammar source must reach the sampler. The
     # tool-derived source (common_chat_templates_apply) is discarded today.
     inference/grammar_source_invariant_test.cpp
+    # gh#154 follow-up (v2.13.0): an unregistered tier grammar refuses the
+    # RUN, not configure — `entropic_grammar_register*` needs an
+    # orchestrator, so a configure-time refusal made register-after-
+    # configure impossible. No GGUF needed: the gate runs before get_model.
+    inference/tier_grammar_gate_test.cpp
     inference/empty_content_diagnosis_test.cpp
     inference/vram_footprint_test.cpp
     # gh#136 (v2.10.4): 316 sanitized at INGRESS, not per-egress-site.
@@ -88,10 +97,23 @@ add_executable(entropic-inference-tests
     inference/warm_keep_util_test.cpp
     # gh#144 (v2.12.0): pure session-pool geometry derivation.
     inference/session_pool_util_test.cpp
+    # gh#158 (v2.13.0): a batch must not wipe another session's KV.
+    inference/batch_kv_util_test.cpp
     # gh#144 (v2.12.0): per-session KV residency.
     inference/session_residency_test.cpp
     # v2.12.0: oversized-model GPU/CPU split from actual free VRAM.
     inference/partial_offload_test.cpp
+    # gh#153 #42(iii) (v2.13.0): expert-tensor offload — the pattern set is
+    # matched against the literal gemma4 MoE tensor names with the same
+    # std::regex_search llama-model-loader.cpp uses, and the tail regex is
+    # compared against the vendored LLM_FFN_EXPS_REGEX so a pin bump that
+    # renames it fails here instead of silently offloading nothing.
+    inference/expert_offload_test.cpp
+    # gh#149 (v2.13.0): the REPORTING side of that same policy — a model
+    # test's SKIP text must name the rule that actually fired. Pure string
+    # mapping over tests/model/model_skip_reason.h, so it runs on CPU with
+    # no GGUF; the model-suite sites it feeds cannot be exercised here.
+    inference/model_skip_reason_test.cpp
     inference/generation_summary_test.cpp
     # gh#103 (v2.8.2): CPU pin for the family-aware tool-call close-marker map
     # (sequential tool_call_mode). Vendor-coupled to the common_chat PEG
@@ -126,6 +148,10 @@ add_executable(entropic-inference-tests
     inference/tokenizer_seam_test.cpp
     # v2.3.10: LlamaCppBackend ↔ Sampler seam coverage via MockSamplerFactory
     inference/sampler_seam_test.cpp
+    # v2.13.0: prompt-vs-context admission gate. Pure arithmetic + the real
+    # generate path driven headless through the v2.3.10 Tokenizer/Sampler
+    # seams, so the refusal and the "zero decode" half are both CPU-testable.
+    inference/context_fit_test.cpp
     # gh#95 (audit Pattern C): CPU-tier proof that a non-empty
     # GenerationParams.grammar actually ENGAGES a grammar constraint in the
     # REAL LlamaCppSamplerFactory chain (vocab-only GGUF, no llama_context).
@@ -191,6 +217,59 @@ target_include_directories(entropic-inference-orch-realmodel-tests PRIVATE
 target_link_libraries(entropic-inference-orch-realmodel-tests PRIVATE
     entropic::inference
     entropic-core  # gh#108 (v2.10.0): StreamThinkFilter used in orchestrator.cpp
+    entropic-types
+    nlohmann_json::nlohmann_json
+    spdlog::spdlog
+    Catch2::Catch2WithMain
+)
+
+# gh#157 (v2.13.0): deferred default-tier load. SEPARATE binary for the
+# same reason as the orchestrator real-model smoke above — its one
+# Qwen3.5-0.8B load must not share a process with another one.
+add_executable(entropic-deferred-load-tests
+    inference/deferred_load_test.cpp
+)
+target_include_directories(entropic-deferred-load-tests PRIVATE
+    ${PROJECT_SOURCE_DIR}/src/inference
+)
+target_link_libraries(entropic-deferred-load-tests PRIVATE
+    entropic::inference
+    entropic-core
+    entropic-types
+    nlohmann_json::nlohmann_json
+    spdlog::spdlog
+    Catch2::Catch2WithMain
+)
+
+# gh#164 (v2.13.0): explicit release + lazy reload. SEPARATE binary — it is
+# the one test that deliberately loads the same model twice in one process
+# (that is the feature), CPU-only so the repeated load never re-enters CUDA.
+add_executable(entropic-release-model-tests
+    inference/release_model_test.cpp
+)
+target_include_directories(entropic-release-model-tests PRIVATE
+    ${PROJECT_SOURCE_DIR}/src/inference
+)
+target_link_libraries(entropic-release-model-tests PRIVATE
+    entropic::inference
+    entropic-core
+    entropic-types
+    nlohmann_json::nlohmann_json
+    spdlog::spdlog
+    Catch2::Catch2WithMain
+)
+
+# gh#148 (v2.13.0): whole-file load counting. SEPARATE binary so the
+# process-wide counter is not perturbed by another test's model load.
+add_executable(entropic-load-count-tests
+    inference/load_count_test.cpp
+)
+target_include_directories(entropic-load-count-tests PRIVATE
+    ${PROJECT_SOURCE_DIR}/src/inference
+)
+target_link_libraries(entropic-load-count-tests PRIVATE
+    entropic::inference
+    entropic-core
     entropic-types
     nlohmann_json::nlohmann_json
     spdlog::spdlog
@@ -326,6 +405,8 @@ add_executable(entropic-mcp-tests
     mcp/permission_manager_test.cpp
     mcp/tool_executor_test.cpp
     mcp/server_manager_test.cpp
+    # gh#158 (v2.13.0): the root lock's owner / shared / exclusive rules
+    mcp/tool_root_lock_test.cpp
     mcp/tool_calling_loop_test.cpp
     # Per-server behavioral tests
     mcp/servers/filesystem_test.cpp
@@ -464,6 +545,21 @@ add_executable(entropic-api-tests
     # v2.3.10: facade coverage gap — entropic.cpp NULL/unconfigured-handle
     # branches across the full C API surface.
     api/entropic_capi_test.cpp
+    # gh#163 (v2.13.0): app_context must arrive through all three configure
+    # doors, not just the one the loader tests open.
+    api/app_context_roundtrip_test.cpp
+    # gh#166 (v2.13.0): named workspaces — one resident model, many
+    # repositories. White-box on engine_handle.h for the routing decision.
+    api/workspace_test.cpp
+    # v2.13.0: outside-root file access asks the host's path approver by
+    # default, with explicit allow/deny lists; workspaces stay confined.
+    api/path_approval_test.cpp
+    # gh#158 (v2.13.0): the built-in servers' own state — read tracker and
+    # working directory — shared by concurrent sessions on the default set.
+    api/builtin_server_sharing_test.cpp
+    # v2.13.0: mcp.bash.timeout_seconds reaches the dispatched bash server,
+    # and the timeout is enforced end to end.
+    api/bash_timeout_config_test.cpp
     # v2.0.11: External bridge tests (links facade for ENTROPIC_EXPORT symbols)
     mcp/external_bridge_test.cpp
     # gh#130 (v2.10.2): bridge final-text selection — includes the private
@@ -492,6 +588,10 @@ target_compile_definitions(entropic-api-tests PRIVATE
     # binary and exchanges bytes through a fake unix-socket server. The
     # binary lives next to the test in the build tree.
     ENTROPIC_CLI_BIN_PATH="$<TARGET_FILE:entropic>"
+    # v2.13.0: path_approval_test.cpp parses the SHIPPED
+    # data/default_config.yaml, because what it must prove is a property of
+    # the file every consumer on bundled defaults actually runs with.
+    ENTROPIC_REPO_DATA_DIR="${PROJECT_SOURCE_DIR}/data"
 )
 add_dependencies(entropic-api-tests entropic)
 
@@ -545,6 +645,9 @@ catch_discover_tests(entropic-tests)
 catch_discover_tests(entropic-config-tests)
 catch_discover_tests(entropic-inference-tests)
 catch_discover_tests(entropic-inference-orch-realmodel-tests)
+catch_discover_tests(entropic-deferred-load-tests)
+catch_discover_tests(entropic-release-model-tests)
+catch_discover_tests(entropic-load-count-tests)
 catch_discover_tests(entropic-adapter-tests)
 catch_discover_tests(entropic-speculative-compat-tests)
 catch_discover_tests(entropic-secondary-loader-tests)

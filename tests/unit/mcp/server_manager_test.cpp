@@ -274,3 +274,76 @@ TEST_CASE("shutdown clears in-process servers and is safe to call multiple times
     mgr.shutdown();
     REQUIRE(mgr.server_names().empty());
 }
+
+// ── gh#160 (v2.13.0): sandbox swap + external read-only reach ───────────
+
+/**
+ * @brief Server that records the working dir it was moved to.
+ * @version 2.13.0
+ */
+class MovableServer : public MCPServerBase {
+public:
+    /**
+     * @brief Construct under a given name.
+     * @param name Server name.
+     * @version 2.13.0
+     */
+    explicit MovableServer(const std::string& name)
+        : MCPServerBase(name) {}
+
+    /**
+     * @brief Record the requested directory.
+     * @param path New working directory.
+     * @return Always true (the move is accepted).
+     * @version 2.13.0
+     */
+    bool set_working_dir(const std::string& path) override {
+        last_dir = path;
+        return true;
+    }
+
+    std::string last_dir; ///< Last directory the manager asked for
+};
+
+TEST_CASE("gh#160: set_working_dir_all moves every in-process server",
+          "[server_manager][gh160][v2.13.0]") {
+    PermissionsConfig perms;
+    perms.allow = {"*"};
+    ServerManager mgr(perms, "/tmp");
+
+    auto a = std::make_unique<MovableServer>("alpha");
+    auto b = std::make_unique<MovableServer>("bravo");
+    auto* a_raw = a.get();
+    auto* b_raw = b.get();
+    mgr.register_server(std::move(a));
+    mgr.register_server(std::move(b));
+
+    // Pre-gh#160 nothing in src/ ever called this — the sandbox existed
+    // and the servers never entered it.
+    CHECK(mgr.set_working_dir_all("/tmp/sandbox-x") == 2);
+    CHECK(a_raw->last_dir == "/tmp/sandbox-x");
+    CHECK(b_raw->last_dir == "/tmp/sandbox-x");
+}
+
+TEST_CASE("gh#160: only an explicit readOnlyHint counts as read-only",
+          "[server_manager][gh160][v2.13.0]") {
+    const std::string tools = R"([
+        {"name": "clew.dossier", "annotations": {"readOnlyHint": true}},
+        {"name": "clew.refresh", "annotations": {"readOnlyHint": false}},
+        {"name": "clew.index"}
+    ])";
+
+    auto all = ServerManager::tools_without_readonly_hint(tools, {});
+    REQUIRE(all.size() == 2);
+    CHECK(all[0] == "clew.refresh");
+    // Absence of the annotation is not a promise — index counts as unsafe.
+    CHECK(all[1] == "clew.index");
+
+    // A tier whose allow-list only reaches the read-only tool is safe.
+    auto scoped = ServerManager::tools_without_readonly_hint(
+        tools, {"clew.dossier"});
+    CHECK(scoped.empty());
+
+    // Unparseable input yields no false accusations.
+    CHECK(ServerManager::tools_without_readonly_hint("not json", {}).empty());
+}

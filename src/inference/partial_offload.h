@@ -153,4 +153,75 @@ inline bool large_model_tests_waived(uint64_t file_bytes) {
     return v != nullptr && v[0] == '1';
 }
 
+/// @brief Sentinel for an unlimited RLIMIT_MEMLOCK (gh#148).
+constexpr uint64_t kMemlockUnlimited = UINT64_MAX;
+
+/**
+ * @brief Whether an explicit `use_mlock` would be fatal for this model.
+ *
+ * Locking pages that exceed `RLIMIT_MEMLOCK` does not merely fail to
+ * optimise: llama.cpp locks what it can, up to the limit, and the pages it
+ * DID lock cannot be reclaimed under pressure. That is what turned partial
+ * offload of a 13 GB model from slow into OOM-killed (v2.12.0). The harness
+ * discovered this and flipped `use_mlock` off behind the operator's back;
+ * the engine says so instead.
+ *
+ * **Floor-gated to LARGE models on purpose.** `use_mlock` DEFAULTS to true,
+ * so an un-floored rule would refuse the ordinary case of a CPU-resident
+ * 4 GB model on a box with the usual 8 MB limit — a configuration that
+ * works today (llama.cpp warns and continues) and that nobody asked to
+ * change. Only a model too large for the card in the first place reaches
+ * the pressure this predicate is about.
+ *
+ * @param use_mlock The configured value.
+ * @param file_bytes Size of the GGUF on disk.
+ * @param gpu_layers Configured offload; -1 (all) is exempt because the host
+ *                   side is then transient rather than resident.
+ * @param memlock_limit_bytes RLIMIT_MEMLOCK, or kMemlockUnlimited.
+ * @return true when the configuration should be REFUSED.
+ * @req REQ-INFER-019
+ * @version 2.13.0
+ */
+inline bool mlock_refused(bool use_mlock, uint64_t file_bytes,
+                          int gpu_layers, uint64_t memlock_limit_bytes) {
+    const bool exempt = !use_mlock
+        || gpu_layers < 0                               // fully offloaded
+        || file_bytes <= kLargeModelThresholdBytes      // never refuse small
+        || memlock_limit_bytes == kMemlockUnlimited;
+    return !exempt && file_bytes > memlock_limit_bytes;
+}
+
+/**
+ * @brief Whether a requested GPU offload provably cannot fit free VRAM.
+ *
+ * Fires only on the case the measurement settles WITHOUT knowing the
+ * model's layer count: free VRAM at or below the compute-buffer reserve
+ * means no positive `gpu_layers` can work, however the file divides into
+ * layers. That is the "died at buffer allocation" report.
+ *
+ * It deliberately does NOT try to judge a specific partial split. Doing so
+ * needs the layer count, which is GGUF metadata the admission gate does not
+ * read, and guessing it wrong refuses configurations that work — the worse
+ * failure, and the same reason `estimate_footprint_bytes` reports a
+ * partially offloaded tier as unpriceable rather than inventing a number.
+ *
+ * Floor-gated to LARGE models for the same reason as `mlock_refused`: a
+ * 500 MB model on a card with 1.5 GB free runs fine, and the 2 GiB reserve
+ * is sized for 13 GB models.
+ *
+ * @param file_bytes Size of the GGUF on disk.
+ * @param gpu_layers Configured offload (0 = CPU-only, exempt).
+ * @param free_vram_bytes Free VRAM; 0 means unmeasured and never refuses.
+ * @return true when the configuration should be REFUSED.
+ * @req REQ-INFER-019
+ * @version 2.13.0
+ */
+inline bool gpu_offload_refused(uint64_t file_bytes, int gpu_layers,
+                                uint64_t free_vram_bytes) {
+    const bool exempt = gpu_layers == 0
+        || free_vram_bytes == 0
+        || file_bytes <= kLargeModelThresholdBytes;
+    return !exempt && free_vram_bytes <= kPartialOffloadReserveBytes;
+}
+
 }  // namespace entropic

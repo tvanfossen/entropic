@@ -12,6 +12,7 @@ Usage:
     inv test               # unit + regression (CUDA build)
     inv test --cpu         # unit + regression (CPU, used by pre-commit)
     inv test --model       # + model tests (GPU recommended, writes results.json)
+    inv bench              # bench-labelled measurements (GPU, full preset)
     inv test --coverage    # coverage preset + gcovr report
     inv clean              # remove build dirs
 """
@@ -87,6 +88,17 @@ CTEST_EXCLUDE = (
 
 MAX_MODEL_RETRIES = 2
 MODEL_RESULTS_FILE = "build/test-reports/model/results.json"
+#: gh#153: the bench run's own record. Never MODEL_RESULTS_FILE — that file is
+#: the model gate's release evidence and a measurement run must not replace it.
+BENCH_RESULTS_FILE = "build/test-reports/bench/results.json"
+
+#: The two ctest-labelled GPU suites the 1:1 runner drives. `retries` differs on
+#: purpose: a model test is a pass/fail gate where a flaky GPU run earns a second
+#: attempt, but a benchmark is a MEASUREMENT, and re-running a failed comparison
+#: until it passes keeps whichever run agreed with the hypothesis — the harness
+#: measuring itself, which is what gh#153 exists to rule out.
+MODEL_SUITE = {"label": "model", "results_file": MODEL_RESULTS_FILE, "retries": MAX_MODEL_RETRIES}
+BENCH_SUITE = {"label": "bench", "results_file": BENCH_RESULTS_FILE, "retries": 0}
 
 # Per-library coverage paths (used by the check-coverage gate).
 COVERAGE_BUILD_DIR = Path("build/coverage")
@@ -141,6 +153,37 @@ def _get_version():
         return "unknown"
 
 
+## @brief Read the version string a build actually baked in.
+## @utility
+## @param build_dir CMake build directory to inspect.
+## @return Version string from the generated header, or "unknown".
+## @version 2.13.0
+def _get_built_version(build_dir):
+    """Read CONFIG_ENTROPIC_VERSION_STRING out of a build's generated header.
+
+    v2.13.0: results.json took its version from ``_get_version()`` — the
+    VERSION *file* — so the audit record reported what the tree claimed
+    rather than what the tested binary carried. Those can disagree: a build
+    directory that never reconfigured keeps the previous string. That is
+    fixed for VERSION bumps by CMAKE_CONFIGURE_DEPENDS, but the record
+    still could not *detect* the condition, and a reused build dir remains
+    reachable by other routes (a hand-edited cache, a future no-reconfigure
+    shortcut).
+
+    Comparing the file against the generated header is the non-circular
+    check: neither side is derived from the other at read time. Reading the
+    header rather than invoking the binary keeps this usable before any test
+    has run, which is where a fail-fast belongs.
+    """
+    header = Path(build_dir) / "include" / "entropic" / "entropic_config.h"
+    try:
+        text = header.read_text()
+    except OSError:
+        text = ""
+    match = re.search(r'#define\s+CONFIG_ENTROPIC_VERSION_STRING\s+"([^"]*)"', text)
+    return match.group(1) if match else "unknown"
+
+
 ## @brief Get current git HEAD sha.
 ## @utility
 ## @return Hex SHA string or "unknown".
@@ -189,8 +232,8 @@ MODEL_TEST_SETTLE_S = 30
 ## @brief Enumerate the model tests exactly as ctest has them registered.
 ## @utility
 ## @return List of {name, command, timeout} dicts; empty on any failure.
-## @version 2.12.0
-def _model_ctest_tests(build_dir, name_filter=""):
+## @version 2.13.0
+def _model_ctest_tests(build_dir, name_filter="", label="model"):
     """Enumerate model tests from ctest — argv, timeout and all.
 
     v2.11.0: ctest's registration is the SINGLE SOURCE OF TRUTH for what a
@@ -212,8 +255,12 @@ def _model_ctest_tests(build_dir, name_filter=""):
     box means loading every GGUF in the registry to debug one test, and
     reliably reaching the OOM killer. An empty filter keeps the full-suite
     behaviour the release gate depends on.
+
+    gh#153 (v2.13.0): `label` selects the suite. "bench" entries are
+    registered the same way (argv, TIMEOUT, one process each), so the bench
+    runner reads them through this one function rather than a second copy.
     """
-    cmd = ["ctest", "--test-dir", build_dir, "--show-only=json-v1", "-L", "model"]
+    cmd = ["ctest", "--test-dir", build_dir, "--show-only=json-v1", "-L", label]
     if name_filter:
         cmd += ["-R", name_filter]
     try:
@@ -241,11 +288,59 @@ def _model_ctest_tests(build_dir, name_filter=""):
     return tests
 
 
+## @brief De-wrap the indented message Catch2 prints under a "SKIPPED:" line.
+## @utility
+## @return Single-line message, or "" when the skip carried no message.
+## @version 2.13.0
+def _catch2_skip_message(tail):
+    """Join the word-wrapped message body following a Catch2 SKIPPED: line.
+
+    Catch2 prints the skip message indented by two spaces and wrapped to the
+    console width, so the text has to be re-joined to land in results.json as
+    one readable string.
+    """
+    words = []
+    for line in tail:
+        if line.startswith("explicitly with message:"):
+            continue
+        if not line.startswith("  "):
+            if words:
+                break
+            continue
+        words.extend(line.split())
+    return " ".join(words)
+
+
+## @brief Extract the reason a model test skipped from its captured output.
+## @utility
+## @return Reason text, or "" when none was found.
+## @version 2.13.0
+def _skip_reason_from_log(log_path):
+    """First Catch2 skip message in a model test's captured stdout.
+
+    gh#149: results.json recorded only ``status: "skipped"``, so the release
+    audit record said a test was skipped and never why. The reason existed —
+    Catch2 printed it, and the runner already captures stdout per attempt —
+    it just never reached the artifact. Model binaries have 1-2 scenarios and
+    a whole binary skips for one reason, so the first message is the reason.
+    """
+    try:
+        lines = Path(log_path).read_text(errors="replace").splitlines()
+    except OSError:
+        return ""
+    for idx, line in enumerate(lines):
+        if line.endswith("SKIPPED:"):
+            return _catch2_skip_message(lines[idx + 1 :])
+    return ""
+
+
 ## @brief Run one model test's ctest argv with retries + a per-attempt timeout.
 ## @utility
-## @return Tuple of (status, retries, duration_ms). status: pass|skipped|fail.
-## @version 2.12.0-rc1
-def _run_one_model_test(command, timeout_s=DEFAULT_MODEL_TEST_TIMEOUT_S, name="model-test"):
+## @return Tuple of (status, retries, duration_ms, skip_reason).
+## @version 2.13.0
+def _run_one_model_test(
+    command, timeout_s=DEFAULT_MODEL_TEST_TIMEOUT_S, name="model-test", suite=MODEL_SUITE
+):
     """Run one model test's argv (retries + a per-attempt timeout).
 
     v2.11.0: takes the full argv ctest registered rather than a bare executable
@@ -264,6 +359,10 @@ def _run_one_model_test(command, timeout_s=DEFAULT_MODEL_TEST_TIMEOUT_S, name="m
     gh#111 fallout: timeout_s must come from the test's own CMake TIMEOUT
     property (see _model_ctest_tests), not a blanket constant — otherwise
     legitimately slow tests are killed and misreported as failed.
+
+    gh#153 (v2.13.0): `suite` supplies the retry budget and places the logs
+    beside that suite's results file, so a bench run's captured output (its
+    report) lands under build/test-reports/bench/logs.
     """
     t0 = time.monotonic()
     retries = 0
@@ -272,9 +371,9 @@ def _run_one_model_test(command, timeout_s=DEFAULT_MODEL_TEST_TIMEOUT_S, name="m
     # message, backtrace and log line that said why — leaving a hand-rolled
     # re-run as the only way to see a failure. The GPU time is already spent;
     # throwing away its diagnosis is the expensive part.
-    log_dir = Path("build/test-reports/model/logs")
+    log_dir = Path(suite["results_file"]).parent / "logs"
     log_dir.mkdir(parents=True, exist_ok=True)
-    for attempt in range(MAX_MODEL_RETRIES + 1):
+    for attempt in range(suite["retries"] + 1):
         # gh#144 (v2.12.0): one log PER ATTEMPT. A single {name}.log was
         # reopened in "w" on each retry, so a flaky test overwrote the failing
         # attempt with the passing one — destroying precisely the output worth
@@ -293,24 +392,96 @@ def _run_one_model_test(command, timeout_s=DEFAULT_MODEL_TEST_TIMEOUT_S, name="m
         except subprocess.TimeoutExpired:
             rc = 124
         if rc == 0:
-            return "pass", attempt, int((time.monotonic() - t0) * 1000)
+            return "pass", attempt, int((time.monotonic() - t0) * 1000), ""
         if rc in (2, 4):
-            return "skipped", attempt, int((time.monotonic() - t0) * 1000)
+            # gh#149: carry the reason out of the captured output so the audit
+            # record states it. rc==2 has no Catch2 message to carry — the
+            # binary collected nothing — so name that condition explicitly
+            # rather than leaving the reader to guess at a bare SKIP.
+            reason = (
+                _skip_reason_from_log(log_path)
+                if rc == 4
+                else (
+                    "binary collected no tests — every case is [.]-hidden "
+                    "(opt-in suite), so nothing ran"
+                )
+            )
+            return "skipped", attempt, int((time.monotonic() - t0) * 1000), reason
         retries = attempt + 1
-    return "fail", retries, int((time.monotonic() - t0) * 1000)
+    return "fail", retries, int((time.monotonic() - t0) * 1000), ""
+
+
+## @brief Print one roster line for a finished model test.
+## @utility
+## @version 2.13.0
+def _print_model_test_line(name, status, retries, skip_reason, max_retries=MAX_MODEL_RETRIES):
+    """One roster line. gh#149: a SKIP states its reason here, not just in
+    the artifact — the roster is what a reader looks at first.
+
+    gh#153: `max_retries` is the suite's budget, so a bench FAIL (never
+    retried) does not claim retries that did not happen."""
+    if status == "pass" and retries > 0:
+        print(f"  FLAKY  {name} (retry {retries})")
+    elif status == "pass":
+        print(f"  PASS   {name}")
+    elif status == "skipped":
+        print(f"  SKIP   {name}" + (f" — {skip_reason}" if skip_reason else ""))
+    else:
+        print(f"  FAIL   {name} (after {max_retries} retries)")
+
+
+## @brief Build one results.json entry for a finished model test.
+## @utility
+## @return Dict for the results.json `tests` array.
+## @version 2.13.0
+def _model_result_entry(name, status, retries, duration_ms, skip_reason):
+    """One results.json row.
+
+    gh#149: `skip_reason` is present only when a reason was actually
+    recovered. An empty field would assert "no reason", where the truth is
+    "not recovered" — stating something nothing verified is the whole defect
+    this issue is about.
+    """
+    entry = {
+        "name": name,
+        "status": status,
+        "retries": retries,
+        "duration_ms": duration_ms,
+    }
+    if skip_reason:
+        entry["skip_reason"] = skip_reason
+    return entry
 
 
 ## @brief Run model tests 1:1; a Catch2 SKIP (rc=4) is reported, not failed.
 ## @utility
 ## @return Tuple of (results list, failed count). Skips do NOT count as failures.
-## @version 2.12.0-rc1
-def _run_model_tests(build_dir, name_filter="", resume=False):
+## @version 2.13.0
+def _run_model_tests(build_dir, name_filter="", resume=False, suite=MODEL_SUITE):
     """Run model tests 1:1. Returns (results, failed_count). gh#89: a Catch2
     SKIP (GGUF/VRAM-gated or a disabled gate) reports SKIP, not PASS/FAIL.
 
     gh#111 fallout: per-test timeout comes from each test's own CMake
     TIMEOUT property (_model_ctest_tests), not a blanket constant.
+
+    gh#153 (v2.13.0): `suite` (MODEL_SUITE / BENCH_SUITE) picks the ctest
+    label, the results file --resume reads and writes, and the retry budget.
+    Everything else — settle, logs, incremental persistence — is shared.
     """
+    # v2.13.0: refuse before spending GPU hours on a build that is not the
+    # tree it will be recorded as. The results file is the release's audit
+    # evidence, so a run whose provenance is already wrong is worse than no
+    # run — it produces a clean-looking roster attributable to the wrong
+    # code. "unknown" is not a mismatch: a header that cannot be read means
+    # this check could not run, which is reported by `built_version` rather
+    # than blocking the suite.
+    declared, built = _get_version(), _get_built_version(build_dir)
+    if built != "unknown" and built != declared:
+        raise SystemExit(
+            f"refusing to run: VERSION says {declared} but {build_dir} was built as "
+            f"{built}. The audit record would name a tree that was never tested. "
+            f"Re-run `inv build` (a bump reconfigures since CMAKE_CONFIGURE_DEPENDS)."
+        )
     # v2.11.0: enumerate from CTEST, not from a directory glob. The glob was a
     # SECOND, DIVERGING GATE and it was wrong three ways at once:
     #   - it picked up the [.]-hidden bench binaries, which collect no tests on
@@ -325,26 +496,24 @@ def _run_model_tests(build_dir, name_filter="", resume=False):
     # ctest's registration is the single source of truth for what a model test
     # IS, including its argv and its per-case isolation. results.json is the
     # release audit record; it has to describe the same run the gate describes.
-    tests = _model_ctest_tests(build_dir, name_filter)
+    label = suite["label"]
+    tests = _model_ctest_tests(build_dir, name_filter, label)
 
     if not tests:
         if name_filter:
-            print(f"ERROR: No model tests match -R '{name_filter}'")
+            print(f"ERROR: No {label} tests match -R '{name_filter}'")
         else:
-            print("ERROR: No model tests registered in ctest")
+            print(f"ERROR: No {label} tests registered in ctest")
         return [], 1
 
     # A model gate that cannot finish inside one invocation is not a gate.
     # This host kills a long run part-way, so --resume carries completed
     # PASSes forward and runs only what is left; several bounded invocations
     # then produce the same roster one long one would have.
-    carried, pending = _partition_resume(tests, resume)
+    carried, pending = _partition_resume(tests, resume, suite["results_file"])
 
     results = list(carried)
     t_suite = time.monotonic()
-    passed = len(carried)
-    failed = skipped = 0
-    flaky = sum(1 for t in carried if t["retries"] > 0)
 
     for idx, test in enumerate(pending):
         name = test["name"]
@@ -366,39 +535,27 @@ def _run_model_tests(build_dir, name_filter="", resume=False):
         # argv comes from ctest, so a per-case entry carries its own case
         # filter and runs in its own process — the isolation that
         # add_model_test_per_case exists to provide.
-        status, retries, duration_ms = _run_one_model_test(
-            test["command"], test["timeout"], test["name"]
+        status, retries, duration_ms, skip_reason = _run_one_model_test(
+            test["command"], test["timeout"], test["name"], suite
         )
-        if status == "pass":
-            passed += 1
-            if retries > 0:
-                flaky += 1
-                print(f"  FLAKY  {name} (retry {retries})")
-            else:
-                print(f"  PASS   {name}")
-        elif status == "skipped":
-            skipped += 1
-            print(f"  SKIP   {name}")
-        else:
-            failed += 1
-            print(f"  FAIL   {name} (after {MAX_MODEL_RETRIES} retries)")
-
-        results.append(
-            {
-                "name": name,
-                "status": status,
-                "retries": retries,
-                "duration_ms": duration_ms,
-            }
-        )
+        _print_model_test_line(name, status, retries, skip_reason, suite["retries"])
+        results.append(_model_result_entry(name, status, retries, duration_ms, skip_reason))
         # gh#144 (v2.12.0): persist after EVERY test, not only at the end.
         # results.json used to be written once the whole suite finished, so a
         # run killed part-way through lost every completed result — 19 passes
         # were nearly lost that way, and the audit artifact for an interrupted
         # gate was simply absent. Writing incrementally costs one small file
         # write per model test, against minutes of GPU time each.
-        _write_results_json(results, int((time.monotonic() - t_suite) * 1000))
+        _write_results_json(
+            results, int((time.monotonic() - t_suite) * 1000), suite["results_file"], build_dir
+        )
 
+    # Counted from `results` (which includes any carried-forward passes)
+    # rather than incremented in the loop — same numbers, one source.
+    passed = sum(1 for t in results if t["status"] == "pass")
+    skipped = sum(1 for t in results if t["status"] == "skipped")
+    failed = sum(1 for t in results if t["status"] == "fail")
+    flaky = sum(1 for t in results if t["retries"] > 0)
     print(f"\n{passed}/{len(tests)} passed, " f"{skipped} skipped, {flaky} flaky, {failed} failed")
     return results, failed
 
@@ -419,8 +576,8 @@ def _read_json_file(path):
 
 ## @brief Prior model results eligible for reuse by a resumed run.
 ## @utility
-## @version 2.12.0
-def _prior_model_results():
+## @version 2.13.0
+def _prior_model_results(results_file=MODEL_RESULTS_FILE):
     """Name -> prior result, but ONLY for the exact code under test.
 
     A resumed suite that stitched results across commits would be a
@@ -431,8 +588,11 @@ def _prior_model_results():
     Only PASSes carry. A prior SKIP or FAIL is re-run: a skip is a
     failure until something proves otherwise, and carrying one forward
     would let an unrun test look settled.
+
+    gh#153: `results_file` is the suite's own record, so resuming a bench
+    run never reads — or trusts — the model gate's file, and vice versa.
     """
-    data = _read_json_file(MODEL_RESULTS_FILE)
+    data = _read_json_file(results_file)
     stale = data.get("version") != _get_version() or data.get("git_sha") != _get_git_sha()
     if data and stale:
         print("  resume: prior results are from a different build - discarding")
@@ -443,10 +603,10 @@ def _prior_model_results():
 
 ## @brief Split a model roster into carried-forward passes and work remaining.
 ## @utility
-## @version 2.12.0
-def _partition_resume(tests, resume):
+## @version 2.13.0
+def _partition_resume(tests, resume, results_file=MODEL_RESULTS_FILE):
     """Return (carried prior results, tests still to run)."""
-    prior = _prior_model_results() if resume else {}
+    prior = _prior_model_results(results_file) if resume else {}
     carried = [prior[t["name"]] for t in tests if t["name"] in prior]
     pending = [t for t in tests if t["name"] not in prior]
     if carried:
@@ -480,12 +640,12 @@ def _get_lead_model_key():
         return "unknown"
 
 
-## @brief Write build/test-reports/model/results.json.
+## @brief Write a suite's results.json (model by default; bench for gh#153).
 ## @utility
-## @version 4
-def _write_results_json(test_results, duration_ms):
-    """Write build/test-reports/model/results.json."""
-    os.makedirs(os.path.dirname(MODEL_RESULTS_FILE), exist_ok=True)
+## @version 5
+def _write_results_json(test_results, duration_ms, results_file=MODEL_RESULTS_FILE, build_dir=""):
+    """Write a suite's results.json — build/test-reports/model/ by default."""
+    os.makedirs(os.path.dirname(results_file), exist_ok=True)
 
     total = len(test_results)
     passed = sum(1 for t in test_results if t["status"] == "pass")
@@ -497,8 +657,15 @@ def _write_results_json(test_results, duration_ms):
     flaky_count = sum(1 for t in test_results if t["retries"] > 0)
 
     data = {
-        "schema_version": 1,
+        "schema_version": 2,
         "version": _get_version(),
+        # v2.13.0: what the TESTED BUILD carries, which "version" (the
+        # VERSION file) cannot tell you. Equal on a healthy run; a
+        # disagreement means the artifact describes a build other than the
+        # tree it names, and _run_model_tests refuses before the roster
+        # starts. Recorded either way so the reader never has to trust that
+        # the refusal ran.
+        "built_version": _get_built_version(build_dir) if build_dir else "unknown",
         "git_sha": _get_git_sha(),
         "timestamp": datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ"),
         "model": _get_lead_model_key(),
@@ -514,16 +681,16 @@ def _write_results_json(test_results, duration_ms):
         },
     }
 
-    with open(MODEL_RESULTS_FILE, "w") as f:
+    with open(results_file, "w") as f:
         json.dump(data, f, indent=2)
         f.write("\n")
 
-    print(f"Written: {MODEL_RESULTS_FILE}")
+    print(f"Written: {results_file}")
 
 
 ## @brief Run the CPU phase (unless skipped) then the model gate.
 ## @utility
-## @version 2.12.0
+## @version 2.13.0
 def _run_model_phase(c, build_dir, ctest_args, name_filter, model_only, resume):
     """CPU tests then model tests 1:1; writes results.json, exits non-zero on failure."""
     # The CPU phase runs --parallel JOBS, and that fan-out is the peak-memory
@@ -545,7 +712,12 @@ def _run_model_phase(c, build_dir, ctest_args, name_filter, model_only, resume):
     )
 
     if results:
-        _write_results_json(results, duration_ms)
+        # build_dir is NOT optional here: this final write overwrites the
+        # incremental one, so omitting it silently replaced a recorded
+        # built_version with "unknown" — the provenance field erasing
+        # itself at the last step, which is how the v2.13.0 gate reported
+        # it. Found by reading the artifact this check exists to produce.
+        _write_results_json(results, duration_ms, MODEL_RESULTS_FILE, build_dir)
 
     if failed > 0:
         raise SystemExit(1)
@@ -612,6 +784,37 @@ def test(  # noqa: CFQ002
 
     if coverage:
         c.run(".venv/bin/python scripts/check_coverage.py")
+
+
+## @brief Run the bench-labelled measurement suite, one process per entry.
+## @utility
+## @version 2.13.0
+@task(
+    help={
+        "preset": "CMake preset (default: full — bench binaries need model tests ON)",
+        "jobs": f"Parallel build jobs (default: {JOBS})",
+        "filter": "CTest -R regex over bench entries, e.g. gh108-config-benchmark-mtp",
+        "no-build": "Skip build step (assumes already built)",
+        "resume": "Carry forward prior passes from build/test-reports/bench/results.json",
+    }
+)
+def bench(c, preset="full", jobs=JOBS, filter="", no_build=False, resume=False):
+    """Run benchmarks 1:1; writes build/test-reports/bench/results.json.
+
+    gh#153: benchmarks carry the ctest "bench" label (tests/model/CMakeLists.txt)
+    and every other run excludes it, so nothing here could run one — the only
+    route was a hand-built ctest line. This drives them through the model
+    gate's runner: argv and TIMEOUT from ctest's own registration, one process
+    per entry, a settle between entries, per-entry logs, incremental results,
+    --resume for a run the host cuts short. Two things differ, both on purpose
+    (BENCH_SUITE): its own results file, and a failed entry is never retried.
+    """
+    if not no_build:
+        build(c, preset=preset, jobs=jobs)
+    print("\n-- Benchmarks (GPU) --")
+    _, failed = _run_model_tests(f"build/{preset}", filter, resume=resume, suite=BENCH_SUITE)
+    if failed > 0:
+        raise SystemExit(1)
 
 
 ## @brief Discover example directories under examples/.

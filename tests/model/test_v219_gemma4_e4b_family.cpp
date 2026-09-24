@@ -36,7 +36,7 @@ SCENARIO("Gemma 4 E4B GGUF loads and generates first token",
          "[model][v219][gemma4][e4b][smoke]")
 {
     if (!g_ctx.initialized) {
-        SKIP("gemma4_e4b GGUF not present — run `entropic download gemma4_e4b`");
+        SKIP(skip_reason_or_default("gemma4_e4b"));
     }
     GIVEN("an engine with gemma4_e4b loaded via Gemma4Adapter") {
         start_test_log("v219_gemma4_e4b_smoke");

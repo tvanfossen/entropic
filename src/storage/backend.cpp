@@ -837,6 +837,36 @@ bool SqliteStorageBackend::get_delegation_by_id(
 }
 
 /**
+ * @brief Most recent completed delegation to a tier (gh#162).
+ * @param target_tier Tier to search for.
+ * @param[out] delegation_id Resolved id on success.
+ * @return true when such a delegation exists.
+ * @req REQ-STOR-005
+ * @req REQ-DELEG-006
+ * @version 2.13.0
+ */
+bool SqliteStorageBackend::latest_delegation_for_target(
+        const std::string& target_tier, std::string& delegation_id) {
+    bool found = false;
+    db_.fetch_all(
+        "SELECT id FROM delegations "
+        "WHERE target_tier = ? AND status = 'completed' "
+        "ORDER BY completed_at DESC LIMIT 1",
+        [&](sqlite3_stmt* s) {
+            sqlite3_bind_text(s, 1, target_tier.c_str(), -1,
+                              SQLITE_TRANSIENT);
+        },
+        [&](sqlite3_stmt* s) {
+            const auto* text = sqlite3_column_text(s, 0);
+            if (text != nullptr) {
+                delegation_id = reinterpret_cast<const char*>(text);
+                found = true;
+            }
+        });
+    return found;
+}
+
+/**
  * @brief Substring-match delegations across all conversations.
  *
  * Bound to top-N most recently completed records. Uses sqlite's

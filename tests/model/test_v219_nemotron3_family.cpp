@@ -34,8 +34,7 @@ SCENARIO("Nemotron 3 family GGUF loads and generates first token",
          "[model][v219][nemotron3][smoke]")
 {
     if (!g_ctx.initialized) {
-        SKIP("nemotron3_nano_4b GGUF not present — "
-             "run `entropic download nemotron3_nano_4b`");
+        SKIP(skip_reason_or_default("nemotron3_nano_4b"));
     }
     GIVEN("an engine with nemotron3_nano_4b loaded via Nemotron3Adapter") {
         start_test_log("v219_nemotron3_smoke");

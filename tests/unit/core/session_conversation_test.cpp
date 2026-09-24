@@ -19,6 +19,7 @@
 #include <catch2/catch_test_macros.hpp>
 
 #include <string>
+#include <vector>
 
 using namespace entropic;
 using namespace entropic::test;
@@ -190,6 +191,138 @@ SCENARIO("gh#144: a tier switch seeds the new session's own system prompt",
                 auto first = engine.messages_for("");
                 REQUIRE_FALSE(first.empty());
                 CHECK(first.front().content == "PROMPT-ONE");
+            }
+        }
+    }
+}
+
+// ── gh#165: restoring a session's conversation (v2.13.0) ──────────────
+
+SCENARIO("gh#165: a conversation can be replaced wholesale",
+         "[engine][gh165][session][2.13.0]") {
+    GIVEN("a session with history") {
+        MockInference mock;
+        auto iface = make_mock_interface(mock);
+        LoopConfig lc;
+        CompactionConfig cc;
+        AgentEngine engine(iface, lc, cc);
+
+        engine.set_active_session("repo-a");
+        engine.run_turn("alpha one");
+        REQUIRE(engine.message_count_for("repo-a") > 0);
+
+        WHEN("a stored conversation is restored over it") {
+            std::vector<Message> restored;
+            Message sys;
+            sys.role = "system";
+            sys.content = "restored prompt";
+            Message user;
+            user.role = "user";
+            user.content = "restored turn";
+            user.metadata["tool_name"] = "filesystem.read";
+            restored = {sys, user};
+
+            REQUIRE(engine.set_session_messages("repo-a", restored));
+
+            THEN("the session holds exactly what was restored") {
+                auto msgs = engine.messages_for("repo-a");
+                REQUIRE(msgs.size() == 2);
+                CHECK(msgs[0].content == "restored prompt");
+                CHECK(msgs[1].content == "restored turn");
+            }
+            AND_THEN("metadata came with it") {
+                auto msgs = engine.messages_for("repo-a");
+                REQUIRE(msgs.size() == 2);
+                CHECK(msgs[1].metadata.at("tool_name") == "filesystem.read");
+            }
+        }
+    }
+}
+
+SCENARIO("gh#165: the RUNNING session refuses replacement, others do not",
+         "[engine][gh165][session][2.13.0]") {
+    GIVEN("a run in flight on session A, with concurrency enabled") {
+        MockInference mock;
+        auto iface = make_mock_interface(mock);
+        LoopConfig lc;
+        CompactionConfig cc;
+        AgentEngine engine(iface, lc, cc);
+        engine.set_concurrent_sessions(true);
+
+        // The session APIs take api_mutex but NOT the run guard, so
+        // clear/drop could already mutate conversations_ mid-turn — a latent
+        // race since v2.12.0 that a write counterpart would turn into a
+        // likely one.
+        REQUIRE(engine.try_begin_turn("repo-a"));
+
+        WHEN("A's conversation is replaced") {
+            std::vector<Message> m(1);
+            m[0].role = "user";
+            m[0].content = "replacement";
+
+            THEN("it is refused — a turn is appending to that vector") {
+                CHECK_FALSE(engine.set_session_messages("repo-a", m));
+            }
+            AND_THEN("a DIFFERENT session is still replaceable mid-run") {
+                // Busy HANDLE is not the rule; busy CONVERSATION is.
+                CHECK(engine.set_session_messages("repo-b", m));
+                CHECK(engine.message_count_for("repo-b") == 1);
+            }
+        }
+
+        engine.end_turn("repo-a");
+
+        WHEN("the run finishes") {
+            std::vector<Message> m(1);
+            m[0].role = "user";
+            m[0].content = "replacement";
+
+            THEN("A is replaceable again") {
+                CHECK(engine.set_session_messages("repo-a", m));
+            }
+        }
+    }
+}
+
+// ── gh#158 (v2.13.0): the unkeyed accessors must be TOTAL ──────────────
+
+SCENARIO("gh#158: the unkeyed accessors survive a key that is not in the map",
+         "[engine][gh158][session][2.13.0]") {
+    GIVEN("an engine whose active session has been dropped") {
+        // `get_messages()` and `message_count()` resolved their key and then
+        // indexed `conversations_` with `.at()`. `.at()` on an absent key
+        // throws `std::out_of_range("_Map_base::at")`, and both accessors are
+        // reached from the C ABI — `entropic_context_usage`,
+        // `entropic_get_messages` — where an escaping exception is a
+        // std::terminate, i.e. the HOST process dies.
+        //
+        // Two ordinary sequences reach an absent key. This is the one a
+        // single thread can produce: drop the session that is still the
+        // active one. The concurrent one (a run publishing its key before
+        // the entry exists) is in tests/concurrency/test_thread_safety.cpp,
+        // and it is what aborted the v2.13.0 gh#158 GPU gate:
+        //
+        //     terminate called after throwing an instance of
+        //       'std::out_of_range'  what():  _Map_base::at
+        //     ... SIGABRT - Abort (abnormal termination) signal
+        MockInference mock;
+        auto iface = make_mock_interface(mock);
+        LoopConfig lc;
+        CompactionConfig cc;
+        AgentEngine engine(iface, lc, cc);
+
+        engine.set_active_session("repo-a");
+        engine.run_turn("alpha one");
+        REQUIRE(engine.message_count() > 0);
+        REQUIRE(engine.drop_session("repo-a"));
+
+        WHEN("a host reads context without naming a session") {
+            THEN("the count answers for the default session, it does not "
+                 "throw") {
+                CHECK(engine.message_count() == 0);
+            }
+            AND_THEN("the message accessor answers too") {
+                CHECK(engine.get_messages().empty());
             }
         }
     }

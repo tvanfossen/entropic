@@ -3,20 +3,23 @@
  * @file filesystem.h
  * @brief Filesystem MCP server — read/write/edit/glob/grep/list_directory.
  *
- * Enforces read-before-write via FileAccessTracker, size gate on reads,
- * ContextAnchor on read_file, path security (no traversal outside root).
+ * Enforces read-before-write via FileAccessTracker — per SESSION since
+ * gh#158 — size gate on reads, ContextAnchor on read_file, path security
+ * (no traversal outside root).
  *
- * @version 1.8.5
+ * @version 2.13.0
  */
 
 #pragma once
 
 #include <entropic/mcp/server_base.h>
 #include <entropic/mcp/servers/ignore_matcher.h>
+#include <entropic/mcp/session_scoped.h>
 #include <entropic/types/config.h>
 
 #include <filesystem>
 #include <memory>
+#include <mutex>
 #include <string>
 #include <unordered_map>
 #include <vector>
@@ -25,30 +28,110 @@ namespace entropic {
 
 /**
  * @brief Tracks file read state for read-before-write enforcement.
- * @version 1.8.5
+ *
+ * gh#158 (v2.13.0), two passes. First LOCKED: one FilesystemServer serves
+ * every unbound session on a handle, and `concurrent_sessions` defaults
+ * true, so read_file and write_file / edit_file reached one map from
+ * several run threads at once. Then re-scoped PER SESSION: a shared map
+ * let session B overwrite a file only session A had read. Reads are now
+ * recorded and consulted under the calling session's key, and released
+ * with that session's conversation (`release_session`).
+ *
+ * @version 2.13.0
  */
 class FileAccessTracker {
 public:
     /**
-     * @brief Record that a file was read.
+     * @brief Record that `session` read a file.
+     * @param session Session key the read belongs to ("" = default).
      * @param path Canonical file path.
      * @param hash Content hash at time of read.
-     * @version 1.8.5
+     * @threadsafety Safe from any thread (gh#158).
+     * @version 2.13.0
      */
-    void record_read(const std::string& path, size_t hash);
-
+    void record_read(const std::string& session, const std::string& path,
+                     size_t hash);
 
     /**
-     * @brief Check if a file was ever read.
+     * @brief Check whether `session` has read a file.
+     * @param session Session key asking.
      * @param path Canonical file path.
-     * @return true if previously read.
-     * @version 1.8.5
+     * @return true only when THIS session recorded a read of `path`.
+     * @threadsafety Safe from any thread (gh#158).
+     * @version 2.13.0
      */
-    bool was_read(const std::string& path) const;
+    bool was_read(const std::string& session, const std::string& path) const;
+
+    /**
+     * @brief Forget every read `session` recorded (gh#158).
+     * @param session Session key.
+     * @return true when the session had recorded reads.
+     * @threadsafety Safe from any thread.
+     * @version 2.13.0
+     */
+    bool release_session(const std::string& session);
+
+    /**
+     * @brief Sessions currently holding recorded reads.
+     * @return Session count.
+     * @version 2.13.0
+     */
+    std::size_t session_count() const;
 
 private:
-    std::unordered_map<std::string, size_t> reads_; ///< path → hash
+    /// @brief session → (canonical path → content hash). gh#158.
+    SessionScoped<std::unordered_map<std::string, size_t>> reads_;
 };
+
+/**
+ * @brief What a filesystem tool is about to do with a path (v2.13.0).
+ *
+ * Carried to the host's approver so it can say "wants to WRITE /etc/…",
+ * not just "wants /etc/…". read_file and list_directory read; write_file
+ * and edit_file write.
+ *
+ * @version 2.13.0
+ */
+enum class PathAccess {
+    read,   ///< read_file, list_directory
+    write,  ///< write_file, edit_file
+};
+
+/**
+ * @brief One outside-root access awaiting the host's decision (v2.13.0).
+ * @version 2.13.0
+ */
+struct OutsideRootRequest {
+    std::string path;   ///< Canonical absolute path the tool resolved
+    std::string root;   ///< Canonical root the path lies outside
+    std::string tool;   ///< Fully-qualified tool ("filesystem.write_file")
+    PathAccess access = PathAccess::read; ///< Read or write
+};
+
+/**
+ * @brief The host's answer to an OutsideRootRequest (v2.13.0).
+ *
+ * `no_approver` is distinct from `rejected` so the refusal can tell the
+ * operator the truth: "nobody was asked" and "somebody said no" are
+ * fixed by different configuration.
+ *
+ * @version 2.13.0
+ */
+enum class OutsideRootVerdict {
+    approved,     ///< Serve this one call
+    rejected,     ///< The approver said no
+    no_approver,  ///< No approver is registered — refuse, fail loud
+};
+
+/**
+ * @brief Approver the server consults under `allow_outside_root: optional`.
+ * @param request The pending access (valid for the call only).
+ * @param user_data Opaque pointer given with the approver.
+ * @return The verdict for this one call.
+ * @version 2.13.0
+ */
+using OutsideRootApprover = OutsideRootVerdict (*)(
+    const OutsideRootRequest& request, void* user_data);
 
 // Forward declarations for tool classes
 class ReadFileTool;
@@ -60,9 +143,14 @@ class ListDirectoryTool;
 
 /**
  * @brief Filesystem MCP server with read-before-write enforcement.
- * @version 1.8.5
+ *
+ * gh#158 (v2.13.0): also a SessionStateOwner — its read tracker is per
+ * session, and the facade releases a session's reads with its
+ * conversation.
+ *
+ * @version 2.13.0
  */
-class FilesystemServer : public MCPServerBase {
+class FilesystemServer : public MCPServerBase, public SessionStateOwner {
 public:
     /**
      * @brief Construct with root directory, config, and data dir.
@@ -110,6 +198,21 @@ public:
     FileAccessTracker& tracker();
 
     /**
+     * @brief Release `key`'s recorded reads (gh#158).
+     * @param key Session key.
+     * @return true when the session had recorded reads.
+     * @version 2.13.0
+     */
+    bool release_session(const std::string& key) override;
+
+    /**
+     * @brief Sessions whose reads this server currently tracks (gh#158).
+     * @return Session count.
+     * @version 2.13.0
+     */
+    std::size_t session_count() const override;
+
+    /**
      * @brief Get the filesystem config.
      * @return Config reference.
      * @version 1.8.5
@@ -124,13 +227,39 @@ public:
     int max_read_bytes() const;
 
     /**
-     * @brief Resolve and validate a path against root.
-     * @param requested User-requested path.
+     * @brief Resolve a path and apply the outside-root policy (v2.13.0).
+     *
+     * The single confinement point for every path-taking tool. A path
+     * under the root is served. One outside it is decided by, in order:
+     * `outside_root_deny`, `outside_root_allow`, then
+     * `allow_outside_root` (`false` refuse / `true` serve / `optional`
+     * ask the approver).
+     *
+     * @param requested User-requested path (absolute or root-relative).
+     * @param access Whether the calling tool reads or writes it.
+     * @param tool Bare tool name, for the approval request and logs.
      * @return Resolved canonical path.
-     * @throws std::runtime_error if path escapes root.
-     * @version 1.8.5
+     * @throws std::runtime_error on any refusal — thrown rather than
+     *         returned so MCPServerBase's barrier also skips the
+     *         ContextAnchor for a refused read.
+     * @version 2.13.0
      */
-    std::filesystem::path resolve_path(const std::string& requested) const;
+    std::filesystem::path resolve_path(const std::string& requested,
+                                       PathAccess access,
+                                       const std::string& tool) const;
+
+    /**
+     * @brief Install the approver consulted under `optional` (v2.13.0).
+     *
+     * NOT installed on a named workspace's servers, which are confined
+     * unconditionally (gh#166). Thread-safe against a concurrent call.
+     *
+     * @param fn Approver, or nullptr to clear (escapes then refuse with
+     *        `outside_root_approval_required`).
+     * @param user_data Forwarded to `fn`.
+     * @version 2.13.0
+     */
+    void set_outside_root_approver(OutsideRootApprover fn, void* user_data);
 
     /**
      * @brief Get the ignore matcher (#15, v2.1.4).
@@ -160,11 +289,49 @@ private:
      */
     void register_fs_tools();
 
+    /**
+     * @brief Decide a path that resolved outside the root (v2.13.0).
+     * @param resolved Canonical path outside the root.
+     * @param access Read or write.
+     * @param tool Bare tool name.
+     * @throws std::runtime_error when refused.
+     * @dg_internal
+     * @version 2.13.0
+     */
+    void authorize_outside_root(const std::filesystem::path& resolved,
+                                PathAccess access,
+                                const std::string& tool) const;
+
+    /**
+     * @brief Put one outside-root access to the approver (v2.13.0).
+     * @param resolved Canonical path outside the root.
+     * @param access Read or write.
+     * @param tool Bare tool name.
+     * @throws std::runtime_error unless the verdict is `approved`.
+     * @dg_internal
+     * @version 2.13.0
+     */
+    void ask_outside_root_approver(const std::filesystem::path& resolved,
+                                   PathAccess access,
+                                   const std::string& tool) const;
+
+    /**
+     * @brief Log the outside-root policy, warning on ineffective entries.
+     * @dg_internal
+     * @version 2.13.0
+     */
+    void log_outside_root_policy() const;
+
     std::filesystem::path root_dir_;  ///< Project root
     FilesystemConfig config_;         ///< Filesystem config
     int max_read_bytes_ = 0;          ///< Size gate limit
-    FileAccessTracker tracker_;       ///< Read tracking
+    FileAccessTracker tracker_;       ///< Read tracking, per session (gh#158)
     IgnoreMatcher ignore_;            ///< gitignore + explorerignore (#15)
+
+    /// @brief Guards the approver pair against a concurrent install.
+    mutable std::mutex approver_mutex_;
+    OutsideRootApprover approver_ = nullptr; ///< Under `optional` (v2.13.0)
+    void* approver_data_ = nullptr;          ///< Forwarded to approver_
 
     // Owned tool instances
     std::unique_ptr<ReadFileTool> read_file_;

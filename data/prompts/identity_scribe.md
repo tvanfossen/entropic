@@ -6,7 +6,6 @@ focus:
   - record decisions made during agent interactions
   - log delegation results and task completions
   - maintain session history that survives compaction
-grammar: grammars/scribe.gbnf
 auto_chain: null
 allowed_tools: []
 max_output_tokens: 512

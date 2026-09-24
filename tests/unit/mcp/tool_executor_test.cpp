@@ -155,6 +155,65 @@ private:
     EnumTool tool_; ///< The tool
 };
 
+/**
+ * @brief Tool that always throws, counting how often it was dispatched.
+ *
+ * Models the real shape from the v2.13.0 gate: FilesystemServer's
+ * resolve_path THROWS on an outside-root refusal, MCPServerBase's barrier
+ * turns that into an error result, and the model re-issues the identical
+ * call. The counter is the assertion that matters — message text can be
+ * satisfied by a guard that still dispatches.
+ * @version 2.13.0
+ */
+class FailTool : public ToolBase {
+public:
+    /**
+     * @brief Construct with a trivial schema.
+     * @version 2.13.0
+     */
+    FailTool() : ToolBase(ToolDefinition{
+        "always_fails",
+        "Always fails",
+        R"({"type":"object","properties":{"path":{"type":"string"}}})"
+    }) {}
+
+    int calls = 0; ///< Times execute() actually ran.
+
+    /**
+     * @brief Execute: always throw, as a refused path does.
+     * @param args_json Arguments (unused).
+     * @return Never returns.
+     * @version 2.13.0
+     */
+    ServerResponse execute(const std::string& /*args_json*/) override {
+        ++calls;
+        throw std::runtime_error(
+            "outside_root_approval_required: Path escapes project root");
+    }
+};
+
+/**
+ * @brief Test server wrapping FailTool, exposing its dispatch count.
+ * @version 2.13.0
+ */
+class FailServer : public MCPServerBase {
+public:
+    /**
+     * @brief Construct and register tool.
+     * @version 2.13.0
+     */
+    FailServer() : MCPServerBase("fail") { register_tool(&tool_); }
+
+    /**
+     * @brief How many times the tool actually ran.
+     * @return Dispatch count.
+     * @version 2.13.0
+     */
+    int dispatches() const { return tool_.calls; }
+private:
+    FailTool tool_; ///< The always-failing tool
+};
+
 // ── Helper ───────────────────────────────────────────────
 
 /**
@@ -1512,6 +1571,336 @@ SCENARIO("gh#143: an argument-free call serialises as an object "
                 auto pre = nlohmann::json::parse(events[0].context_json);
                 REQUIRE(pre.contains("args"));
                 CHECK(pre.at("args").is_object());
+            }
+        }
+    }
+}
+
+// ── gh#168 (v2.13.0): a PRE_TOOL_CALL hook's modified_json is APPLIED ──
+//
+// Pre-2.13.0 fire_pre_tool_hook did `free(mod); return rc != 0;` — the
+// modification channel that entropic.h advertises in its allocation
+// contract was dropped for EVERY tool, on every call. A downstream host
+// tried to append a parent's verbatim observation to a delegated task;
+// the specialist only ever saw the lead's paraphrase.
+//
+// The fix applies the ARGUMENTS only. Identity (tool_name) is immutable,
+// malformed payloads are refused loudly, and rc != 0 still cancels.
+
+namespace {
+
+/**
+ * @brief What a scripted PRE_TOOL_CALL hook hands back (gh#168).
+ * @internal
+ * @version 2.13.0
+ */
+struct PreModSpec {
+    std::string payload;  ///< Written to *modified_json ("" = none).
+    int rc = 0;           ///< 0 proceeds, non-zero cancels.
+};
+
+/**
+ * @brief PRE_TOOL_CALL hook driven by a PreModSpec.
+ * @param mod Out-param for the modification (engine frees it).
+ * @param ud PreModSpec*.
+ * @return The spec's rc.
+ * @internal
+ * @version 2.13.0
+ */
+static int pre_mod_cb(entropic_hook_point_t /*hp*/,
+                      const char* /*ctx*/, char** mod, void* ud) {
+    auto* spec = static_cast<PreModSpec*>(ud);
+    if (mod != nullptr && !spec->payload.empty()) {
+        *mod = dup_to_heap(spec->payload.c_str());
+    }
+    return spec->rc;
+}
+
+/**
+ * @brief Run one `git.diff` call through an executor with a scripted
+ *        PRE hook, returning the result content the model would see.
+ *
+ * `git.diff` (OptionalArgsTool) reads `staged` out of its arguments and
+ * answers "staged" or "unstaged" — so the returned string IS the
+ * observation of what the tool actually received.
+ *
+ * @param spec Scripted hook behaviour.
+ * @return Result message content.
+ * @internal
+ * @version 2.13.0
+ */
+static std::string run_with_pre_mod(PreModSpec& spec) {
+    auto mgr = make_optional_args_manager();
+    LoopConfig lc;
+    lc.auto_approve_tools = true;
+    EngineCallbacks cb;
+    ToolExecutor executor(mgr, lc, cb);
+
+    HookRegistry reg;
+    reg.register_hook(ENTROPIC_HOOK_PRE_TOOL_CALL,
+                      pre_mod_cb, &spec, 0);
+    attach_registry(executor, reg);
+
+    LoopContext ctx;
+    auto results = executor.process_tool_calls(ctx, {make_call("git.diff")});
+    REQUIRE(results.size() == 1);
+    return results[0].content;
+}
+
+} // namespace
+
+SCENARIO("gh#168: a PRE_TOOL_CALL hook's modified args reach the tool",
+         "[tool_executor][gh168][regression][2.13.0]") {
+    GIVEN("a PRE hook that returns 0 and rewrites args") {
+        PreModSpec spec{
+            R"({"tool_name":"git.diff","args":{"staged":true}})", 0};
+
+        WHEN("an argument-free call is dispatched") {
+            THEN("the tool sees the hook's arguments, not the model's") {
+                // RED before the fix: free(mod) discarded the rewrite and
+                // the tool answered "unstaged" on every run.
+                CHECK(run_with_pre_mod(spec) == "staged");
+            }
+        }
+    }
+}
+
+SCENARIO("gh#168: the rewrite is visible to the dup cache and POST hook",
+         "[tool_executor][gh168][regression][2.13.0]") {
+    GIVEN("an executor with a rewriting PRE hook and a POST recorder") {
+        auto mgr = make_optional_args_manager();
+        LoopConfig lc;
+        lc.auto_approve_tools = true;
+        EngineCallbacks cb;
+        ToolExecutor executor(mgr, lc, cb);
+
+        PreModSpec spec{R"({"args":{"staged":true}})", 0};
+        HookRegistry reg;
+        std::vector<HookEvent> events;
+        reg.register_hook(ENTROPIC_HOOK_PRE_TOOL_CALL,
+                          pre_mod_cb, &spec, 0);
+        reg.register_hook(ENTROPIC_HOOK_POST_TOOL_CALL,
+                          record_hook_cb, &events, 0);
+        attach_registry(executor, reg);
+
+        WHEN("an argument-free call is dispatched") {
+            LoopContext ctx;
+            executor.process_tool_calls(ctx, {make_call("git.diff")});
+
+            THEN("POST_TOOL_CALL reports the rewritten args") {
+                // Everything downstream of the hook — schema validation,
+                // the duplicate key, permission patterns, the POST
+                // context — is computed from the same ToolCall, so the
+                // rewrite must be visible here or it is only half applied.
+                REQUIRE(events.size() == 1);
+                auto post = nlohmann::json::parse(events[0].context_json);
+                REQUIRE(post.at("args").is_object());
+                CHECK(post.at("args").at("staged").get<bool>());
+            }
+        }
+    }
+}
+
+SCENARIO("gh#168: a modification that renames the tool is refused",
+         "[tool_executor][gh168][guard][2.13.0]") {
+    GIVEN("a PRE hook that returns 0 but names a different tool") {
+        PreModSpec spec{
+            R"({"tool_name":"git.boom","args":{"staged":true}})", 0};
+
+        WHEN("the call is dispatched") {
+            THEN("neither the identity nor the args are taken") {
+                // RED against the NAIVE fix: applying args without an
+                // identity check answers "staged" here. The whole
+                // payload is refused, so git.diff runs on the model's
+                // own (empty) arguments. git.boom always throws, so a
+                // rerouted dispatch would surface as "tool exploded".
+                auto content = run_with_pre_mod(spec);
+                CHECK(content == "unstaged");
+                CHECK(content.find("exploded") == std::string::npos);
+            }
+        }
+    }
+}
+
+SCENARIO("gh#168: a malformed modification is refused, not half-applied",
+         "[tool_executor][gh168][guard][2.13.0]") {
+    GIVEN("PRE hooks returning payloads the contract does not allow") {
+        WHEN("the payload is not JSON at all") {
+            PreModSpec spec{"not json at all", 0};
+            THEN("the call dispatches unmodified") {
+                CHECK(run_with_pre_mod(spec) == "unstaged");
+            }
+        }
+        WHEN("the payload is JSON but not an object") {
+            PreModSpec spec{R"(["staged"])", 0};
+            THEN("the call dispatches unmodified") {
+                CHECK(run_with_pre_mod(spec) == "unstaged");
+            }
+        }
+        WHEN("the payload carries no args object") {
+            PreModSpec spec{R"({"tool_name":"git.diff"})", 0};
+            THEN("the call dispatches unmodified") {
+                CHECK(run_with_pre_mod(spec) == "unstaged");
+            }
+        }
+        WHEN("args is present but is not an object") {
+            PreModSpec spec{R"({"args":"staged=true"})", 0};
+            THEN("the call dispatches unmodified") {
+                CHECK(run_with_pre_mod(spec) == "unstaged");
+            }
+        }
+    }
+}
+
+SCENARIO("gh#168: a rewritten payload carrying bad UTF-8 is sanitized, "
+         "not rejected",
+         "[tool_executor][gh168][utf8][2.13.0]") {
+    GIVEN("a PRE hook whose args contain an ill-formed byte") {
+        auto mgr = make_optional_args_manager();
+        LoopConfig lc;
+        lc.auto_approve_tools = true;
+        EngineCallbacks cb;
+        ToolExecutor executor(mgr, lc, cb);
+
+        // gh#113/#114/#132 class: a hook is a plugin .so, an external
+        // boundary in BOTH directions. nlohmann's parser rejects an
+        // ill-formed UTF-8 byte inside a string, so sanitizing AFTER
+        // the parse would refuse a payload that is merely dirty.
+        std::string payload =
+            std::string(R"({"args":{"staged":true,"note":"a)")
+            + '\xFF' + R"(b"}})";
+        PreModSpec spec{payload, 0};
+
+        HookRegistry reg;
+        std::vector<HookEvent> events;
+        reg.register_hook(ENTROPIC_HOOK_PRE_TOOL_CALL,
+                          pre_mod_cb, &spec, 0);
+        reg.register_hook(ENTROPIC_HOOK_POST_TOOL_CALL,
+                          record_hook_cb, &events, 0);
+        attach_registry(executor, reg);
+
+        WHEN("the call is dispatched") {
+            LoopContext ctx;
+            auto results = executor.process_tool_calls(
+                ctx, {make_call("git.diff")});
+
+            THEN("the modification still applies") {
+                REQUIRE(results.size() == 1);
+                CHECK(results[0].content == "staged");
+            }
+            AND_THEN("the bad byte became U+FFFD") {
+                REQUIRE(events.size() == 1);
+                auto post = nlohmann::json::parse(events[0].context_json);
+                auto note = post.at("args").at("note").get<std::string>();
+                CHECK(note == "a\xEF\xBF\xBD" "b");
+            }
+        }
+    }
+}
+
+SCENARIO("gh#168: a non-zero return still cancels, modification or not",
+         "[tool_executor][gh168][regression][2.13.0]") {
+    GIVEN("a PRE hook that writes args AND returns non-zero") {
+        PreModSpec spec{R"({"args":{"staged":true}})", 1};
+
+        WHEN("the call is dispatched") {
+            THEN("the call is cancelled, not rewritten and run") {
+                auto content = run_with_pre_mod(spec);
+                CHECK(content.find("denied") != std::string::npos);
+                CHECK(content != "staged");
+            }
+        }
+    }
+}
+
+// ── Repeated identical FAILURE guard (v2.13.0) ───────────
+
+SCENARIO("A call that fails identically is refused rather than retried "
+         "forever",
+         "[tool_executor][anti-spiral][2.13.0]") {
+    GIVEN("an executor and a tool whose every dispatch throws") {
+        PermissionsConfig perms;
+        ServerManager mgr(perms, "/tmp/test");
+        auto owned = std::make_unique<FailServer>();
+        auto* srv = owned.get();
+        mgr.register_server(std::move(owned));
+        mgr.initialize();
+
+        LoopConfig lc;
+        lc.auto_approve_tools = true;
+        EngineCallbacks cb;
+        ToolExecutor executor(mgr, lc, cb);
+
+        HookRegistry reg;
+        std::vector<HookEvent> events;
+        reg.register_hook(ENTROPIC_HOOK_POST_TOOL_CALL,
+                          record_hook_cb, &events, 0);
+        attach_registry(executor, reg);
+
+        // The v2.13.0 gate's test-e7-delegation: a delegated child issued
+        // filesystem.read_file with byte-identical arguments FOUR times,
+        // was refused identically every time, and nothing stopped it —
+        // errors are deliberately excluded from the duplicate cache, and
+        // the anti-spiral block counts tool NAME against a threshold well
+        // above four. The run died on its 120s timeout.
+        WHEN("the same call with the same arguments is issued four times") {
+            LoopContext ctx;
+            std::vector<Message> last;
+            for (int i = 0; i < 4; ++i) {
+                ToolCall call = make_call("fail.always_fails");
+                call.id = "call-" + std::to_string(i);
+                call.arguments["path"] = "/outside/notes.md";
+                last = executor.process_tool_calls(ctx, {call});
+            }
+
+            THEN("the tool stops being dispatched at the threshold") {
+                INFO("dispatches: " << srv->dispatches());
+                CHECK(srv->dispatches() == 2);
+            }
+            AND_THEN("the third attempt is refused pre-dispatch") {
+                REQUIRE(events.size() == 4);
+                auto post3 = nlohmann::json::parse(events[2].context_json);
+                CHECK(post3.at("result_kind").get<std::string>()
+                      == "rejected_anti_spiral");
+            }
+            // REQ-MCP-015: a bare failure teaches the model nothing. The
+            // refusal has to name the tool, say how many times it failed,
+            // and say the failure is not transient — otherwise "try again"
+            // stays the model's most plausible next move.
+            AND_THEN("the refusal names the tool and the repeat count") {
+                REQUIRE(last.size() == 1);
+                INFO(last[0].content);
+                CHECK(last[0].content.find("always_fails")
+                      != std::string::npos);
+                // TWO, not three: two attempts actually ran and failed.
+                // The third is refused without dispatching, so claiming
+                // three failures would overstate what was observed.
+                CHECK(last[0].content.find("2 times")
+                      != std::string::npos);
+                CHECK(last[0].content.find("identical arguments")
+                      != std::string::npos);
+                CHECK(last[0].content.find("not transient")
+                      != std::string::npos);
+                CHECK(last[0].content.find("different approach")
+                      != std::string::npos);
+            }
+        }
+
+        // Regression guard on the v1.8.5 intent that record_tool_call
+        // documents: "a transient failure does not permanently poison the
+        // call". One failure must still be retryable, or this fix has
+        // traded an unbounded retry for no retry at all.
+        WHEN("the same failing call is issued only twice") {
+            LoopContext ctx;
+            for (int i = 0; i < 2; ++i) {
+                ToolCall call = make_call("fail.always_fails");
+                call.id = "retry-" + std::to_string(i);
+                call.arguments["path"] = "/outside/notes.md";
+                executor.process_tool_calls(ctx, {call});
+            }
+
+            THEN("the retry is still dispatched") {
+                CHECK(srv->dispatches() == 2);
             }
         }
     }

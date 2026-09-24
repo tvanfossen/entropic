@@ -45,7 +45,7 @@ SCENARIO("gh#105: constitutional validator's toolless render must NOT clobber "
          "[model][gh105]")
 {
     if (!g_ctx.initialized) {
-        SKIP("gemma4_e4b GGUF not present — run `entropic download gemma4_e4b`");
+        SKIP(skip_reason_or_default("gemma4_e4b"));
     }
     GIVEN("an engine with tools staged + constitutional validation ENABLED") {
         start_test_log("gh105_validator_clobbers");

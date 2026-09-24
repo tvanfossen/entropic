@@ -85,6 +85,48 @@ void DelegationManager::set_storage(const StorageInterface* storage) {
 }
 
 /**
+ * @brief Mint a sandbox/delegation id unique across siblings (gh#160).
+ *
+ * Falls back to the bare prefix when no sandbox manager is configured —
+ * with isolation off there is no sandbox directory and no pending patch
+ * to collide, so the id stays exactly what it has always been and the
+ * logs a consumer greps for do not move.
+ *
+ * @param prefix Depth-derived stem ("d1", "d1r", "pipeline").
+ * @return Unique id when sandboxed, `prefix` verbatim otherwise.
+ * @req REQ-DELEG-005
+ * @version 2.13.0
+ */
+std::string DelegationManager::mint_delegation_id(
+    const std::string& prefix) {
+    if (sandbox_mgr_ == nullptr) {
+        return prefix;
+    }
+    return sandbox_mgr_->next_delegation_id(prefix);
+}
+
+/**
+ * @brief The directory a finishing delegation must restore (gh#160).
+ *
+ * The parent's ACTIVE root, not the project root: a delegation nested
+ * inside another one must hand the tools back to the OUTER sandbox, or
+ * the outer child's remaining turns write into the user's working tree
+ * — precisely the guarantee gh#29 states and gh#160 found unwired.
+ *
+ * @param parent_ctx Context of the loop that issued this delegation.
+ * @return Parent's active root, or `repo_dir_` at the top level.
+ * @req REQ-DELEG-005
+ * @version 2.13.0
+ */
+std::filesystem::path DelegationManager::restore_root_for(
+    const LoopContext& parent_ctx) const {
+    if (!parent_ctx.active_root.empty()) {
+        return std::filesystem::path(parent_ctx.active_root);
+    }
+    return repo_dir_;
+}
+
+/**
  * @brief Set delegation start/complete callbacks.
  * @param on_start Pre-delegation gate (nullable).
  * @param on_complete Post-delegation result (nullable).
@@ -301,7 +343,7 @@ void DelegationManager::persist_pending_patch(
  * @return Populated DelegationResult when a check fails and the caller
  *         must early-return; nullopt when all checks pass.
  * @req REQ-DELEG-002
- * @version 2.1.6
+ * @version 2.13.0
  */
 std::optional<DelegationResult>
 DelegationManager::check_delegation_preconditions(
@@ -324,6 +366,9 @@ DelegationManager::check_delegation_preconditions(
             "Delegation rejected by consumer", false, target_tier, task};
     } else if (sandbox_mgr_ != nullptr) {
         sb_info = sandbox_mgr_->create_sandbox(del_id);
+        // gh#160: `del_id` is already unique per sibling (see
+        // `mint_delegation_id`); the sandbox dir and the pending patch
+        // therefore no longer collide between two delegations at one depth.
         if (!sb_info.has_value()) {
             // gh#33 bug 2 (v2.1.6): pre-2.1.6 a failed create_sandbox
             // silently fell through to running the child against the
@@ -349,13 +394,14 @@ DelegationManager::check_delegation_preconditions(
  * @param max_turns Optional iteration limit.
  * @return DelegationResult.
  * @req REQ-DELEG-002
- * @version 2.1.6
+ * @version 2.13.0
  */
 DelegationResult DelegationManager::execute_delegation(
     LoopContext& parent_ctx,
     const std::string& target_tier,
     const std::string& task,
-    std::optional<int> max_turns) {
+    std::optional<int> max_turns,
+    const std::vector<ContextRef>& context) {
 
     logger->info("Delegation: target_tier='{}', task='{}', depth={}",
                  target_tier, task,
@@ -364,8 +410,8 @@ DelegationResult DelegationManager::execute_delegation(
         ? tier_res_.resolve_tier(target_tier, tier_res_.user_data)
         : ChildContextInfo{};
 
-    std::string del_id =
-        "d" + std::to_string(parent_ctx.delegation_depth + 1);
+    std::string del_id = mint_delegation_id(
+        "d" + std::to_string(parent_ctx.delegation_depth + 1));
     std::optional<SandboxInfo> sb_info;
     if (auto early = check_delegation_preconditions(
             info, target_tier, task, del_id,
@@ -373,17 +419,22 @@ DelegationResult DelegationManager::execute_delegation(
         return *early;
     }
 
-    auto child_ctx = build_child_context(parent_ctx, info, task);
+    auto child_ctx = build_child_context(parent_ctx, info, task, context);
     child_ctx.locked_tier = target_tier;
 
+    // gh#162: the storage record keeps what the child was actually given,
+    // so "what did this child know" is answerable after the fact.
+    const std::string recorded = format_context_block(context) + task;
     DelegationResult result;
 
     if (sb_info && swap_dir_fn_ != nullptr) {
+        child_ctx.active_root = sb_info->path.string();
         ScopedSandbox scope(swap_dir_fn_, swap_dir_data_,
-                            sb_info->path, repo_dir_);
-        result = run_child(child_ctx, target_tier, task, max_turns);
+                            parent_ctx.session_key, sb_info->path,
+                            restore_root_for(parent_ctx));
+        result = run_child(child_ctx, target_tier, recorded, max_turns);
     } else {
-        result = run_child(child_ctx, target_tier, task, max_turns);
+        result = run_child(child_ctx, target_tier, recorded, max_turns);
     }
 
     finalize_sandbox_for(sb_info, result);
@@ -413,7 +464,7 @@ DelegationResult DelegationManager::execute_delegation(
  * @return Child LoopContext carrying the seed history, the tier system
  *         prompt, and the new task as a trailing user message.
  * @req REQ-DELEG-002
- * @version 2.1.6
+ * @version 2.13.0 [reviewed]
  */
 LoopContext DelegationManager::build_resumed_child_context(
         const LoopContext& parent_ctx,
@@ -427,7 +478,9 @@ LoopContext DelegationManager::build_resumed_child_context(
         parent_ctx.delegation_ancestor_tiers;
     child_ctx.delegation_ancestor_tiers.push_back(target_tier);
     child_ctx.parent_conversation_id = parent_ctx.conversation_id;
-    child_ctx.all_tools = info.tools;
+    // gh#158: see build_child_context — both builders inherit the key, or
+    // the resumed path reintroduces the shared-bucket collision on its own.
+    child_ctx.session_key = parent_ctx.session_key;
     child_ctx.active_phase = "default";
     child_ctx.locked_tier = target_tier;
     child_ctx.messages = std::move(seed_history);
@@ -455,14 +508,15 @@ LoopContext DelegationManager::build_resumed_child_context(
  * @return DelegationResult for the resumed child run, or the early
  *         result produced when a precondition check fails.
  * @req REQ-DELEG-002
- * @version 2.1.6
+ * @version 2.13.0
  */
 DelegationResult DelegationManager::execute_resume_delegation(
     LoopContext& parent_ctx,
     const std::string& target_tier,
     const std::string& task,
     std::vector<Message> seed_history,
-    std::optional<int> max_turns) {
+    std::optional<int> max_turns,
+    const std::vector<ContextRef>& context) {
 
     logger->info("Resume delegation: target_tier='{}' task='{}' "
                  "history_messages={}",
@@ -471,8 +525,8 @@ DelegationResult DelegationManager::execute_resume_delegation(
         ? tier_res_.resolve_tier(target_tier, tier_res_.user_data)
         : ChildContextInfo{};
 
-    std::string del_id =
-        "d" + std::to_string(parent_ctx.delegation_depth + 1) + "r";
+    std::string del_id = mint_delegation_id(
+        "d" + std::to_string(parent_ctx.delegation_depth + 1) + "r");
     std::optional<SandboxInfo> sb_info;
     if (auto early = check_delegation_preconditions(
             info, target_tier, task, del_id,
@@ -480,16 +534,20 @@ DelegationResult DelegationManager::execute_resume_delegation(
         return *early;
     }
 
+    const std::string recorded = format_context_block(context) + task;
     auto child_ctx = build_resumed_child_context(
-        parent_ctx, info, target_tier, task, std::move(seed_history));
+        parent_ctx, info, target_tier, recorded,  // gh#162
+        std::move(seed_history));
 
     DelegationResult result;
     if (sb_info && swap_dir_fn_ != nullptr) {
+        child_ctx.active_root = sb_info->path.string();
         ScopedSandbox scope(swap_dir_fn_, swap_dir_data_,
-                            sb_info->path, repo_dir_);
-        result = run_child(child_ctx, target_tier, task, max_turns);
+                            parent_ctx.session_key, sb_info->path,
+                            restore_root_for(parent_ctx));
+        result = run_child(child_ctx, target_tier, recorded, max_turns);
     } else {
-        result = run_child(child_ctx, target_tier, task, max_turns);
+        result = run_child(child_ctx, target_tier, recorded, max_turns);
     }
     finalize_sandbox_for(sb_info, result);
     return result;
@@ -551,13 +609,14 @@ static std::string pipeline_context(
  * @param stage_log [out] Per-stage results appended in order.
  * @return DelegationResult from the final stage.
  * @req REQ-DELEG-004
- * @version 2.10.0
+ * @version 2.13.0
  */
 DelegationResult DelegationManager::execute_pipeline(
     LoopContext& parent_ctx,
     const std::vector<std::string>& stages,
     const std::string& task,
-    std::vector<DelegationResult>& stage_log) {
+    std::vector<DelegationResult>& stage_log,
+    const std::vector<ContextRef>& context) {
 
     logger->info("Pipeline: {} stages, task='{}'", stages.size(), task);
 
@@ -575,7 +634,8 @@ DelegationResult DelegationManager::execute_pipeline(
     // file edits — preserving the v2.1.4 forward-carry behavior.
     std::optional<SandboxInfo> shared_sb;
     if (sandbox_mgr_ != nullptr) {
-        shared_sb = sandbox_mgr_->create_sandbox("pipeline");
+        shared_sb = sandbox_mgr_->create_sandbox(
+            mint_delegation_id("pipeline"));
         if (!shared_sb.has_value()) {
             // gh#33 bug 2 (v2.1.6): see execute_delegation comment.
             logger->error(
@@ -590,7 +650,9 @@ DelegationResult DelegationManager::execute_pipeline(
     last_result.task = task;
 
     for (size_t i = 0; i < stages.size(); ++i) {
-        if (!run_pipeline_stage(parent_ctx, stages, i, task,
+        // gh#162: every stage opens with the same seeded references.
+        if (!run_pipeline_stage(parent_ctx, stages, i,
+                                format_context_block(context) + task,
                                 shared_sb, stage_log, last_result)) {
             break;
         }
@@ -617,7 +679,7 @@ DelegationResult DelegationManager::execute_pipeline(
  *                    this stage's result on return.
  * @return true to continue to the next stage, false to break.
  * @req REQ-DELEG-004
- * @version 2.10.0
+ * @version 2.13.0
  */
 bool DelegationManager::run_pipeline_stage(
     LoopContext& parent_ctx,
@@ -649,8 +711,10 @@ bool DelegationManager::run_pipeline_stage(
     child_ctx.locked_tier = tier_name;
 
     if (shared_sb && swap_dir_fn_ != nullptr) {
+        child_ctx.active_root = shared_sb->path.string();
         ScopedSandbox scope(swap_dir_fn_, swap_dir_data_,
-                            shared_sb->path, repo_dir_);
+                            parent_ctx.session_key, shared_sb->path,
+                            restore_root_for(parent_ctx));
         last_result = run_child(child_ctx, tier_name, stage_task,
                                 std::nullopt);
     } else {
@@ -673,12 +737,13 @@ bool DelegationManager::run_pipeline_stage(
  * @param task Task description.
  * @return Fresh child context.
  * @req REQ-DELEG-002
- * @version 2.7.4
+ * @version 2.13.0 [reviewed]
  */
 LoopContext DelegationManager::build_child_context(
     const LoopContext& parent_ctx,
     const ChildContextInfo& info,
-    const std::string& task) {
+    const std::string& task,
+    const std::vector<ContextRef>& context) {
 
     LoopContext child;
     child.delegation_depth = parent_ctx.delegation_depth + 1;
@@ -689,6 +754,12 @@ LoopContext DelegationManager::build_child_context(
     // sentinel. (Present in build_resumed_child_context; lost here when the
     // child-context builders were extracted.)
     child.parent_conversation_id = parent_ctx.conversation_id;
+    // gh#158 (v2.13.0, also gh#162): children inherit the parent's session
+    // key. It was left "" here, so every delegated child of every parent ran
+    // under the DEFAULT session — one shared KV slot and one shared bucket.
+    // Harmless while a handle ran one turn at a time; with concurrent runs
+    // two parents' children would collide in that single bucket.
+    child.session_key = parent_ctx.session_key;
     // P1-9: propagate ancestor chain + append parent tier so the
     // child can reject cycles (A→B→A) before executing.
     child.delegation_ancestor_tiers = parent_ctx.delegation_ancestor_tiers;
@@ -697,7 +768,6 @@ LoopContext DelegationManager::build_child_context(
     }
     child.locked_tier = info.system_prompt.empty()
         ? parent_ctx.locked_tier : "";
-    child.all_tools = info.tools;
     child.active_phase = "default";
 
     // System prompt as first message
@@ -706,8 +776,11 @@ LoopContext DelegationManager::build_child_context(
     sys.content = info.system_prompt;
     child.messages.push_back(std::move(sys));
 
-    // Task as user message (with completion instructions)
-    std::string user_content = task;
+    // Task as user message (context references, then task, then any
+    // completion instructions). gh#162: the block comes FIRST because a
+    // small model that reads the task and starts searching has already
+    // spent the turn the references were meant to save.
+    std::string user_content = format_context_block(context) + task;
     if (!info.completion_instructions.empty()) {
         user_content += "\n\n" + info.completion_instructions;
     }
@@ -717,6 +790,31 @@ LoopContext DelegationManager::build_child_context(
     child.messages.push_back(std::move(user));
 
     return child;
+}
+
+/**
+ * @brief Render seeded references as a `[CONTEXT]` block (gh#162).
+ * @param context Seeded references (may be empty).
+ * @return Block text ending in a blank line, or "" when empty.
+ * @req REQ-DELEG-006
+ * @version 2.13.0
+ */
+std::string DelegationManager::format_context_block(
+    const std::vector<ContextRef>& context) {
+    if (context.empty()) {
+        return "";
+    }
+    std::string block =
+        "[CONTEXT] The lead already located these files. Read them "
+        "directly instead of searching:\n";
+    for (const auto& ref : context) {
+        block += "- " + ref.path;
+        if (!ref.lines.empty()) { block += " (lines " + ref.lines + ")"; }
+        if (!ref.note.empty()) { block += " — " + ref.note; }
+        block += "\n";
+    }
+    block += "\n";
+    return block;
 }
 
 /**
@@ -808,10 +906,13 @@ void DelegationManager::complete_storage_record(
  * @param child_ctx Child context to execute.
  * @param target_tier Tier name.
  * @param task Task description.
- * @param max_turns Optional turn limit.
+ * @param max_turns Optional turn limit the MODEL asked for (gh#182). It
+ *        is recorded AND carried onto the child context, where
+ *        AgentEngine::resolve_max_iterations resolves it against the
+ *        operator's limit and keeps the stricter of the two.
  * @return DelegationResult.
  * @req REQ-DELEG-002
- * @version 2.0.6-rc18
+ * @version 2.13.0
  */
 DelegationResult DelegationManager::run_child(
     LoopContext& child_ctx,
@@ -830,6 +931,19 @@ DelegationResult DelegationManager::run_child(
 
     auto delegation_id = create_storage_record(
         child_ctx, target_tier, task, max_turns);
+
+    // gh#182 (v2.13.0): until now `max_turns` reached the storage row and
+    // stopped — `run_child_fn_` takes no limit, so an argument the model is
+    // SHOWN in delegate.json (minimum 1, maximum 30) and allowed to set
+    // bounded nothing. Carrying it on the child context is what lets
+    // AgentEngine::resolve_max_iterations see it; that resolver takes the
+    // stricter of this and the operator's own limit, so a request larger
+    // than the tier or engine allows still cannot raise the bound.
+    if (max_turns.has_value() && *max_turns > 0) {
+        child_ctx.delegated_max_turns = *max_turns;
+        logger->info("Child loop bound requested by model: tier={} "
+                     "max_turns={}", target_tier, *max_turns);
+    }
 
     logger->info("Running child loop: tier={} depth={} msgs={} "
                  "system_hash={:016x}",

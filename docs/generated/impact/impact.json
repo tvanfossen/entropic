@@ -1,1 +1,167 @@
-[]
+[
+  {
+    "req_id": "REQ-LOOP-009",
+    "req_name": "Per-session-key run concurrency, on by default, with one lock on the generation path",
+    "functions": [
+      {
+        "name": "execute_tool",
+        "file": "src/mcp/tool_executor.cpp",
+        "version": "2.13.0 [reviewed]"
+      }
+    ]
+  },
+  {
+    "req_id": "REQ-MCP-002",
+    "req_name": "Tool results always cross boundaries as a ServerResponse JSON envelope",
+    "functions": [
+      {
+        "name": "execute_tool",
+        "file": "src/mcp/tool_executor.cpp",
+        "version": "2.13.0 [reviewed]"
+      }
+    ]
+  },
+  {
+    "req_id": "REQ-MCP-012",
+    "req_name": "Tool calls pass an ordered precondition pipeline with typed rejection kinds",
+    "functions": [
+      {
+        "name": "check_call_preconditions",
+        "file": "src/mcp/tool_executor.cpp",
+        "version": "2.13.0"
+      },
+      {
+        "name": "process_single_call",
+        "file": "src/mcp/tool_executor.cpp",
+        "version": "2.13.0"
+      }
+    ]
+  },
+  {
+    "req_id": "REQ-MCP-015",
+    "req_name": "Duplicates, errors, and denials return corrective guidance, not bare failure",
+    "functions": [
+      {
+        "name": "record_tool_call",
+        "file": "src/mcp/tool_executor.cpp",
+        "version": "2.13.0"
+      },
+      {
+        "name": "finalize_tool_call",
+        "file": "src/mcp/tool_executor.cpp",
+        "version": "2.5.1"
+      },
+      {
+        "name": "check_repeated_failure",
+        "file": "src/mcp/tool_executor.cpp",
+        "version": "2.13.0"
+      }
+    ]
+  },
+  {
+    "req_id": "REQ-MCP-016",
+    "req_name": "Anti-spiral tracking warns softly then hard-blocks repeated identical tools",
+    "functions": [
+      {
+        "name": "check_repeated_failure",
+        "file": "src/mcp/tool_executor.cpp",
+        "version": "2.13.0"
+      },
+      {
+        "name": "check_spiral_blocks",
+        "file": "src/mcp/tool_executor.cpp",
+        "version": "2.13.0"
+      }
+    ]
+  },
+  {
+    "req_id": "REQ-MCP-017",
+    "req_name": "PRE/POST_TOOL_CALL hooks fire on every exit path, PRE may rewrite the args and POST the result",
+    "functions": [
+      {
+        "name": "process_single_call",
+        "file": "src/mcp/tool_executor.cpp",
+        "version": "2.13.0"
+      },
+      {
+        "name": "finalize_tool_call",
+        "file": "src/mcp/tool_executor.cpp",
+        "version": "2.5.1"
+      },
+      {
+        "name": "apply_pre_tool_modification",
+        "file": "src/mcp/tool_executor.cpp",
+        "version": "2.13.0"
+      },
+      {
+        "name": "fire_pre_tool_hook",
+        "file": "src/mcp/tool_executor.cpp",
+        "version": "2.13.0"
+      },
+      {
+        "name": "build_pre_tool_json",
+        "file": "src/mcp/tool_executor.cpp",
+        "version": "2.0.6-rc19"
+      }
+    ]
+  },
+  {
+    "req_id": "REQ-MCP-019",
+    "req_name": "Tool results are size-capped with a marker and classified into typed kinds",
+    "functions": [
+      {
+        "name": "classify_tool_result",
+        "file": "src/mcp/tool_executor.cpp",
+        "version": "2.3.7"
+      },
+      {
+        "name": "finalize_tool_call",
+        "file": "src/mcp/tool_executor.cpp",
+        "version": "2.5.1"
+      }
+    ]
+  },
+  {
+    "req_id": "REQ-MCP-020",
+    "req_name": "A bounded, thread-safe ring buffer retains recent tool calls for introspection",
+    "functions": [
+      {
+        "name": "execute_tool",
+        "file": "src/mcp/tool_executor.cpp",
+        "version": "2.13.0 [reviewed]"
+      }
+    ]
+  },
+  {
+    "req_id": "REQ-MCP-024",
+    "req_name": "Engine-level entropic.* tools validate their arguments and emit typed directives",
+    "functions": [
+      {
+        "name": "build_complete_directive",
+        "file": "src/mcp/tool_executor.cpp",
+        "version": "2.3.7"
+      }
+    ]
+  },
+  {
+    "req_id": "REQ-MCP-027",
+    "req_name": "Named workspaces bind a session to its own tool root and servers",
+    "functions": [
+      {
+        "name": "set_server_resolver",
+        "file": "src/mcp/tool_executor.cpp",
+        "version": "2.13.0"
+      },
+      {
+        "name": "servers_for",
+        "file": "src/mcp/tool_executor.cpp",
+        "version": "2.13.0"
+      },
+      {
+        "name": "execute_tool",
+        "file": "src/mcp/tool_executor.cpp",
+        "version": "2.13.0 [reviewed]"
+      }
+    ]
+  }
+]

@@ -113,6 +113,30 @@ public:
     void unload_all_for_model(llama_model* model, llama_context* ctx);
 
     /**
+     * @brief Free a base model's adapter handles, KEEPING the registrations
+     *        (gh#164).
+     *
+     * The difference from `unload_all_for_model` is the whole point:
+     * that one ERASES the entries, which is right for a tier being
+     * replaced by another and wrong for one the consumer intends to bring
+     * back. `entropic_release_model` unloads a model expecting it to
+     * reload, so the name → (path, scale) registration must survive; only
+     * the `llama_adapter_lora*` cannot, because it belongs to the model
+     * being freed.
+     *
+     * Entries are left COLD with a null handle. `load()` re-initialises
+     * such an entry in place rather than refusing it as a duplicate, which
+     * is how `preload_adapters_for_model` re-binds them at the next
+     * activation.
+     *
+     * @param model The base model being released.
+     * @param ctx Context to clear a HOT adapter from. May be nullptr.
+     * @req REQ-INFER-023
+     * @version 2.13.0
+     */
+    void release_handles_for_model(llama_model* model, llama_context* ctx);
+
+    /**
      * @brief Free every loaded adapter handle (gh#58 close-out, v2.3.0).
      *
      * Called by `~ModelOrchestrator` after backends are torn down, so

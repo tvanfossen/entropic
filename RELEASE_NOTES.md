@@ -230,30 +230,32 @@ fraction**, not on which test is running.
 
 ## Verification
 
-The full model gate ran twice, and the second run is the one that counts —
-the first was collected before the version bump, so its audit record carried
-the *previous* version string. Both numbers are given because the difference
-between them is the point.
+The full model gate ran on `f64dfb2`, the head of this release, with every
+engine change in it:
 
-- **Model suite at `89efc2a`: 85 passed, 2 failed, 0 skipped, 3 flaky**, on a
-  GTX 1080 Ti. Attached as `model-results-v2.13.0.json`, which from this
-  release also records `built_version` — what the tested build actually
-  carried, as distinct from what the tree claimed.
-  - `test-e7-delegation` **timed out** (3 attempts, ~120 s each). Root-caused
-    to a delegated child re-issuing one byte-identical refused read four times
-    with nothing stopping it, and fixed in this release — see the
-    repeated-failure entry above. Re-verified on GPU afterwards: it passes,
-    though still on a retry.
-  - `test-gh165-restore` failed one assertion of 28 — the model echoing a
-    remembered word from a restored conversation. The restore itself is
-    verified by the other 27. That assertion only became real this release
-    (before, the helper returned the whole transcript, so it matched the
-    test's own seed and could not fail), and an E2B-class lead satisfies it
-    about two times in three. It is a known-marginal assertion, not a broken
-    feature.
-- **The engine fix for `test-e7-delegation` landed AFTER that gate run.** It
-  is covered by the CPU suite and by a GPU re-run of that one test, not by a
-  full model gate. Anyone re-cutting this release should run one.
+- **Model suite: 86 passed, 1 failed, 0 skipped, 2 flaky**, on a GTX 1080 Ti.
+  Attached as `model-results-v2.13.0.json`, which from this release also
+  records `built_version` — what the tested build actually carried, as
+  distinct from what the tree claimed. All three of `version`,
+  `built_version` and `git_sha` agree on this run.
+  - `test-outside-root-approval` failed one assertion of 15: the lead never
+    issued the second of two requested reads, so the path approver was never
+    consulted about it. Everything the test exists to prove is verified by
+    the other 14 — the approver is asked, one path is served and one refused,
+    and the refused file's contents never reach the model. This is the same
+    known-marginal class as the recall assertions below: an E2B-class lead
+    complying with a tool-call instruction, not engine behaviour.
+  - Two earlier failures are **fixed** by this release and pass here.
+    `test-e7-delegation` previously timed out on all three attempts (~120 s
+    each); with the repeated-failure guard it passes on the first attempt in
+    86 s. `test-gh165-restore` passes with no retry.
+- **A note on those marginal assertions.** Several model tests assert that
+  the lead reproduces a specific word — a remembered codeword, a delegated
+  anomaly code. Some of those only became real assertions in this release: a
+  test helper used to return the whole conversation, so an assertion could
+  match the test's own seed and pass while the model said nothing at all.
+  Now that they test what they claim to, a small lead satisfies them roughly
+  two times in three. Reported rather than tuned away.
 - **CPU suite: 1925/1925.** Pre-commit clean.
 - **ThreadSanitizer: 36/36 with zero warnings** over the gh#158 / gh#160 /
   gh#166 concurrency scenarios — the suite that found the `TodoTool` heap

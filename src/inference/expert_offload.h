@@ -32,13 +32,12 @@
  * `expert_offload_buft.h`, which is the only part that needs the vendor
  * headers — and which `validate.cpp` therefore does not have to include.
  *
- * @warning PROTOTYPE, default off, pending measurement. Nothing here feeds
- *          the gh#148 admission gate: `estimate_footprint_bytes` and
- *          `gpu_layers: auto` price a layer as a whole layer and have no
- *          model of expert placement. That is why `gpu_layers: auto` is
- *          REFUSED in combination with this knob rather than silently
- *          producing a split derived from arithmetic that does not describe
- *          the load.
+ * @warning PROTOTYPE, default off. As of v2.13.1 `gpu_layers: auto` DOES
+ *          model expert placement — it reads the real expert-tensor bytes
+ *          from GGUF metadata and prefers an expert split over dropping a
+ *          layer. The two remain mutually exclusive, but for the opposite
+ *          reason: auto derives the split itself, so setting both asks two
+ *          things to decide one placement.
  *
  * @version 2.13.0
  */
@@ -142,16 +141,16 @@ inline std::vector<std::string> expert_offload_patterns(int cpu_moe_layers) {
  *    there is nothing on the card to move off it. Accepting this would make
  *    the knob a no-op, and a no-op that an operator explicitly asked for is
  *    exactly the fail-open this codebase refuses.
- *  - **N > 0 with `gpu_layers: auto`.** The admission gate derives its split
- *    from file size over layer count (`partial_gpu_layers_for`) and has no
- *    model of expert placement — the derived number would describe a load
- *    that is not the one being performed. A prototype user states the split.
+ *  - **N > 0 with `gpu_layers: auto`.** Since v2.13.1 auto derives the
+ *    expert split itself, from the model's real expert-tensor bytes. Setting
+ *    both asks two things to decide one placement; drop this knob and let
+ *    auto choose, or state `gpu_layers` explicitly and keep your own split.
  *
  * @param cfg Tier config as parsed.
  * @return Empty when acceptable; an operator-actionable reason otherwise.
  * @req REQ-CFG-006
  * @req REQ-INFER-027
- * @version 2.13.0
+ * @version 2.13.1
  */
 inline std::string expert_offload_conflict_reason(const ModelConfig& cfg) {
     const int n = cfg.cpu_moe_layers;
@@ -167,12 +166,16 @@ inline std::string expert_offload_conflict_reason(const ModelConfig& cfg) {
                  "host, so there are no expert tensors on the card to move "
                  "off it. Raise gpu_layers, or drop cpu_moe_layers.";
     } else if (n > 0 && cfg.gpu_layers_auto) {
+        // v2.13.1: auto now derives the expert split ITSELF, from the GGUF's
+        // real expert-tensor bytes, and prefers moving experts host-side
+        // over dropping a layer. So this is no longer "auto cannot model
+        // this" — it is "you have asked for both, and only one can win".
         reason = "cpu_moe_layers=" + std::to_string(n)
-               + " with gpu_layers: auto — the admission gate prices a layer "
-                 "as a WHOLE layer and does not model expert placement, so "
-                 "the split it derives would not describe this load. Set "
-                 "gpu_layers to an explicit count (this is an experimental "
-                 "knob; the residency math is deliberately out of scope).";
+               + " with gpu_layers: auto — auto derives the expert split "
+                 "itself from the model's shape, so setting both asks two "
+                 "things to decide one placement. Drop cpu_moe_layers and "
+                 "let auto choose, or set gpu_layers to an explicit count "
+                 "and keep your own split.";
     }
     return reason;
 }
@@ -199,7 +202,7 @@ inline std::string expert_offload_conflict_reason(const ModelConfig& cfg) {
  * @param n_expert `<arch>.expert_count` from GGUF metadata; 0 when absent.
  * @return Empty when acceptable; an operator-actionable reason otherwise.
  * @req REQ-INFER-027
- * @version 2.13.0
+ * @version 2.13.1
  */
 inline std::string expert_offload_load_refusal(int cpu_moe_layers,
                                                int n_layer, int n_expert) {

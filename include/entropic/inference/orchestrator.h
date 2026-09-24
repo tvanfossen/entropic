@@ -47,6 +47,11 @@ struct llama_model;    // Forward declaration for speculative compat (v2.1.11)
 
 namespace entropic {
 
+// v2.13.1: `gpu_layers: auto` types. Declared, not included — they live in
+// src/inference/ and the public header must not pull a private one in.
+struct GgufShape;
+struct AutoPlacement;
+
 /**
  * @brief Result metadata from a routing decision.
  * @version 1.9.2 — added adapter_name, adapter_swap_ms
@@ -951,6 +956,39 @@ private:
      * @version 2.13.0
      */
     void resolve_auto_gpu_layers(const std::string& tier_name);
+
+    /**
+     * @brief Bytes of the draft head, when speculative decode is configured.
+     * @return Draft GGUF size, or 0 when off or unreadable.
+     * @dg_internal
+     * @version 2.13.1
+     */
+    uint64_t resident_draft_bytes() const;
+
+    /**
+     * @brief Keep v2.13.0's estimate when the GGUF shape cannot be read.
+     * @param tier_name Tier being resolved.
+     * @param file_bytes Size of the tier's GGUF.
+     * @param why Why the shape was unusable, for the log.
+     * @dg_internal
+     * @version 2.13.1
+     */
+    void fall_back_to_weights_estimate(const std::string& tier_name,
+                                       uint64_t file_bytes, const char* why);
+
+    /**
+     * @brief State what `gpu_layers: auto` decided, and from what.
+     * @param tier_name Tier being resolved.
+     * @param shape The model's GGUF shape.
+     * @param placement The chosen placement.
+     * @param file_bytes Size of the tier's GGUF.
+     * @dg_internal
+     * @version 2.13.1
+     */
+    void log_auto_placement(const std::string& tier_name,
+                            const GgufShape& shape,
+                            const AutoPlacement& placement,
+                            uint64_t file_bytes) const;
 
     /**
      * @brief Refuse an explicit config that provably cannot work (gh#148).

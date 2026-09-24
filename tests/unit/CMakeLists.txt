@@ -109,6 +109,8 @@ add_executable(entropic-inference-tests
     # compared against the vendored LLM_FFN_EXPS_REGEX so a pin bump that
     # renames it fails here instead of silently offloading nothing.
     inference/expert_offload_test.cpp
+    # v2.13.1: gpu_layers auto derives a placement from the GGUF shape.
+    inference/auto_placement_test.cpp
     # gh#149 (v2.13.0): the REPORTING side of that same policy — a model
     # test's SKIP text must name the rule that actually fired. Pure string
     # mapping over tests/model/model_skip_reason.h, so it runs on CPU with

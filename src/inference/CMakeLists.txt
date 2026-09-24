@@ -15,6 +15,8 @@ set(INFERENCE_SOURCES
     # gh#142 (v2.11.0): free-VRAM query behind the admission gate that
     # orchestrator.h documented but never implemented.
     device_memory.cpp
+    # v2.13.1: metadata-only GGUF reads, so auto knows the real shape.
+    gguf_metadata.cpp
     secondary_model_loader.cpp
     speculative_compat.cpp
     adapter_manager.cpp

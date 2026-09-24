@@ -20,6 +20,8 @@
 #include "device_memory.h"
 #include "partial_offload.h"   // gh#148 refusal predicates
 #include "vram_footprint.h"
+#include "gguf_metadata.h"   // v2.13.1: auto reads the model's real shape
+#include "auto_placement.h"   // v2.13.1: auto solves the footprint estimator
 #include "response_parse.h"
 #include "grammar_source.h"    // gh#154: provenance for the result record
 #include "mtp_envelope.h"
@@ -1343,7 +1345,7 @@ void ModelOrchestrator::log_fit_recommendation(
  * @param tier_name Tier being admitted.
  * @dg_internal
  * @req REQ-INFER-019
- * @version 2.13.0
+ * @version 2.13.1
  */
 void ModelOrchestrator::resolve_auto_gpu_layers(const std::string& tier_name) {
     auto it = config_.models.tiers.find(tier_name);
@@ -1359,13 +1361,102 @@ void ModelOrchestrator::resolve_auto_gpu_layers(const std::string& tier_name) {
                      it->second.gpu_layers);
         return;
     }
-    const int layers = partial_gpu_layers_for(
-        static_cast<uint64_t>(file_bytes), vram_budget_bytes_);
-    logger->info("[residency] tier '{}': gpu_layers=auto -> {} "
-                 "({} MiB model, {} MiB free VRAM)", tier_name, layers,
-                 file_bytes / (1024 * 1024),
-                 vram_budget_bytes_ / (1024 * 1024));
+
+    // v2.13.1: read the model's actual shape instead of assuming 30 layers
+    // and `file_bytes / 30` per layer. A metadata-only open costs the header
+    // and the tensor index — no tensor data — regardless of file size.
+    const GgufShape shape = read_gguf_shape(it->second.path);
+    FootprintInputs base = footprint_inputs_for(
+        it->second, static_cast<uint64_t>(file_bytes),
+        config_.vram_reserve_mb);
+    base.draft_bytes = resident_draft_bytes();
+
+    const AutoPlacement placement =
+        derive_auto_placement(shape, base, vram_budget_bytes_,
+                              it->second.n_ubatch);
+    if (!placement.known) {
+        fall_back_to_weights_estimate(tier_name, file_bytes, placement.reason);
+        return;
+    }
+
+    log_auto_placement(tier_name, shape, placement, file_bytes);
+    it->second.gpu_layers = placement.gpu_layers;
+    it->second.cpu_moe_layers = placement.cpu_moe_layers;
+}
+
+/**
+ * @brief Bytes of the draft head, when speculative decode is configured.
+ *
+ * v2.13.1: priced nowhere before. Small in absolute terms (225 MiB for
+ * `mtp_a4b`) and decisive on an 11 GiB card against a 9.3 GiB trunk.
+ *
+ * @return Draft GGUF size, or 0 when speculative is off or unreadable.
+ * @dg_internal
+ * @version 2.13.1
+ */
+uint64_t ModelOrchestrator::resident_draft_bytes() const {
+    if (!config_.inference.speculative.enabled) { return 0; }
+    std::error_code ec;
+    const auto bytes = std::filesystem::file_size(
+        config_.inference.speculative.draft.path, ec);
+    return ec ? 0ull : static_cast<uint64_t>(bytes);
+}
+
+/**
+ * @brief Keep v2.13.0's estimate when the model's shape cannot be read.
+ *
+ * Falling back is not the same as guessing: the weights-only estimate is
+ * what shipped, so a model whose metadata is unreadable behaves exactly as
+ * it did rather than losing `auto` entirely.
+ *
+ * @param tier_name Tier being resolved.
+ * @param file_bytes Size of the tier's GGUF.
+ * @param why Why the shape was unusable, for the log.
+ * @dg_internal
+ * @version 2.13.1
+ */
+void ModelOrchestrator::fall_back_to_weights_estimate(
+    const std::string& tier_name, uint64_t file_bytes, const char* why) {
+    auto it = config_.models.tiers.find(tier_name);
+    if (it == config_.models.tiers.end()) { return; }
+    const int layers = partial_gpu_layers_for(file_bytes, vram_budget_bytes_);
+    logger->warn("[residency] tier '{}': gpu_layers=auto could not read the "
+                 "model's shape ({}) — falling back to the weights-only "
+                 "estimate, {} layers", tier_name, why, layers);
     it->second.gpu_layers = layers;
+}
+
+/**
+ * @brief State what auto decided and what it decided it from.
+ *
+ * The operator asked the engine to choose; the log is where the choice is
+ * accountable. It names the placement, the reason, the estimate, the free
+ * VRAM it was measured against, and the shape it was derived from.
+ *
+ * @param tier_name Tier being resolved.
+ * @param shape The model's GGUF shape.
+ * @param placement The chosen placement.
+ * @param file_bytes Size of the tier's GGUF.
+ * @dg_internal
+ * @version 2.13.1
+ */
+void ModelOrchestrator::log_auto_placement(
+    const std::string& tier_name, const GgufShape& shape,
+    const AutoPlacement& placement, uint64_t file_bytes) const {
+    const std::string experts = placement.cpu_moe_layers > 0
+        ? fmt::format(", {} layers' experts host-side",
+                      placement.cpu_moe_layers)
+        : std::string();
+    logger->info("[residency] tier '{}': gpu_layers=auto -> {} of {} layers{} "
+                 "— {} ({} MiB estimated of {} MiB free; {} MiB model, "
+                 "{} experts)",
+                 tier_name,
+                 placement.fully_resident ? shape.block_count
+                                          : placement.gpu_layers,
+                 shape.block_count, experts,
+                 placement.reason, placement.bytes / (1024 * 1024),
+                 vram_budget_bytes_ / (1024 * 1024),
+                 file_bytes / (1024 * 1024), shape.expert_count);
 }
 
 /**

@@ -285,7 +285,11 @@ engine change in it:
   What does not fit an 11 GiB card is *several* arms in one process — a later
   arm building its context on top of an earlier one fails to allocate the
   compute pp buffers. Invoke it anchored, `--filter
-  "gh108-config-benchmark-mtp-a4b-iq2"`, and it has ~1.4 GiB of headroom.
+  "gh108-config-benchmark-mtp-a4b-iq2"`, and it fits — but not comfortably.
+  Measured: trunk 9535.79 MiB, MTP head 225.21 MiB, KV 115.31 MiB, compute
+  buffers up to 520.61 MiB, against ~11162 MiB usable. The log reads **712 MiB
+  free at the moment the head loads**, leaving on the order of 500 MiB once it
+  is resident. That is the budget, not room to grow into.
   Making the four-arm harness release between arms is tracked by gh#167 and
   gh#180. Nothing else in the matrix depends on it.
 - **Expert-tensor offload is a prototype, default off, and unmeasured by the

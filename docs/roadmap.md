@@ -120,14 +120,29 @@ carries behavioural changes a consumer meets without editing config.
 - Bare tool-call turns are no longer logged as reasoning faults (gh#159)
 - Model-test skips state their real reason (gh#149)
 
-**Gate:** 87/87 model tests passed, 0 skipped, 0 failed, 3 flaky, at
-`e4382f5` on a GTX 1080 Ti; CPU suite 1924/1924; TSan 36/36 with zero
+**Gate:** 86/87 model tests passed, 0 skipped, 1 failed, 2 flaky, at
+`f64dfb2` on a GTX 1080 Ti; CPU suite 1925/1925; TSan 36/36 with zero
 warnings. Audit record attached to the release as
-`model-results-v2.13.0.json`.
+`model-results-v2.13.0.json`, which from this release also carries
+`built_version` — what the tested build held, as opposed to what the
+tree claimed.
 
-**Not done:** the `[mtp-a4b-iq2]` bench arm does not allocate its
-compute pp buffers on an 11 GiB card (gh#167, gh#180). gh#163 was
-investigated and reproduced no defect; evidence tests shipped.
+The one failure is `test-outside-root-approval`, on one assertion of 15:
+the lead never issued the second of two requested reads, so the path
+approver was never consulted about it. The other 14 verify the feature.
+It belongs to a class of assertions that only became real this release —
+a test helper used to return the whole conversation, so an assertion
+could match the test's own seed and pass while the model said nothing —
+and which a small lead now satisfies about two times in three.
+
+**Measured late:** the `[mtp-a4b-iq2]` bench arm runs when invoked as the
+sole arm in its process; what exceeds an 11 GiB card is several arms
+sharing one (gh#167, gh#180). Fully resident it gives 52.46 → 61.05
+tok/s, MTP +16.33 % against a 0.02 % floor — against 18.86 tok/s and no
+measurable MTP gain for the same model at Q4 with 18 of 30 layers. On
+this hardware class, making the model fit beats placing it well by 2.8×.
+
+gh#163 was investigated and reproduced no defect; evidence tests shipped.
 
 Issues: [gh#148](https://github.com/tvanfossen/entropic/issues/148),
 [gh#149](https://github.com/tvanfossen/entropic/issues/149),

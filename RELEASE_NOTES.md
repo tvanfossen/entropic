@@ -220,13 +220,22 @@ measures the harness as much as the subject.
 | MTP, partially resident 26B-A4B (18 of 30 layers) | **~0 %** — −0.92 % and +0.82 % across two runs, despite a *higher* accept rate |
 | Expert offload (26B-A4B) | 18.2 tok/s, rising to 22.6 tok/s once the freed VRAM holds the experts again |
 | MTP on top of expert offload | **+4.16 %** |
+| MTP, **fully resident** 26B-A4B at IQ2 (30 of 30 layers) | **+16.33 %** — 52.46 → 61.05 tok/s against a 0.02 % floor |
 
-The middle row is the finding. Accept rate is not the predictor once the model
-is not fully resident — a drafted token still costs a host-to-device round trip
-for the layers that live in RAM. Expert offload matters here because freeing
-VRAM is what lets the card hold experts again, and only then does MTP pay at
-all. The performance assertion in the suite is now gated on **resident
+The middle rows are the finding. Accept rate is not the predictor once the
+model is not fully resident — a drafted token still costs a host-to-device
+round trip for the layers that live in RAM. Expert offload matters here because
+freeing VRAM is what lets the card hold experts again, and only then does MTP
+pay at all. The performance assertion in the suite is now gated on **resident
 fraction**, not on which test is running.
+
+The last row is what that rule predicts, tested. The *same* 26B-A4B, quantized
+until it fits an 11 GiB card instead of being placed cleverly across one, runs
+**52.46 tok/s against 18.86** — 2.8× — and MTP goes from buying nothing to
+**+16.33 %**, clearing the strict fully-resident bar of 5.02 %. On this class
+of hardware, making the model fit beats placing it well, and it is not close.
+A prior arithmetic estimate of 70–145 tok/s for this configuration was
+optimistic by 1.3–2.8×; the direction held, the magnitude did not.
 
 ## Verification
 
@@ -271,12 +280,14 @@ engine change in it:
 
 ## Known limitations
 
-- **`[mtp-a4b-iq2]` does not run.** The IQ2 quant of the 26B-A4B *fits* the
-  11 GiB card; the four-arm harness plus the MTP head does not — allocation of
-  the compute pp buffers fails. Letting a bench tier set `n_ubatch` got it
-  closer and did not get it there. The arm is committed and currently
-  non-running, tracked by gh#167 and gh#180. Nothing else in the matrix depends
-  on it.
+- **`[mtp-a4b-iq2]` runs only as the sole arm in its process.** It now runs and
+  reports (see Measured, above): fully resident, 52.46 → 61.05 tok/s, +16.33 %.
+  What does not fit an 11 GiB card is *several* arms in one process — a later
+  arm building its context on top of an earlier one fails to allocate the
+  compute pp buffers. Invoke it anchored, `--filter
+  "gh108-config-benchmark-mtp-a4b-iq2"`, and it has ~1.4 GiB of headroom.
+  Making the four-arm harness release between arms is tracked by gh#167 and
+  gh#180. Nothing else in the matrix depends on it.
 - **Expert-tensor offload is a prototype, default off, and unmeasured by the
   admission math.** `estimate_footprint_bytes` and `gpu_layers: auto` still
   price whole layers, so a prototype user states `gpu_layers` explicitly and

@@ -1589,6 +1589,7 @@ struct PrefillPoint {
     int prefill_tokens = 0;   ///< Reported by generations[] (gh#194).
     double ttft_ms = 0.0;     ///< Wall clock around a max_tokens=1 call.
     double prefill_tok_s = 0.0;
+    double decode_tok_s = 0.0;  ///< WARM decode, same context, after prefill.
 };
 
 /**
@@ -1662,6 +1663,25 @@ PrefillPoint measure_cold_prefill(const BenchModel& m,
         p.prefill_tok_s =
             static_cast<double>(p.prefill_tokens) / p.ttft_ms * 1000.0;
     }
+
+    // Decode, on the SAME context the cold pass just filled — so it is warm
+    // by construction and measures the bandwidth-bound half. Without this the
+    // prefill figures alone would recommend trading layers for batch, and
+    // decode is exactly what that trade should cost: it streams every weight
+    // per token and gains nothing from a larger batch.
+    entropic::GenerationParams decode = params;
+    decode.max_tokens = 128;
+    const auto d0 = std::chrono::steady_clock::now();
+    const auto dres = orch->generate({u}, decode, "plain");
+    const auto d1 = std::chrono::steady_clock::now();
+    if (dres.error_code == ENTROPIC_OK && dres.token_count > 0) {
+        const double ms =
+            std::chrono::duration<double, std::milli>(d1 - d0).count();
+        if (ms > 0.0) {
+            p.decode_tok_s =
+                static_cast<double>(dres.token_count) / ms * 1000.0;
+        }
+    }
     return p;
 }
 
@@ -1700,13 +1720,13 @@ void run_prefill_residency_bench(
     std::printf("\ngh193 COLD PREFILL vs RESIDENCY — %s\n", base.label.c_str());
     std::printf("  one cold pass per level, max_tokens=1, prompt ~%d tokens\n",
                 points.empty() ? 0 : points.front().prefill_tokens);
-    std::printf("  %-10s %-9s %-9s %-12s %s\n",
+    std::printf("  %-10s %-9s %-9s %-11s %-14s %s\n",
                 "gpu_layers", "resolved", "n_ubatch", "TTFT ms",
-                "prefill tok/s");
+                "prefill tok/s", "decode tok/s");
     for (const auto& p : points) {
-        std::printf("  %-10s %-9d %-9d %-12.1f %.1f\n",
+        std::printf("  %-10s %-9d %-9d %-11.1f %-14.1f %.1f\n",
                     p.gpu_layers.c_str(), p.resolved_layers, p.n_ubatch,
-                    p.ttft_ms, p.prefill_tok_s);
+                    p.ttft_ms, p.prefill_tok_s, p.decode_tok_s);
     }
     if (points.size() >= 2) {
         const double best = points.front().prefill_tok_s;

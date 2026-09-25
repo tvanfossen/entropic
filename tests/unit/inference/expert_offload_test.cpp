@@ -286,13 +286,18 @@ SCENARIO("v2.13.0: impossible expert-offload combinations are refused loudly",
         cfg.cpu_moe_layers = 8;
         cfg.gpu_layers_auto = true;
 
-        THEN("it is refused, because the admission math does not model "
-             "expert placement") {
+        // v2.13.1: still refused, and for a BETTER reason. Auto now derives
+        // the expert split itself from the GGUF's real expert-tensor bytes,
+        // so this is no longer "auto cannot model expert placement" — it is
+        // "you asked two things to decide one placement". The refusal is
+        // unchanged; only its explanation was false and is now true.
+        THEN("it is refused, because auto derives the split itself") {
             const auto why = expert_offload_conflict_reason(cfg);
             REQUIRE_FALSE(why.empty());
             INFO(why);
             CHECK(why.find("gpu_layers: auto") != std::string::npos);
-            CHECK(why.find("WHOLE layer") != std::string::npos);
+            CHECK(why.find("derives the expert split") != std::string::npos);
+            CHECK(why.find("let auto choose") != std::string::npos);
         }
     }
 

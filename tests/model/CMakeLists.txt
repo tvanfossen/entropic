@@ -213,6 +213,17 @@ add_model_test(test-e4-multi-turn         test_e4_multi_turn.cpp)
 add_model_test(test-e5-compaction         test_e5_compaction.cpp)
 add_model_test(test-e6-state-transitions  test_e6_state_transitions.cpp)
 add_model_test(test-e7-delegation         test_e7_delegation.cpp)
+# v2.13.1: the shared 120s ceiling is too tight for this one, and the
+# evidence says so rather than the failures doing. Measured passing runs
+# span 86.3s (v2.13.0 gate) to ~107s — a 1.12x margin at worst — and three
+# timed-out runs were compared for WORK done, not just wall time: 25/23/18
+# loop iterations, 3/3/2 delegations, 4700/4458/4796 tokens generated,
+# 24458/26501/20001 prefill tokens. The run that did the LEAST work also
+# timed out, which is the shape of variable throughput rather than of a
+# model taking a worse path. A multi-tier delegation turn re-prefills each
+# tier's tail; at ~24k prefill tokens it is the slowest scenario in the
+# suite by construction.
+set_tests_properties(model/test-e7-delegation PROPERTIES TIMEOUT 300)
 add_model_test(test-e8-mcp-auth           test_e8_mcp_auth.cpp)
 add_model_test(test-hook-lifecycle        test_hook_lifecycle.cpp)
 add_model_test(test-e9-dynamic-identity   test_e9_dynamic_identity.cpp)
@@ -519,6 +530,11 @@ set_tests_properties(
 # empty content while advising "Raise max_tokens" on a turn that finished
 # with finish=stop, which no budget increase can fix.
 add_model_test(test-gh137-thinking-strip test_gh137_thinking_strip.cpp)
+
+# v2.13.1: `gpu_layers: auto` against a real GGUF and a real card. The CPU
+# tests feed it synthetic shapes, which proves the arithmetic and nothing
+# about whether the metadata read returns what the model actually is.
+add_model_test(test-auto-placement-real test_auto_placement_real.cpp)
 set_tests_properties(model/test-gh137-thinking-strip PROPERTIES TIMEOUT 360)
 
 # gh#164 (v2.13.0): explicit release + lazy reload, on BOTH a plain-KV and a

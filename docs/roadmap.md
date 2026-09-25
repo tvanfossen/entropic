@@ -1253,6 +1253,46 @@ remain candidates for v2.3.x or later, awaiting prioritisation:
 Planned after 2.0.0 ships. Each item includes context and references
 for future planning sessions.
 
+### Inference backend as a PLUGIN boundary — the 3.0.0 headline
+
+`i_inference_backend.h` exists but backends are compile-time variants
+(architecture rule 4). MCP servers are already `dlopen` plugins with an
+`entropic_create_server()` factory (rule 3). 3.0.0 makes the inference
+backend the same shape, so a vendor NPU backend ships **without forking
+entropic**.
+
+**Why this is the right seam.** entropic's value is the agent loop —
+delegation, sessions, tools, grammar, residency. None of it is kernels. On
+an embedded accelerator you want that loop with somebody else's inference
+underneath, and the interface for that already exists; it is only bound at
+compile time.
+
+**What is reachable today vs what needs the plugin.** Backends vendored at
+the current llama.cpp pin: `hexagon` (Qualcomm NPU), `openvino` (Intel NPU),
+`cann` (Ascend), `opencl`, `vulkan`, `webgpu`, `sycl`, `et`, `zdnn`.
+
+| target | path | effort |
+|---|---|---|
+| Qualcomm / Hexagon | ggml backend IN TREE | compile-time variant |
+| Intel NPU, Ascend, Mali/Adreno | ggml backends IN TREE | compile-time variant |
+| **RKNN** (Rockchip), **DRP-AI** (Renesas), **EdgeTPU** | NOT ggml, do not run GGUF — vendor toolchains, pre-compiled models | one backend each, behind the plugin boundary |
+
+Prove the boundary with **one** non-ggml backend. RKNN is the most tractable:
+RK3588 is already in this repo's test vocabulary, and the board is
+obtainable.
+
+**Embedded compilability is a precondition, not a separate theme.**
+Cross-compilation, static/musl, a size budget, no-exceptions builds, and a
+supported-target matrix. The CPU `.so` is 17.5 MB today, which is already
+viable — that number is a budget to defend, not a problem to solve.
+
+**Explicitly NOT in scope: phase-aware tensor placement in llama.cpp.**
+Measured at 2.7-5.3% (v2.13.2 bench, gh#193) and the cost is a fork of
+ggml's allocator and graph-build layer against a pin this project bumps by
+~1,000 commits at a time. The same effort against prompt-cache hit rate is
+worth ~27% on the same turn and lives in code we own. Revisit only if the
+cache work lands and prefill is still the dominant term.
+
 ### SSM / Mamba Hybrid State Management
 
 Extract/restore recurrent hidden state for hybrid Mamba-Transformer models.

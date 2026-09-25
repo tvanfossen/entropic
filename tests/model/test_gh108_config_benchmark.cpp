@@ -1560,6 +1560,159 @@ nlohmann::json valid_summary(const BenchModel& m, const RunInfo& info,
 }
 
 /// @brief Run all four arms on one model and judge MTP against the floor.
+// ── gh#193: cold prefill against residency ───────────────────
+//
+// The four-arm bench above measures WARM DECODE over a short prompt. A
+// consumer demonstrated from log timestamps that this is not the cost that
+// dominates a real agentic turn: theirs carried a 7,879-character system
+// prompt plus tool schemas plus history, each tier re-prefilling its own
+// tail, and 516s of a 633s turn sat in three cold generations. Our
+// `18.95 tok/s` cannot see any of it.
+//
+// It also matters for v2.13.1's own design claim. `gpu_layers: auto` prefers
+// moving a MoE's experts host-side over dropping a layer, on the argument
+// that attention is what prefill leans on. Nothing in this repository
+// measured the prefill term, so that argument rested on decode figures that
+// do not contain it.
+//
+// So: one COLD pass per residency level, `max_tokens=1`, over a deliberately
+// large prompt. Wall time around that call is time-to-first-token — the
+// figure a user actually waits on. A fresh orchestrator per level is what
+// makes each pass cold; reusing one would measure the prompt cache.
+
+/// @brief One residency level's cold-prefill measurement. @version 2.13.2
+struct PrefillPoint {
+    std::string gpu_layers;   ///< As written in YAML.
+    int resolved_layers = 0;  ///< What the engine resolved it to.
+    int cpu_moe_layers = 0;   ///< Experts held host-side.
+    int prefill_tokens = 0;   ///< Reported by generations[] (gh#194).
+    double ttft_ms = 0.0;     ///< Wall clock around a max_tokens=1 call.
+    double prefill_tok_s = 0.0;
+};
+
+/**
+ * @brief A prompt large enough that prefill dominates the call.
+ * @param approx_tokens Rough token target.
+ * @return Repeated prose, sized to approximate the target.
+ * @utility
+ * @version 2.13.2
+ */
+std::string large_prompt(int approx_tokens) {
+    // ~1.3 tokens per word for English prose on this tokenizer family, so
+    // aim by word count and report the token figure the engine measures
+    // rather than trusting this estimate.
+    static const char* kPara =
+        "The depot inspection report records the culvert at mile marker "
+        "twelve as structurally sound, with minor spalling on the north "
+        "headwall and no observed scour at the outlet. Drainage capacity "
+        "was measured at design flow and found adequate. ";
+    const int words_per = 38;
+    const int reps = std::max(1, approx_tokens * 10 / 13 / words_per);
+    std::string out;
+    out.reserve(static_cast<size_t>(reps) * std::strlen(kPara) + 64);
+    for (int i = 0; i < reps; ++i) { out += kPara; }
+    out += "\n\nIn one word: is the culvert sound?";
+    return out;
+}
+
+/**
+ * @brief Measure one cold prefill at one residency level.
+ * @param m Bench model, with gpu_layers already set to the level.
+ * @param registry Bundled model registry.
+ * @param prompt The large prompt.
+ * @return The measurement.
+ * @utility
+ * @req REQ-INFER-019
+ * @version 2.13.2
+ */
+PrefillPoint measure_cold_prefill(const BenchModel& m,
+                                  entropic::config::BundledModels& registry,
+                                  const std::string& prompt) {
+    PrefillPoint p;
+    p.gpu_layers = m.gpu_layers;
+    p.cpu_moe_layers = m.cpu_moe_layers;
+
+    BenchProject project(m.label + "_" + m.gpu_layers);
+    auto orch = build_orchestrator(config_yaml(m, project.dir()), registry);
+    p.resolved_layers = describe_run(m, registry, *orch).resident_layers;
+
+    entropic::Message u;
+    u.role = "user";
+    u.content = prompt;
+    entropic::GenerationParams params;
+    params.temperature = 0.0f;
+    params.max_tokens = 1;  // prefill plus one token: this IS the TTFT call
+
+    const auto t0 = std::chrono::steady_clock::now();
+    const auto result = orch->generate({u}, params, "plain");
+    const auto t1 = std::chrono::steady_clock::now();
+    p.ttft_ms = std::chrono::duration<double, std::milli>(t1 - t0).count();
+
+    INFO("generation error: " << result.error_message);
+    REQUIRE(result.error_code == ENTROPIC_OK);
+    const auto records = orch->generation_records();
+    REQUIRE_FALSE(records.empty());
+    p.prefill_tokens = records.back().prefill_tokens;
+    // gh#194 shipped in v2.13.2. If this is 0 the figure below is
+    // meaningless, and silently reporting it would be worse than failing.
+    REQUIRE(p.prefill_tokens > 0);
+    if (p.ttft_ms > 0.0) {
+        p.prefill_tok_s =
+            static_cast<double>(p.prefill_tokens) / p.ttft_ms * 1000.0;
+    }
+    return p;
+}
+
+/**
+ * @brief Sweep residency and report what cold prefill costs at each level.
+ *
+ * Reports prefill tokens per second, which is the quantity that moves with
+ * placement. Deliberately makes no pass/fail claim about a THRESHOLD: this
+ * establishes a figure the repository has never had, and one sample per
+ * level cannot support a gate. What it does assert is that the measurement
+ * happened — prefill was non-zero and the placement resolved as asked.
+ *
+ * @param base Bench model; its gpu_layers is replaced per level.
+ * @param levels YAML gpu_layers values to sweep, most resident first.
+ * @utility
+ * @req REQ-INFER-019
+ * @version 2.13.2
+ */
+void run_prefill_residency_bench(const BenchModel& base,
+                                 const std::vector<std::string>& levels) {
+    entropic::config::BundledModels registry;
+    REQUIRE(load_registry(registry));
+    REQUIRE(registry.get(base.target_key) != nullptr);
+    skip_if_absent(base.target_key, registry.resolve(base.target_key));
+
+    const std::string prompt = large_prompt(6000);
+    std::vector<PrefillPoint> points;
+    for (const auto& level : levels) {
+        BenchModel m = base;
+        m.gpu_layers = level;
+        points.push_back(measure_cold_prefill(m, registry, prompt));
+    }
+
+    std::printf("\ngh193 COLD PREFILL vs RESIDENCY — %s\n", base.label.c_str());
+    std::printf("  one cold pass per level, max_tokens=1, prompt ~%d tokens\n",
+                points.empty() ? 0 : points.front().prefill_tokens);
+    std::printf("  %-10s %-10s %-10s %-12s %s\n",
+                "gpu_layers", "resolved", "cpu_moe", "TTFT ms", "prefill tok/s");
+    for (const auto& p : points) {
+        std::printf("  %-10s %-10d %-10d %-12.1f %.1f\n",
+                    p.gpu_layers.c_str(), p.resolved_layers, p.cpu_moe_layers,
+                    p.ttft_ms, p.prefill_tok_s);
+    }
+    if (points.size() >= 2) {
+        const double best = points.front().prefill_tok_s;
+        const double worst = points.back().prefill_tok_s;
+        if (worst > 0.0) {
+            std::printf("  most-resident is %.2fx the least-resident on "
+                        "prefill\n", best / worst);
+        }
+    }
+}
+
 void run_four_arm_bench(const BenchModel& m) {
     entropic::config::BundledModels registry;
     REQUIRE(load_registry(registry));
@@ -1849,4 +2002,29 @@ TEST_CASE("gh#153 MTP vs plain decode throughput — four arms, Gemma 4 26B-A4B 
         // label, trunk, head, gpu_layers, max_tokens, measured_rounds,
         // cpu_moe_layers (0 — every layer whole and on the card), n_ubatch.
         {"a4b_iq2", "gemma4_a4b_iq2", "mtp_a4b", "-1", 256, 4, 0, 128});
+}
+
+// gh#193: the figure the warm-decode arms above cannot see.
+//
+// A consumer showed from log timestamps that entropic's reported ms spans
+// prefill AND decode, and that in a real agentic turn prefill dominates —
+// ~24k prefill tokens against ~4.7k generated, with 516s of a 633s turn in
+// three cold generations. Our bench prompts are short and its trials repeat,
+// so every figure it produces is warm decode.
+//
+// It is also the term v2.13.1's MoE ordering rests on. `gpu_layers: auto`
+// moves experts host-side before it drops a layer because attention is what
+// prefill leans on — an argument this repository had never measured.
+//
+// The A4B at IQ2 is the right subject: it is the one model here that can be
+// fully resident AND partially offloaded on this card, so residency is the
+// only variable that moves between levels.
+TEST_CASE("gh#193: what cold prefill costs at each residency level",
+          "[benchmark][.][prefill-residency]") {
+    gh153::run_prefill_residency_bench(
+        // label, trunk, head, gpu_layers (replaced per level), max_tokens,
+        // measured_rounds, cpu_moe_layers, n_ubatch.
+        {"a4b_iq2_prefill", "gemma4_a4b_iq2", "mtp_a4b", "-1", 1, 1, 0, 128},
+        // Most resident first, so the printed ratio reads best-over-worst.
+        {"-1", "24", "18"});
 }

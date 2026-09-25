@@ -62,6 +62,22 @@ decode. Ubatch is the single-axis currency, so it is spent first.
   rising while the VRAM freed flattens, so there is nothing useful further
   down — a model that does not fit at 128 still pays in experts or layers.
 
+## Verification
+
+Gate ran at `7fd49c1`: **89 model tests passed, 0 failed, 0 skipped, 1 flaky**
+on a GTX 1080 Ti. CPU suite 1934/1934. The attached
+`model-results-v2.13.2.json` records `version` and `built_version` both as
+2.13.2 — what the tree claimed and what the tested build actually carried.
+
+This is the first fully green gate of the v2.13 line: v2.13.0 shipped 86/87
+and v2.13.1 ran 85/88. The difference is not this release's code. Six model
+tests assert on model prose at temperature 0.70 unseeded, one to three fail
+on any given run, and the failing set rotates — so a green run is a draw from
+that distribution, not proof the family is fixed. **It is not fixed, and it is
+not what gates this release.** The 89 includes `auto-placement-real`, which
+reads a real GGUF's shape and asserts the placement `auto` derives from it;
+that is the assertion that covers the change.
+
 ## Distribution
 
 - CPU tarball: `entropic-2.13.2-linux-x86_64-cpu.tar.gz` (sha256 in companion file)

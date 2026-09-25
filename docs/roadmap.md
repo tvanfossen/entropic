@@ -53,7 +53,7 @@ cite them.
 
 ---
 
-## v2.13.2 — the prefill term, and the lever auto was not using (IN PROGRESS)
+## v2.13.2 — the prefill term, and the lever auto was not using (STAGED)
 
 Two fixes and one measurement, all downstream of the same blind spot: this
 project had never measured prefill.
@@ -113,6 +113,11 @@ is unpredictable.** Fully resident, decode repeats within ±0.3 tok/s (0.7%).
 Partially offloaded, the same configuration swings ±2–3 tok/s — 20–28%,
 run to run, nothing changed. Predictability is a residency property and sits
 on no side of the ubatch trade.
+
+**Gate at `7fd49c1`: 89/89 model tests, 0 failed, 0 skipped, 1 flaky** on a
+GTX 1080 Ti; CPU 1934/1934; artifact `version` = `built_version` = 2.13.2.
+First fully green gate of the v2.13 line — and a draw from the prose-assertion
+distribution, not evidence that family is fixed.
 
 ---
 

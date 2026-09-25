@@ -53,7 +53,7 @@ cite them.
 
 ---
 
-## v2.13.1 — `gpu_layers: auto` reads the model instead of assuming it (IN PROGRESS)
+## v2.13.1 — `gpu_layers: auto` reads the model instead of assuming it (SHIPPED)
 
 `auto` exists so that fitting a new model is a decision the engine makes
 rather than a number an operator tunes. v2.13.0 shipped it deciding from
@@ -93,7 +93,18 @@ derived without knowing about the expert split, refusing a tier that fit —
 two estimators disagreeing about one tier, one call away from where the
 release removes exactly that.
 
-**Gate:** pending. Issues: [gh#192](https://github.com/tvanfossen/entropic/issues/192).
+**Gate:** 88/88 model tests passed, 0 skipped, 0 failed, 3 flaky, at `b6edf33`
+on a GTX 1080 Ti; CPU 1933/1933; artifact `version` = `built_version` = 2.13.1.
+
+One test in the suite was converted to get there, on measurement rather than
+on it being in the way. Five independent runs of the six tests that assert on
+model prose gave 1.00, 1.00, 1.00, 0.83, 0.50 and **0.18** — so there was no
+"family", three were perfect, and the assertion COUNT predicted nothing. At
+0.18 three retries reach ~45%, so a larger retry budget was never the lever;
+`test-gh169-gh181-budget-carry` was converted on the "prose triggers, fact
+decides" pattern and the other five were deliberately left alone.
+
+Issues: [gh#192](https://github.com/tvanfossen/entropic/issues/192).
 Filed alongside: [gh#193](https://github.com/tvanfossen/entropic/issues/193)
 (the benchmark measures warm decode; real turns are cold-prefill dominated),
 [gh#194](https://github.com/tvanfossen/entropic/issues/194)

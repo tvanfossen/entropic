@@ -1345,7 +1345,7 @@ void ModelOrchestrator::log_fit_recommendation(
  * @param tier_name Tier being admitted.
  * @dg_internal
  * @req REQ-INFER-019
- * @version 2.13.1
+ * @version 2.13.2
  */
 void ModelOrchestrator::resolve_auto_gpu_layers(const std::string& tier_name) {
     auto it = config_.models.tiers.find(tier_name);
@@ -1382,6 +1382,11 @@ void ModelOrchestrator::resolve_auto_gpu_layers(const std::string& tier_name) {
     log_auto_placement(tier_name, shape, placement, file_bytes);
     it->second.gpu_layers = placement.gpu_layers;
     it->second.cpu_moe_layers = placement.cpu_moe_layers;
+    // v2.13.2: only ever LOWERED, and only when that is what bought full
+    // residency. 0 means auto did not touch it, so an operator's own value
+    // is preserved unless it was the thing standing between them and the
+    // whole model on the card.
+    if (placement.n_ubatch > 0) { it->second.n_ubatch = placement.n_ubatch; }
 }
 
 /**
@@ -1438,7 +1443,7 @@ void ModelOrchestrator::fall_back_to_weights_estimate(
  * @param placement The chosen placement.
  * @param file_bytes Size of the tier's GGUF.
  * @dg_internal
- * @version 2.13.1
+ * @version 2.13.2
  */
 void ModelOrchestrator::log_auto_placement(
     const std::string& tier_name, const GgufShape& shape,
@@ -1447,16 +1452,32 @@ void ModelOrchestrator::log_auto_placement(
         ? fmt::format(", {} layers' experts host-side",
                       placement.cpu_moe_layers)
         : std::string();
-    logger->info("[residency] tier '{}': gpu_layers=auto -> {} of {} layers{} "
+    // v2.13.2: an operator who reads "30 of 30 layers" and then measures a
+    // prefill rate half what they expected is owed the reason in the same
+    // line that made the trade.
+    const std::string ubatch = placement.n_ubatch > 0
+        ? fmt::format(", n_ubatch lowered to {}", placement.n_ubatch)
+        : std::string();
+    logger->info("[residency] tier '{}': gpu_layers=auto -> {} of {} layers{}{} "
                  "— {} ({} MiB estimated of {} MiB free; {} MiB model, "
                  "{} experts)",
                  tier_name,
                  placement.fully_resident ? shape.block_count
                                           : placement.gpu_layers,
-                 shape.block_count, experts,
+                 shape.block_count, experts, ubatch,
                  placement.reason, placement.bytes / (1024 * 1024),
                  vram_budget_bytes_ / (1024 * 1024),
                  file_bytes / (1024 * 1024), shape.expert_count);
+    // Stated separately and always, because it is the figure that decides
+    // whether the placement survives a longer prompt or one more tool
+    // schema — and auto accepts a placement that merely fits.
+    logger->info("[residency] tier '{}': {} MiB of VRAM left free after this "
+                 "placement{}", tier_name,
+                 placement.margin_bytes / (1024 * 1024),
+                 placement.margin_bytes < 256ull * 1024 * 1024
+                     ? " — thin; growth in prompt or tool schemas may push"
+                       " this tier off the card"
+                     : "");
 }
 
 /**

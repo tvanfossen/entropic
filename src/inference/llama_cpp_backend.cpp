@@ -159,14 +159,31 @@ void finalize_result(GenerationResult& result,
  * @param n_generated Tokens generated.
  * @param params      Generation params (max_tokens for the length check).
  * @param t0          Loop start time, passed through to finalize_result.
+ * @param prefill_tokens Prompt tokens this turn actually decoded (gh#194).
  * @utility
- * @version 2.10.4
+ * @version 2.13.2
  */
 void finalize_generation(GenerationResult& result,
     const std::string& generated, int n_generated,
     const GenerationParams& params,
-    std::chrono::steady_clock::time_point t0)
+    std::chrono::steady_clock::time_point t0,
+    int prefill_tokens)
 {
+    // gh#194 (v2.13.2): publish the prefill, which was computed and dropped.
+    //
+    // `last_prefill_tokens_` is set by run_prefill_cached — the path every
+    // decode takes — and was only ever LOGGED. The published field was
+    // assigned in exactly one place, spec_finalize, from a counter local to
+    // the speculative loop that counts only the chunks that loop decodes
+    // itself; the shared prefill has normally already done the prompt, so it
+    // read 0 even there.
+    //
+    // It goes HERE rather than in a dispatcher because there are four decode
+    // workers (plain, cancellable, streaming, streaming-cancellable) and they
+    // all end at this call. Patching dispatchers missed the streaming path
+    // twice while writing this fix — the overload pair is exactly the seam a
+    // per-path fix falls through.
+    result.prefill_tokens = prefill_tokens;
     if (n_generated >= params.max_tokens
             && result.finish_reason.empty()) {
         result.finish_reason = "length";
@@ -3125,7 +3142,7 @@ entropic_error_t LlamaCppBackend::mtmd_prefill(
  * @return GenerationResult; finish_reason "cancelled" with
  *         ENTROPIC_ERROR_CANCELLED when the flag was observed set.
  * @req REQ-INFER-005
- * @version 2.8.3
+ * @version 2.13.2
  */
 GenerationResult LlamaCppBackend::run_sampling_loop(
     const GenerationParams& params,
@@ -3162,7 +3179,8 @@ GenerationResult LlamaCppBackend::run_sampling_loop(
         }
         break;
     }
-    finalize_generation(result, generated, n_generated, params, t0);
+    finalize_generation(result, generated, n_generated, params, t0,
+                        last_prefill_tokens_);
     return result;
 }
 
@@ -3292,7 +3310,7 @@ GenerationResult LlamaCppBackend::do_generate(
 /**
  * @brief Text-only generate body (v2.1.8, extracted for knots SLOC).
  * @dg_internal
- * @version 2.8.3
+ * @version 2.13.2
  */
 GenerationResult LlamaCppBackend::do_generate_text_only(
     const std::vector<Message>& messages,
@@ -3335,7 +3353,8 @@ GenerationResult LlamaCppBackend::do_generate_text_only(
         }
     }
 
-    finalize_generation(result, generated, n_generated, params, t0);
+    finalize_generation(result, generated, n_generated, params, t0,
+                        last_prefill_tokens_);
     return result;
 }
 
@@ -3382,7 +3401,7 @@ GenerationResult LlamaCppBackend::do_generate(
  * @return GenerationResult; finish_reason "cancelled" with
  *         ENTROPIC_ERROR_CANCELLED when the flag was observed set.
  * @req REQ-INFER-005
- * @version 2.8.3
+ * @version 2.13.2
  */
 GenerationResult LlamaCppBackend::do_generate_text_only(
     const std::vector<Message>& messages,
@@ -3430,7 +3449,8 @@ GenerationResult LlamaCppBackend::do_generate_text_only(
         }
     }
 
-    finalize_generation(result, generated, n_generated, params, t0);
+    finalize_generation(result, generated, n_generated, params, t0,
+                        last_prefill_tokens_);
     return result;
 }
 
@@ -3472,7 +3492,7 @@ GenerationResult LlamaCppBackend::do_generate_streaming(
  * @return GenerationResult; finish_reason "cancelled" with
  *         ENTROPIC_ERROR_CANCELLED when the flag was observed set.
  * @req REQ-INFER-005
- * @version 2.8.3
+ * @version 2.13.2
  */
 GenerationResult LlamaCppBackend::do_generate_streaming_text_only(
     const std::vector<Message>& messages,
@@ -3516,7 +3536,8 @@ GenerationResult LlamaCppBackend::do_generate_streaming_text_only(
             break;
         }
     }
-    finalize_generation(result, generated, n_generated, params, t0);
+    finalize_generation(result, generated, n_generated, params, t0,
+                        last_prefill_tokens_);
     return result;
 }
 

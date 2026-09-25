@@ -2,6 +2,72 @@ _Last 10 releases. Older history: [OLD_NOTES.md](OLD_NOTES.md). Kept short
 because `gh release create --notes-file` hits GitHub's 125,000-char release
 body limit once this file accumulates full project history — see v2.9.3._
 
+# entropic v2.13.2
+
+Patch release — **prefill becomes visible, and `auto` starts using the lever
+it was ignoring.**
+
+## Read this first — behaviour that changes without you asking
+
+- **`generations[].prefill_tokens` now reports the real figure.** It
+  published `0` on every code path since the field shipped in v2.13.0. The
+  engine always counted prefill and always logged it; the result struct never
+  received it. If you built anything against that zero, it is about to become
+  a number in the hundreds or thousands.
+- **The `[residency]` log now states the margin, every time.** `auto`
+  accepts a placement that merely fits, and on this card the 26B-A4B at IQ2
+  fits fully resident by **15 MiB**. That is measured and it runs, but it is a
+  coincidence rather than a configuration: a longer system prompt, one more
+  tool schema in a tier's `allowed_tools`, or a KV change flips it back to
+  partial residency, with throughput as your first signal. The engine now
+  tells you how much room is left, and says so explicitly under 256 MiB.
+- **`gpu_layers: auto` may lower your `n_ubatch`.** When full residency is
+  reachable only at a smaller micro-batch, `auto` now takes that trade
+  instead of dropping layers or displacing experts — 512, then 256, then 128,
+  stopping at the first that fits. It only ever lowers it, only to buy full
+  residency, and the `[residency]` log line names the reduction beside the
+  placement. If you set `n_ubatch` yourself and the model already fits, it is
+  left alone.
+
+## Why that trade
+
+This project had never measured prefill. The benchmark timed warm decode over
+a short prompt, while a real agentic turn is dominated by cold prefill over a
+large one — a consumer measured ~24k prefill tokens against ~4.7k generated in
+one turn. Measuring the missing half reversed a recommendation we were one
+step from shipping.
+
+Eight configurations, four iterations each, 26B-A4B at IQ2 on a GTX 1080 Ti.
+At a fixed 24 layers, `n_ubatch` 128→512 buys prefill **2.02×** and costs
+decode 1.21×. At a fixed `n_ubatch`, dropping 30→24 layers costs prefill
+1.79× **and** decode 2.93×. Both levers move prefill; only residency moves
+decode. Ubatch is the single-axis currency, so it is spent first.
+
+## Engine bug fixes
+
+- **gh#194** — `finalize_generation` now carries `prefill_tokens` into the
+  result. Fixed at the one point downstream of all four decode workers, not
+  at the three call sites where it was first attempted.
+- **gh#193** — new cold-prefill benchmark arm sweeping residency against
+  `n_ubatch`, reporting TTFT, prefill tok/s and decode tok/s per point.
+
+## Known limitations
+
+- **Partial offload is unpredictable, not merely slow.** Fully resident,
+  decode repeats within ±0.3 tok/s (0.7%). Partially offloaded, the same
+  unchanged configuration swings ±2–3 tok/s — 20–28% run to run. If you are
+  showing a user a progress estimate, a partially-offloaded model cannot
+  honestly support one. Not fixed here; recorded because it is measured.
+- The `n_ubatch` ladder stops at 128. Below that the prefill cost keeps
+  rising while the VRAM freed flattens, so there is nothing useful further
+  down — a model that does not fit at 128 still pays in experts or layers.
+
+## Distribution
+
+- CPU tarball: `entropic-2.13.2-linux-x86_64-cpu.tar.gz` (sha256 in companion file)
+- CUDA tarball: `entropic-2.13.2-linux-x86_64-cuda.tar.gz` (sha256 in companion file)
+- Python wrapper: `pip install entropic-engine==2.13.2` then `entropic install-engine`
+
 # entropic v2.13.1
 
 Patch release — **`gpu_layers: auto` now reads the model instead of assuming
@@ -1153,58 +1219,3 @@ parse snapshot, which nothing previously cleared.
 
 Model tests for qwen36 and gemma4-a4b remain skipped on the release box for
 lack of disk for those GGUFs; both families retain full CPU unit coverage.
-
-# entropic v2.10.2
-
-Patch release — **the bridge no longer answers `"(no response)"` when the
-answer is already in the conversation (gh#130).**
-
-## The bug
-
-A turn that ends without `entropic.complete` leaves a trailing **empty**
-assistant message — e.g. anti-spiral rejects the lead's tool call and the next
-generation returns `finish=stop`, 0 tool calls, 0 chars.
-`extract_final_text` scanned backwards, found that empty message first, and
-returned it, never looking further back. Operators got the literal string
-`"(no response)"` while the real answer sat one or two messages earlier.
-Reported at ~4 of 16 runs in a live consumer acceptance matrix.
-
-The worst case involved a completed sub-tier delegation. `fold_delegation_summary`
-(gh#119, v2.9.17) already folds a child's summary into the lead's empty
-assistant turn precisely so this function can find it — but a *later* terminal
-empty assistant turn shadowed it, so an answer the engine had correctly
-produced was thrown away at the last step.
-
-**Fix:** skip empty assistant messages and keep scanning backwards.
-
-## Better diagnostics on a genuinely empty turn
-
-`"(no response)"` could not distinguish an engine failure from a model that
-simply stalled. It now says which:
-
-- `(no response: the turn produced no assistant message at all)`
-- `(no response: the turn ended with every assistant message empty — the tier
-  most likely stopped without calling entropic.complete)`
-- `(no response: the engine returned no readable conversation)`
-
-`"(no response"` remains the leading substring, so prefix/substring matching on
-the old sentinel still fires. **Exact-equality matching on `"(no response)"`
-will not** — adjust if you match that string exactly.
-
-## Async ask had it worse
-
-`derive_async_final_state` had no fallback at all: a stalled async
-`entropic.ask` returned `status: "done"` with empty text — less diagnosable
-than the sync path's sentinel. All three ask paths (plain, streaming, async)
-now share one selection rule.
-
-## A note on scope
-
-The report suggested also falling back to "the most recent delegation/pipeline
-result text." That is **not** implemented, deliberately. Tool and delegation
-results are injected as `role: "user"`, and the serialized conversation carries
-only `{role, content}` — so at that layer a delegation summary is
-indistinguishable from the operator's own prompt, and using it would echo the
-user's question back as the answer. Delegation summaries reach the extractor
-through the assistant-turn fold instead. A regression test pins that a user
-message is never returned as the answer.

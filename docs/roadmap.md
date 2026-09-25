@@ -12,7 +12,7 @@ cite them.
 
 ---
 
-## Current State (v2.13.0 on `develop`)
+## Current State (v2.13.1 on `main`; v2.13.2 in progress)
 
 - C++20 engine, pure C ABI at every `.so` boundary
 - Unit + regression tests (CPU pre-commit gate), ThreadSanitizer preset
@@ -50,6 +50,69 @@ cite them.
 > per-version GitHub issues, and the design decision log at the bottom
 > of `docs/architecture-cpp.md`. Only v2.13.0 below resumes the
 > convention. Do not read the absence of a section as absence of work.
+
+---
+
+## v2.13.2 — the prefill term, and the lever auto was not using (IN PROGRESS)
+
+Two fixes and one measurement, all downstream of the same blind spot: this
+project had never measured prefill.
+
+**gh#194 — `generations[].prefill_tokens` published 0.** The engine counted
+prefill correctly and logged it; `finalize_generation` never copied it into
+the result, so every one of the four decode paths (plain, cancellable,
+streaming, streaming-cancellable) handed consumers a zero. It blocked a
+consumer outright, and it blocked us: a test assertion we wanted to convert
+from prose to fact had no fact to read.
+
+**gh#193 — the benchmark measured the half of the turn that was cheap.** It
+timed warm decode over a short prompt. A real agentic turn is dominated by
+cold prefill over a large one — a consumer measured ~24k prefill tokens
+against ~4.7k generated in a single turn. A new arm sweeps residency against
+`n_ubatch` and reports both terms, cold.
+
+**What it found.** Prefill and decode do not respond to the same lever, and
+the benchmark that reported only one of them recommended the wrong policy.
+Eight configurations, four iterations each, 26B-A4B at IQ2:
+
+| layers | n_ubatch | prefill tok/s | decode tok/s |
+|--------|----------|---------------|--------------|
+| 30     | 128      | 619.3 ±4.9    | 44.2 ±0.3    |
+| 28     | 256      | 657.8 ±4.9    | 25.9 ±2.7    |
+| 24     | 128      | 345.9 ±7.9    | 15.1 ±3.1    |
+| 24     | 256      | 522.0 ±12.4   | 15.6 ±2.1    |
+| 24     | 512      | 682.3 ±7.7    | 12.5 ±2.8    |
+| 17     | 128      | 227.3 ±7.6    |  9.2 ±2.2    |
+| 17     | 512      | 512.6 ±7.6    |  7.8 ±3.1    |
+| 17     | 1024     | 508.3 ±14.7   |  9.2 ±2.6    |
+
+Read the fixed-layer rows, which is the only way to attribute anything: at 24
+layers, `n_ubatch` 128→512 buys prefill 2.02× and costs decode 1.21×. At a
+fixed `n_ubatch`, dropping 30→24 layers costs prefill 1.79× **and** decode
+2.93×. Both levers move prefill. Only residency moves decode.
+
+**So `gpu_layers: auto` now spends ubatch before it spends a layer** — full
+residency at 512, then 256, then 128, and only then experts or layers. It
+stops at the first rung that fits rather than descending to the floor, only
+ever lowers, and names the reduction in the same log line as the placement.
+
+The lever was there the whole time. The IQ2 arm reached a measurement in
+v2.13.1 only because a human hand-fed `n_ubatch` into the bench spec; at
+llama.cpp's default 512 that model died at the compute buffer with its
+weights already loaded. Full residency was never out of reach — one number
+was.
+
+**And `auto` now states its margin.** It accepts a placement that merely
+fits; on this card the IQ2 fits fully resident by 15 MiB. Behaviour is
+unchanged — refusing a placement measured running at 52.46 tok/s would be
+worse — but "fits" and "fits by fifteen megabytes" are different facts and
+only one of them was being reported.
+
+**A second finding, not yet acted on: partial offload is not just slower, it
+is unpredictable.** Fully resident, decode repeats within ±0.3 tok/s (0.7%).
+Partially offloaded, the same configuration swings ±2–3 tok/s — 20–28%,
+run to run, nothing changed. Predictability is a residency property and sits
+on no side of the ubatch trade.
 
 ---
 

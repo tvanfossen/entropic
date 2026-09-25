@@ -19,7 +19,7 @@
  *      so this fails on the old code and passes on the new — the property
  *      the whole change exists for.
  *
- * @version 2.13.1
+ * @version 2.13.2
  */
 #include <catch2/catch_test_macros.hpp>
 
@@ -153,6 +153,37 @@ SCENARIO("auto derives full residency for a model measured to fit",
             }
             AND_THEN("the estimate is under the free VRAM it was given") {
                 CHECK(p.bytes <= free_vram);
+            }
+        }
+
+        // v2.13.2. The 128 above is hand-fed, and that is exactly the
+        // configuration management `auto` exists to remove: an operator who
+        // sets nothing gets llama.cpp's 512, and THIS model at 512 is the
+        // run that died at the compute buffer (weights 9552 MiB fine, KV 84,
+        // compute 527, against ~10465 free). Full residency was never out of
+        // reach — one number was.
+        WHEN("auto is asked with no n_ubatch configured at all") {
+            const uint64_t free_vram = 10518 * kMiB;
+            const AutoPlacement p = derive_auto_placement(shape, in, free_vram, 0);
+
+            THEN("it still keeps every layer resident") {
+                INFO("reason: " << p.reason
+                     << " gpu_layers=" << p.gpu_layers
+                     << " n_ubatch=" << p.n_ubatch
+                     << " est=" << p.bytes / kMiB << " MiB");
+                REQUIRE(p.known);
+                CHECK(p.fully_resident);
+                CHECK(p.cpu_moe_layers == 0);
+            }
+            AND_THEN("it paid for that with ubatch, not with layers") {
+                // Measured on this card, four iterations, freeing the same
+                // ~1800 MiB either way: ubatch costs prefill alone (decode
+                // error bars overlap); layers cost prefill 44% AND decode
+                // 66%. Layers are the two-axis currency, so ubatch goes
+                // first — and only as far as it must (256 before 128).
+                CHECK(p.n_ubatch > 0);
+                CHECK(p.n_ubatch < 512);
+                CHECK(p.n_ubatch >= 128);
             }
         }
     }

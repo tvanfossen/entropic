@@ -1583,6 +1583,7 @@ nlohmann::json valid_summary(const BenchModel& m, const RunInfo& info,
 /// @brief One residency level's cold-prefill measurement. @version 2.13.2
 struct PrefillPoint {
     std::string gpu_layers;   ///< As written in YAML.
+    int n_ubatch = 0;         ///< Physical batch this point used.
     int resolved_layers = 0;  ///< What the engine resolved it to.
     int cpu_moe_layers = 0;   ///< Experts held host-side.
     int prefill_tokens = 0;   ///< Reported by generations[] (gh#194).
@@ -1630,6 +1631,7 @@ PrefillPoint measure_cold_prefill(const BenchModel& m,
                                   const std::string& prompt) {
     PrefillPoint p;
     p.gpu_layers = m.gpu_layers;
+    p.n_ubatch = m.n_ubatch;
     p.cpu_moe_layers = m.cpu_moe_layers;
 
     BenchProject project(m.label + "_" + m.gpu_layers);
@@ -1678,8 +1680,9 @@ PrefillPoint measure_cold_prefill(const BenchModel& m,
  * @req REQ-INFER-019
  * @version 2.13.2
  */
-void run_prefill_residency_bench(const BenchModel& base,
-                                 const std::vector<std::string>& levels) {
+void run_prefill_residency_bench(
+    const BenchModel& base,
+    const std::vector<std::pair<std::string, int>>& levels) {
     entropic::config::BundledModels registry;
     REQUIRE(load_registry(registry));
     REQUIRE(registry.get(base.target_key) != nullptr);
@@ -1687,20 +1690,22 @@ void run_prefill_residency_bench(const BenchModel& base,
 
     const std::string prompt = large_prompt(6000);
     std::vector<PrefillPoint> points;
-    for (const auto& level : levels) {
+    for (const auto& [layers, ubatch] : levels) {
         BenchModel m = base;
-        m.gpu_layers = level;
+        m.gpu_layers = layers;
+        m.n_ubatch = ubatch;
         points.push_back(measure_cold_prefill(m, registry, prompt));
     }
 
     std::printf("\ngh193 COLD PREFILL vs RESIDENCY — %s\n", base.label.c_str());
     std::printf("  one cold pass per level, max_tokens=1, prompt ~%d tokens\n",
                 points.empty() ? 0 : points.front().prefill_tokens);
-    std::printf("  %-10s %-10s %-10s %-12s %s\n",
-                "gpu_layers", "resolved", "cpu_moe", "TTFT ms", "prefill tok/s");
+    std::printf("  %-10s %-9s %-9s %-12s %s\n",
+                "gpu_layers", "resolved", "n_ubatch", "TTFT ms",
+                "prefill tok/s");
     for (const auto& p : points) {
-        std::printf("  %-10s %-10d %-10d %-12.1f %.1f\n",
-                    p.gpu_layers.c_str(), p.resolved_layers, p.cpu_moe_layers,
+        std::printf("  %-10s %-9d %-9d %-12.1f %.1f\n",
+                    p.gpu_layers.c_str(), p.resolved_layers, p.n_ubatch,
                     p.ttft_ms, p.prefill_tok_s);
     }
     if (points.size() >= 2) {
@@ -2022,9 +2027,19 @@ TEST_CASE("gh#153 MTP vs plain decode throughput — four arms, Gemma 4 26B-A4B 
 TEST_CASE("gh#193: what cold prefill costs at each residency level",
           "[benchmark][.][prefill-residency]") {
     gh153::run_prefill_residency_bench(
-        // label, trunk, head, gpu_layers (replaced per level), max_tokens,
-        // measured_rounds, cpu_moe_layers, n_ubatch.
+        // label, trunk, head, gpu_layers/n_ubatch replaced per point,
+        // max_tokens, measured_rounds, cpu_moe_layers, n_ubatch.
         {"a4b_iq2_prefill", "gemma4_a4b_iq2", "mtp_a4b", "-1", 1, 1, 0, 128},
-        // Most resident first, so the printed ratio reads best-over-worst.
-        {"-1", "24", "18"});
+        // {gpu_layers, n_ubatch}. Compute buffers scale with n_ubatch and
+        // compete with weights for the same VRAM: ~1222 MiB per context at
+        // 512 against ~305 at 128, doubled by the MTP head's second context.
+        // At ~303 MiB per A4B-IQ2 layer that is about six layers.
+        //
+        // The first three points are the ISO-VRAM FRONTIER — each buys its
+        // ubatch by giving up layers, so they are the choice `auto` would
+        // actually be making if it chose ubatch at all. The last two hold
+        // layers FIXED at 24 to isolate ubatch's own effect from the
+        // residency it costs.
+        {{"-1", 128}, {"28", 256}, {"24", 512},
+         {"24", 128}, {"24", 256}});
 }

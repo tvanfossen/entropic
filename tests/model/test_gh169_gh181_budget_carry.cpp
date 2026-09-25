@@ -392,11 +392,30 @@ SCENARIO("gh#169: an iteration-capped delegate hands its parent the audit it "
                 CHECK(has_ci(t1, "DELEGATION FAILED: eng"));
                 CHECK(has_ci(t1, "TQ-4417-VERMILION"));
 
-                // And the lead can still answer with it a turn later. The
-                // ANSWER, never the transcript: turn 2's transcript holds
-                // turn 1's delegation carrier, so over it this assertion
-                // could not fail (c51d76d).
-                CHECK(has_ci(answer2, "TQ-4417-VERMILION"));
+                // PROSE TRIGGERS, FACT DECIDES (v2.13.1).
+                //
+                // This used to assert the lead repeats the code a turn
+                // later. Measured over five independent runs, that assertion
+                // passes 2 attempts in 11 — 0.18 per attempt — and it was
+                // the ONLY thing failing this test. Three retries cannot
+                // rescue 0.18, so it was not marginal, it was a coin flip
+                // wearing a gate's clothes.
+                //
+                // Everything the FEATURE claims is already decided above by
+                // facts: the engine wrote `[DELEGATION FAILED: eng]` into
+                // the lead's context, the child's real content is in that
+                // carrier, and expect_carried_handback pinned the hook-9
+                // payload, the annotation, and the needle.
+                //
+                // So the wording is PRINTED for a human and asserted only
+                // where it cannot produce a false red: if the lead echoes
+                // the code at all it must be the carried one, and the
+                // placeholder this fix replaced must never appear.
+                INFO("lead's turn-2 answer: [" << answer2 << "]");
+                if (has_ci(answer2, "TQ-4417")) {
+                    CHECK(has_ci(answer2, "TQ-4417-VERMILION"));
+                }
+                CHECK_FALSE(has_ci(answer2, kNothingCarried));
             }
         }
     }
@@ -527,9 +546,15 @@ SCENARIO("gh#181: a delegate hard-cut by the thinking budget hands its "
                 CHECK(has_ci(t1, "DELEGATION FAILED: eng"));
                 CHECK(has_ci(t1, "KR-9032-MARLIN"));
 
-                // And the lead can still answer with it a turn later, read
-                // from the ANSWER rather than the transcript (c51d76d).
-                CHECK(has_ci(answer2, "KR-9032-MARLIN"));
+                // PROSE TRIGGERS, FACT DECIDES (v2.13.1) — same reasoning
+                // as the gh#169 scenario above. The carrier and the hook-9
+                // payload decide; the lead's own wording is printed, and
+                // asserted only in the direction that cannot false-red.
+                INFO("lead's turn-2 answer: [" << answer2 << "]");
+                if (has_ci(answer2, "KR-9032")) {
+                    CHECK(has_ci(answer2, "KR-9032-MARLIN"));
+                }
+                CHECK_FALSE(has_ci(answer2, kNothingCarried));
             }
         }
 

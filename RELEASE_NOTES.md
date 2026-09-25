@@ -2,6 +2,96 @@ _Last 10 releases. Older history: [OLD_NOTES.md](OLD_NOTES.md). Kept short
 because `gh release create --notes-file` hits GitHub's 125,000-char release
 body limit once this file accumulates full project history — see v2.9.3._
 
+# entropic v2.13.1
+
+Patch release — **`gpu_layers: auto` now reads the model instead of assuming
+it.**
+
+`auto` exists so that fitting a new model is a decision the engine makes
+rather than a number an operator tunes. v2.13.0 shipped it making that
+decision from almost no information: it priced every model as thirty layers,
+charged `file_bytes / layers` per layer, and reserved a flat 2 GiB for
+everything that was not weights. It knew nothing about the KV cache, the
+draft head, or experts.
+
+## Read this first — behaviour that changes without you asking
+
+- **`gpu_layers: auto` will choose differently, and usually better.** It now
+  reads the GGUF's real shape and solves the same footprint estimator the
+  admission gate uses. Measured cases: the 26B-A4B at IQ2 goes from 26 of 30
+  layers to fully resident — a configuration this project measured running at
+  30 of 30 with headroom to spare — and a 42-layer model is no longer priced
+  as if it had 30, which had it overstating per-layer cost by 40% and
+  clipping a model that fits.
+- **`auto` now derives an expert split for a MoE.** When everything does not
+  fit, it moves experts host-side while keeping **all layers** on the card,
+  and only drops layers when that is not enough. Moving a layer off takes its
+  attention with it; v2.13.0 measured expert offload at 22.62 tok/s against
+  18.86 for whole-layer offload of the same model.
+- **`cpu_moe_layers` with `gpu_layers: auto` is still refused**, for a
+  different reason. It used to be "auto cannot model expert placement". It
+  can now, so the honest refusal is that setting both asks two things to
+  decide one placement. Drop `cpu_moe_layers` and let auto choose, or set
+  `gpu_layers` explicitly and keep your own split.
+- **The budget gate now enforces on partially-offloaded tiers.** The
+  estimator previously returned "unknown" for any partial offload, which left
+  the gate open entirely (gh#142). With the real layer count it prices them
+  exactly, so a configuration that cannot fit is refused rather than
+  discovered as a failed allocation.
+
+## Engine fixes
+
+- The draft / MTP head is counted. It was priced nowhere — small in absolute
+  terms (225 MiB for `mtp_a4b`), decisive on an 11 GiB card against a 9.3 GiB
+  trunk.
+- Compute-buffer headroom is held back by `auto`, scaled by `n_ubatch`
+  because that is what the cost tracks, and counted only as the **excess**
+  over `vram_reserve_mb` — whose documented purpose is covering exactly this.
+  Charging both would have been the same double-count this release removes.
+- Full residency is reported as the `-1` sentinel rather than a layer count
+  equal to the model's. That sentinel is what `mlock_refused` exempts and
+  what the estimator's full-vs-partial branch keys on, so a concrete count
+  would have stripped the mlock exemption from working configurations and
+  priced a fully-resident model through the partial path — omitting the
+  embeddings and output head, an under-count.
+- A model whose metadata cannot be read falls back to the previous
+  weights-only estimate, so it behaves exactly as it did in v2.13.0.
+
+## Notes
+
+- `gpu_layers: "auto"` quoted — as JSON serialisation emits it — parses
+  identically to the bare word. Now asserted rather than assumed.
+- The `mlock` refusal is floor-gated at **10 GiB**: larger than that **and**
+  larger than `RLIMIT_MEMLOCK` **and** not fully offloaded. `use_mlock`
+  defaults to true, so an unfloored rule would refuse ordinary models.
+
+## Verification
+
+Gate ran at `b6edf33`: **88 model tests passed, 0 failed, 0 skipped, 3 flaky**
+on a GTX 1080 Ti. CPU suite 1933/1933. The attached
+`model-results-v2.13.1.json` records `version` and `built_version` both as
+2.13.1 — what the tree claimed and what the tested build actually carried.
+
+Commits after `b6edf33` on this release are documentation only (the roadmap
+entry recording this number).
+
+**One test in the suite was converted to reach it, and the measurement is
+worth stating because it overturned the assumption behind the change.** Six
+model tests assert on model prose. Run five times each, their pass-per-attempt
+rates were 1.00, 1.00, 1.00, 0.83, 0.50 and 0.18 — so there was no "family" of
+marginal tests, three were perfect, and the assertion *count* predicted
+nothing. Only `test-gh169-gh181-budget-carry` at 0.18 was condemned by the
+evidence; at that rate three retries reach roughly 45%, so a larger retry
+budget was never the lever. It was converted so that facts decide and the
+model's wording is printed rather than asserted, and the other five were
+deliberately left alone.
+
+## Distribution
+
+- CPU tarball: `entropic-2.13.1-linux-x86_64-cpu.tar.gz` (sha256 in companion file)
+- CUDA tarball: `entropic-2.13.1-linux-x86_64-cuda.tar.gz` (sha256 in companion file)
+- Python wrapper: `pip install entropic-engine==2.13.1` then `entropic install-engine`
+
 # entropic v2.13.0
 
 Minor release — **nineteen issues, a llama.cpp bump, and the gates that found
@@ -1118,65 +1208,3 @@ indistinguishable from the operator's own prompt, and using it would echo the
 user's question back as the answer. Delegation summaries reach the extractor
 through the assistant-turn fold instead. A regression test pins that a user
 message is never returned as the answer.
-
-# entropic v2.10.1
-
-Patch release — **the MCP server plugin loader `i_mcp_server.h` has documented
-since v1.8.5 now actually exists (gh#133).**
-
-## The gap
-
-`include/entropic/interfaces/i_mcp_server.h` stated "ServerManager discovers
-plugins via dlopen and calls these functions through the opaque handle." No
-such loader existed. A consumer who implemented the documented nine-entry-point
-contract produced a `.so` that nothing in the engine could load — reachable
-only by disassembling the shipped binary, since the headers said the opposite.
-
-Reported by the sassafras-class consumer, who had a conformant implementation
-written and tested against the contract before establishing it was unloadable.
-
-## Loading a plugin
-
-```yaml
-mcp:
-  plugins:
-    - /path/to/libmy_mcp_server.so
-    - ~/plugins/libother_server.so
-```
-
-Each entry is dlopened at startup, version-checked against
-`ENTROPIC_MCP_PLUGIN_API_VERSION`, and registered under the name its
-`entropic_mcp_server_name()` reports. Its tools are then addressable as
-`<name>.<tool>` exactly like a built-in server's, including argument
-validation against the plugin's declared `inputSchema`.
-
-Failures are loud, never silent: a `.so` that will not open, is missing an
-entry point, reports a different API version, or collides with an existing
-server name is rejected with `ENTROPIC_ERROR_PLUGIN_LOAD_FAILED` /
-`ENTROPIC_ERROR_PLUGIN_VERSION_MISMATCH`. Every configured path is attempted
-so one broken entry does not hide the diagnosis of the rest.
-
-## Header corrections
-
-- **`ENTROPIC_EXPORT` on all nine entry points.** Previously absent, so a
-  plugin defining them the obvious way — plain `extern "C"`, inheriting
-  visibility from the header — exported *nothing* under `-fvisibility=hidden`,
-  the way most plugin projects build. Verified on GCC 11.4: 0 symbols exported
-  before, all 9 after. Visibility only; no signature or ABI change, so no
-  plugin-API version bump, and plugins that exported by other means still load
-  unchanged.
-- **`entropic_plugin_api_version()` and `entropic_create_server()` are now real
-  declarations** rather than prose in a comment block.
-- **Threading contract documented**: the engine serialises calls into a given
-  server instance, so a plugin needs no internal locking for its own state.
-  `PluginServer` takes its own mutex, making that guarantee hold by
-  construction rather than by assumption about callers.
-- **`inputSchema` camelCase** stated explicitly.
-
-## Notes for plugin authors
-
-Plugins are loaded `RTLD_LOCAL`, so two plugins exporting the same entry-point
-names cannot collide. Strings returned by `list_tools`/`execute` are freed
-through *that plugin's* `entropic_free`, not the engine's allocator. A plugin
-returning a malformed tool list or response is contained to itself — it does
-not throw through the agent loop or empty the tool list for other servers.

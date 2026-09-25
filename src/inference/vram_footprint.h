@@ -59,6 +59,7 @@
 
 #pragma once
 
+#include <algorithm>
 #include <cstdint>
 #include <string>
 #include <utility>
@@ -97,6 +98,34 @@ struct FootprintInputs {
     /// gh#142 built this gate to prevent.
     /// @version 2.12.0
     int max_sessions = 1;
+
+    /// @brief Draft / MTP head bytes, resident alongside the target.
+    ///
+    /// v2.13.1: priced nowhere before. A target-owned MTP head is small
+    /// (225 MiB for `mtp_a4b`) but it is loaded onto the same card, and on
+    /// an 11 GiB device against a 9.3 GiB trunk it is the difference
+    /// between fitting and not.
+    /// @version 2.13.1
+    uint64_t draft_bytes = 0;
+
+    /// @name GGUF-derived shape (v2.13.1)
+    ///
+    /// Zero means "not read", and the estimator then behaves exactly as it
+    /// did before — a partial offload stays unpriceable. Supplied, they let
+    /// a partial offload be priced EXACTLY, which is what previously forced
+    /// `partial_unknown` and left the budget gate open (gh#142).
+    /// @{
+    int block_count = 0;           ///< Real layer count from `<arch>.block_count`.
+    uint64_t block_bytes = 0;      ///< Total bytes of per-block tensors.
+    uint64_t non_block_bytes = 0;  ///< Embeddings/output/final norms.
+
+    /// @brief Expert bytes deliberately kept host-side by `cpu_moe_layers`.
+    ///
+    /// Subtracted from the resident weight term: this is what an expert
+    /// split actually frees on the card, summed from the tensors that match
+    /// llama.cpp's expert pattern rather than guessed as a fraction.
+    uint64_t host_expert_bytes = 0;
+    /// @}
 };
 
 /// @brief An estimate, or an explicit admission that there isn't one.
@@ -185,20 +214,42 @@ inline double kv_bytes_per_token(const FootprintInputs& in) {
  * @param in Tier footprint inputs.
  * @return The estimate, with `known == false` when the placement is unpriceable.
  * @req REQ-INFER-019
- * @version 2.12.0
+ * @version 2.13.1
  */
 inline FootprintEstimate estimate_vram_footprint(const FootprintInputs& in) {
     FootprintEstimate est;
     const Offload placement = classify_offload(in.gpu_layers);
-    if (placement == Offload::partial_unknown) {
+    // v2.13.1: a partial offload IS priceable once the GGUF's shape has been
+    // read. Without it we still decline, because guessing here refuses
+    // configurations that demonstrably work (gh#142) — but the shape is now
+    // available from a metadata-only read, so declining is the fallback
+    // rather than the rule.
+    const bool have_shape = in.block_count > 0 && in.block_bytes > 0;
+    if (placement == Offload::partial_unknown && !have_shape) {
         est.reason = "partial offload: layer count is not knowable without "
                      "GGUF metadata, so the budget gate stays open";
         return est;
     }
-    // The projector follows the weights: offload none and it lives in host RAM.
-    const uint64_t resident = (placement == Offload::full)
-        ? in.weights_bytes + in.mmproj_bytes
-        : 0ull;
+    uint64_t resident = 0;
+    if (placement == Offload::full) {
+        // The projector follows the weights: offload none and it lives in
+        // host RAM.
+        resident = in.weights_bytes + in.mmproj_bytes;
+    } else if (placement == Offload::partial_unknown) {
+        // Per-block cost from the block tensors ALONE. Dividing the whole
+        // file by the layer count folds in embeddings and the output head,
+        // which do not move with `gpu_layers`, and so overstates every
+        // layer.
+        const auto per_block =
+            in.block_bytes / static_cast<uint64_t>(in.block_count);
+        const auto offloaded = static_cast<uint64_t>(in.gpu_layers);
+        resident = per_block * offloaded;
+    }
+    // Experts held host-side by `cpu_moe_layers` are not on the card.
+    resident -= std::min(resident, in.host_expert_bytes);
+    // The draft head is resident whenever speculative decode is configured,
+    // at any placement.
+    resident += in.draft_bytes;
     const int ctx = in.context_length > 0 ? in.context_length : 0;
     const int sessions = in.max_sessions > 0 ? in.max_sessions : 1;
     // gh#144 (v2.12.0): context_length is per session; the pool allocates

@@ -65,7 +65,20 @@ Before tagging:
    self-tested in `tests/unit/test_gen_bindings.py`. Keep this
    checklist item as belt-and-suspenders against the case where the
    pre-commit hook is bypassed or the generator itself bit-rots.
-8. **`develop → main`** merged by the maintainer (Claude does not push).
+8. **`develop → main`, the tag, and `gh release create` belong to the
+   maintainer.** Claude does not do these by default — not the merge to
+   `main`, not the tag, not the publish.
+
+   The maintainer may grant any of them **case by case**, and that grant
+   covers only the action it was given for: it does not carry to the next
+   step, the next release, or a retry after a failure. A vague "go ahead"
+   is not a grant (`.claude/CLAUDE.md`, Git Branching).
+
+   This is how v2.13.0 shipped — Claude prepared and staged everything,
+   the maintainer approved the merge, the push and the publish explicitly,
+   and Claude then ran them. Recorded because this step previously read
+   "Claude does not push" flatly, which had stopped matching both the
+   policy and the practice.
 
 ---
 

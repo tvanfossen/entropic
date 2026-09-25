@@ -2040,6 +2040,14 @@ TEST_CASE("gh#193: what cold prefill costs at each residency level",
         // actually be making if it chose ubatch at all. The last two hold
         // layers FIXED at 24 to isolate ubatch's own effect from the
         // residency it costs.
-        {{"-1", 128}, {"28", 256}, {"24", 512},
-         {"24", 128}, {"24", 256}});
+        // 1024 costs ~2444 MiB per context, ~4888 across the MTP pair,
+        // which at ~303 MiB a layer leaves room for about seventeen. If the
+        // frontier is still climbing there, batch beats residency further
+        // than the first sweep could show; if it turns, this is where.
+        {{"-1", 128}, {"28", 256}, {"24", 512}, {"17", 1024},
+         // Layers FIXED to isolate ubatch from the residency it costs —
+         // at 24 where the first sweep looked, and again at 17 to check the
+         // effect is not an artefact of one residency level.
+         {"24", 128}, {"24", 256},
+         {"17", 128}, {"17", 512}, {"17", 1024}});
 }

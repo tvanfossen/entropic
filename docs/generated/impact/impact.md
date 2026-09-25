@@ -2,6 +2,6 @@
 
 | REQ | Name | Functions Changed |
 |-----|------|-------------------|
-| REQ-INFER-019 | Model pool dedup and VRAM residency policy govern which tier is resident | resolve_auto_gpu_layers, config_admits, footprint_inputs_for, mlock_refused |
+| REQ-INFER-005 | Every decode path honours cooperative cancellation within one token | run_sampling_loop, do_generate_text_only, do_generate_streaming_text_only |
 
-**Total: 1 requirement(s) affected, 4 function(s) changed**
+**Total: 1 requirement(s) affected, 3 function(s) changed**

@@ -1,27 +1,22 @@
 [
   {
-    "req_id": "REQ-INFER-019",
-    "req_name": "Model pool dedup and VRAM residency policy govern which tier is resident",
+    "req_id": "REQ-INFER-005",
+    "req_name": "Every decode path honours cooperative cancellation within one token",
     "functions": [
       {
-        "name": "resolve_auto_gpu_layers",
-        "file": "src/inference/orchestrator.cpp",
-        "version": "2.13.1"
+        "name": "run_sampling_loop",
+        "file": "src/inference/llama_cpp_backend.cpp",
+        "version": "2.13.2"
       },
       {
-        "name": "config_admits",
-        "file": "src/inference/orchestrator.cpp",
-        "version": "2.13.1"
+        "name": "do_generate_text_only",
+        "file": "src/inference/llama_cpp_backend.cpp",
+        "version": "2.13.2"
       },
       {
-        "name": "footprint_inputs_for",
-        "file": "src/inference/orchestrator.cpp",
-        "version": "2.13.1"
-      },
-      {
-        "name": "mlock_refused",
-        "file": "src/inference/partial_offload.h",
-        "version": "2.13.0"
+        "name": "do_generate_streaming_text_only",
+        "file": "src/inference/llama_cpp_backend.cpp",
+        "version": "2.13.2"
       }
     ]
   }

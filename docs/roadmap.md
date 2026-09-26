@@ -12,7 +12,7 @@ cite them.
 
 ---
 
-## Current State (v2.13.1 on `main`; v2.13.2 in progress)
+## Current State (v2.13.2 on `main`)
 
 - C++20 engine, pure C ABI at every `.so` boundary
 - Unit + regression tests (CPU pre-commit gate), ThreadSanitizer preset
@@ -53,7 +53,7 @@ cite them.
 
 ---
 
-## v2.13.2 — the prefill term, and the lever auto was not using (STAGED)
+## v2.13.2 — the prefill term, and the lever auto was not using (SHIPPED)
 
 Two fixes and one measurement, all downstream of the same blind spot: this
 project had never measured prefill.
@@ -118,6 +118,12 @@ on no side of the ubatch trade.
 GTX 1080 Ti; CPU 1934/1934; artifact `version` = `built_version` = 2.13.2.
 First fully green gate of the v2.13 line — and a draw from the prose-assertion
 distribution, not evidence that family is fixed.
+
+Published at `db53dbe`: https://github.com/tvanfossen/entropic/releases/tag/v2.13.2
+— 5 assets, both tarballs recovered by published sha256, and
+`entropic install-engine` into an isolated `ENTROPIC_HOME` reports
+`entropic 2.13.2`. The decode-variance finding went to gh#195 rather than
+shipping as a fix.
 
 ---
 

@@ -24,11 +24,10 @@ it was ignoring.**
   10481–10618 MiB free at admission.
 - **`gpu_layers: auto` may lower your `n_ubatch` — but read the limit below.**
   When full residency is reachable only at a smaller micro-batch, `auto` takes
-  that trade instead of dropping layers or displacing experts: 512, then 256,
-  then 128, stopping at the first that fits. It only ever lowers it, only to
-  buy full residency, and the `[residency]` line names the reduction beside
-  the placement. If you set `n_ubatch` yourself and the model already fits, it
-  is left alone.
+  that trade rather than dropping layers: 512, then 256, then 128, stopping at
+  the first that fits. It only ever lowers it, only to buy full residency, and
+  the `[residency]` line names the reduction beside the placement. If you set
+  `n_ubatch` yourself and the model already fits, it is left alone.
 
 ## Why that trade
 
@@ -59,10 +58,22 @@ This was found after publication, in this release's own gate logs: across all
 independently: pinning `n_ubatch` to 128 by hand took their placement from
 8 layers' experts host-side to 1.
 
-Tracked as **gh#196**, with the placement decision deliberately open — their
-two arms were a statistical wash (90.8 s vs 95.9 s mean turn, ranges
-overlapping), so extending the ladder trades prefill for decode with no
-evidence yet on which way a given workload wants it.
+Tracked as **gh#196**, with the placement decision deliberately open, and for
+a sharper reason than the one first given: **the ordering was never measured.**
+gh#193's sweep varied layers and `n_ubatch` with `cpu_moe_layers` pinned at
+zero, so it measured ubatch against *whole layers* and never against
+*experts* — and experts are the cheaper axis of the two (v2.13.0: expert
+offload 22.62 tok/s against 18.86 for whole-layer offload). The rule's
+justification — layers cost two axes, ubatch costs one — is an argument about
+layers that these notes extended to experts without evidence.
+
+So the behaviour described above, experts-first in the partial case, may be
+the *better* policy, and closing gh#196 the obvious way could make things
+worse. The consumer's two arms cannot settle it either: their pinned-128 run
+moved expert placement and ubatch together, so its wash (90.8 s vs 95.9 s,
+overlapping ranges) is equally consistent with experts being cheap and with
+two effects cancelling. Separating them needs one axis held while the other
+moves, which gh#196 describes.
 
 The earlier draft of these notes also quoted a **15 MiB** margin as a property
 of this card. That figure came from a test fixture's hard-coded free-VRAM

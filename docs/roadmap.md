@@ -96,6 +96,13 @@ residency at 512, then 256, then 128, and only then experts or layers. It
 stops at the first rung that fits rather than descending to the floor, only
 ever lowers, and names the reduction in the same log line as the placement.
 
+**The "or experts" in that sentence is unmeasured (gh#196).** Every point in
+the table above pins `cpu_moe_layers` to zero, so the sweep compared ubatch
+against WHOLE LAYERS and never against experts. Experts are the cheaper axis
+(v2.13.0: 22.62 tok/s expert-offloaded against 18.86 whole-layer), so
+preferring ubatch over experts does not follow from this table and may be
+backwards. Separating them needs one axis held while the other moves.
+
 The lever was there the whole time. The IQ2 arm reached a measurement in
 v2.13.1 only because a human hand-fed `n_ubatch` into the bench spec; at
 llama.cpp's default 512 that model died at the compute buffer with its

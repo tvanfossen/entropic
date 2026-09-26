@@ -334,6 +334,10 @@ add_bench_entry(test-gh108-config-benchmark
     test-gh108-config-benchmark-mtp-a4b-experts "[mtp-a4b-experts]")
 add_bench_entry(test-gh108-config-benchmark
     test-gh108-config-benchmark-mtp-a4b-iq2 "[mtp-a4b-iq2]")
+# gh#193 (v2.13.2): cold prefill against residency — the term the warm-decode
+# arms cannot see, and the one v2.13.1's MoE ordering rests on.
+add_bench_entry(test-gh108-config-benchmark
+    test-gh108-config-benchmark-prefill-residency "[prefill-residency]")
 
 # gh#108 (v2.9.3) follow-up: multi-turn tool-calling agentic benchmark,
 # E4B Q8 baseline vs E4B Q4_K_XL+MTP+flash+q4KV, through the orchestrator
@@ -535,6 +539,11 @@ add_model_test(test-gh137-thinking-strip test_gh137_thinking_strip.cpp)
 # tests feed it synthetic shapes, which proves the arithmetic and nothing
 # about whether the metadata read returns what the model actually is.
 add_model_test(test-auto-placement-real test_auto_placement_real.cpp)
+
+# gh#194 (v2.13.2): prefill_tokens must reach a consumer and AGREE with the
+# engine's own log. Two counters that cannot be compared is how it stayed
+# broken through a release that shipped the field for consumers.
+add_model_test(test-gh194-prefill-published test_gh194_prefill_published.cpp)
 set_tests_properties(model/test-gh137-thinking-strip PROPERTIES TIMEOUT 360)
 
 # gh#164 (v2.13.0): explicit release + lazy reload, on BOTH a plain-KV and a

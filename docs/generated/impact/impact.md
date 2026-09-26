@@ -2,6 +2,6 @@
 
 | REQ | Name | Functions Changed |
 |-----|------|-------------------|
-| REQ-INFER-019 | Model pool dedup and VRAM residency policy govern which tier is resident | resolve_auto_gpu_layers, config_admits, footprint_inputs_for, mlock_refused |
+| REQ-INFER-019 | Model pool dedup and VRAM residency policy govern which tier is resident | derive_auto_placement, resolve_auto_gpu_layers |
 
-**Total: 1 requirement(s) affected, 4 function(s) changed**
+**Total: 1 requirement(s) affected, 2 function(s) changed**

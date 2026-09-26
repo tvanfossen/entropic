@@ -58,6 +58,26 @@ struct AutoPlacement {
     int cpu_moe_layers = 0;   ///< Layers whose experts stay host-side.
     uint64_t bytes = 0;       ///< Estimated resident footprint of the choice.
     bool fully_resident = false;  ///< True when `gpu_layers` is the -1 sentinel.
+
+    /// @brief n_ubatch auto chose, or 0 to leave the operator's value alone.
+    ///
+    /// v2.13.2: auto gives up ubatch before it gives up a layer. Measured on
+    /// a 26B-A4B at IQ2, four iterations, freeing the same ~1800 MiB either
+    /// way: lowering ubatch costs prefill 49% and decode NOTHING (overlapping
+    /// error bars); dropping six layers costs prefill 44% and decode 66%.
+    /// Layers are the two-axis currency, so they are spent last.
+    int n_ubatch = 0;
+
+    /// @brief Free VRAM left over once this placement is loaded, in bytes.
+    ///
+    /// v2.13.2. `bytes` says what the placement costs; this says what it
+    /// does NOT consume, which is the number that decides whether the
+    /// placement survives ordinary growth — a longer system prompt, one
+    /// more tool schema, a KV change. A consumer put it exactly right: a
+    /// placement that fits by fifteen megabytes is a coincidence, not a
+    /// configuration. The engine takes it (it was measured running) and
+    /// states the margin so the operator can decide otherwise.
+    uint64_t margin_bytes = 0;
     const char* reason = "";  ///< Why this placement, for the operator's log.
 };
 
@@ -70,6 +90,13 @@ constexpr int kComputeReferenceUbatch = 512;
 
 /// @brief llama.cpp's default ubatch, assumed when the tier does not set one.
 constexpr int kDefaultUbatch = 512;
+
+/// @brief Values auto will step down through, descending.
+///
+/// config.h calls 128, 256 and 512 the productive values; below 128 the
+/// prefill cost keeps rising while the VRAM freed flattens, so there is
+/// nothing useful further down.
+constexpr int kUbatchLadder[] = {512, 256, 128};
 
 /**
  * @brief VRAM to hold back for graph/activation scratch.
@@ -240,14 +267,51 @@ inline bool try_fewer_layers(const GgufShape& shape,
 }
 
 /**
+ * @brief Try full residency at each ubatch below the configured one.
+ *
+ * Tried BEFORE displacing experts or layers, and stopping at the FIRST value
+ * that fits rather than descending to a floor — "as far as needed" not "as
+ * far as possible". A prefill-heavy workload should lose the minimum, and
+ * 128 when 256 would have fit is a 2x prefill loss nobody asked for.
+ *
+ * @param shape Model shape.
+ * @param base Footprint inputs.
+ * @param free_vram_bytes Whole-device free VRAM (the allowance is per step).
+ * @param configured Operator's n_ubatch; 0 means llama.cpp's default.
+ * @param[out] out Filled in on success, including the chosen n_ubatch.
+ * @return True when some reduced ubatch fits everything.
+ * @dg_internal
+ * @version 2.13.2
+ */
+inline bool try_smaller_ubatch(const GgufShape& shape,
+                               const FootprintInputs& base,
+                               uint64_t free_vram_bytes, int configured,
+                               AutoPlacement* out) {
+    const int current = configured > 0 ? configured : kDefaultUbatch;
+    for (const int ub : kUbatchLadder) {
+        if (ub >= current) { continue; }
+        const uint64_t allowance = compute_allowance_bytes(base, ub);
+        const uint64_t budget =
+            free_vram_bytes > allowance ? free_vram_bytes - allowance : 0;
+        if (!try_fully_resident(shape, base, budget, out)) { continue; }
+        out->n_ubatch = ub;
+        out->reason = "fully resident at a reduced n_ubatch";
+        return true;
+    }
+    return false;
+}
+
+/**
  * @brief Choose the placement that uses the card best without overcommitting.
  *
  * Tries, in order of preference:
  *   1. Everything resident.
- *   2. Everything resident with experts progressively moved host-side — a
+ *   2. Everything resident at a smaller `n_ubatch` (v2.13.2) — measured to
+ *      cost prefill only, where every option below it costs decode too.
+ *   3. Everything resident with experts progressively moved host-side — a
  *      MoE only, and preferred over dropping layers because it keeps
  *      attention on the card.
- *   3. Progressively fewer layers, for a dense model or when even all
+ *   4. Progressively fewer layers, for a dense model or when even all
  *      experts host-side is not enough.
  *
  * @param shape GGUF shape from `read_gguf_shape`.
@@ -255,12 +319,14 @@ inline bool try_fewer_layers(const GgufShape& shape,
  *             draft head, and `vram_reserve_mb` headroom. Its `gpu_layers`
  *             is ignored — that is what this decides.
  * @param free_vram_bytes Free VRAM on the target device right now.
- * @param n_ubatch Tier's physical batch size; 0 assumes llama.cpp's default.
+ * @param n_ubatch Tier's physical batch size; 0 assumes llama.cpp's
+ *                default. Auto may return a SMALLER one in
+ *                `AutoPlacement::n_ubatch`; it never returns a larger.
  * @return The chosen placement; `known == false` when the shape is unusable
  *         or nothing fits, and the caller must then leave the configuration
  *         as the operator wrote it.
  * @req REQ-INFER-019
- * @version 2.13.1
+ * @version 2.13.2
  */
 inline AutoPlacement derive_auto_placement(const GgufShape& shape,
                                            const FootprintInputs& base,
@@ -290,11 +356,24 @@ inline AutoPlacement derive_auto_placement(const GgufShape& shape,
     const uint64_t allowance = compute_allowance_bytes(base, n_ubatch);
     const uint64_t budget =
         free_vram_bytes > allowance ? free_vram_bytes - allowance : 0;
+    // Order is the measurement: ubatch costs ONE axis, experts and layers
+    // cost two. Spend the cheap currency first.
     if (!try_fully_resident(shape, base, budget, &out)
+        && !try_smaller_ubatch(shape, base, free_vram_bytes, n_ubatch, &out)
         && !try_expert_offload(shape, base, budget, &out)
         && !try_fewer_layers(shape, base, budget, &out)) {
         out.reason = "nothing fits, even with no layers offloaded";
+        return out;
     }
+    // The budget already has the compute allowance netted out, so this is
+    // the real physical remainder, not an accounting one. Recomputed rather
+    // than threaded back out of four call sites: `try_smaller_ubatch` moves
+    // the budget, so the rung it chose is the one to price against.
+    const uint64_t chosen = compute_allowance_bytes(
+        base, out.n_ubatch > 0 ? out.n_ubatch : n_ubatch);
+    const uint64_t effective =
+        free_vram_bytes > chosen ? free_vram_bytes - chosen : 0;
+    out.margin_bytes = effective > out.bytes ? effective - out.bytes : 0;
     return out;
 }
 

@@ -4,24 +4,14 @@
     "req_name": "Model pool dedup and VRAM residency policy govern which tier is resident",
     "functions": [
       {
+        "name": "derive_auto_placement",
+        "file": "src/inference/auto_placement.h",
+        "version": "2.13.2"
+      },
+      {
         "name": "resolve_auto_gpu_layers",
         "file": "src/inference/orchestrator.cpp",
-        "version": "2.13.1"
-      },
-      {
-        "name": "config_admits",
-        "file": "src/inference/orchestrator.cpp",
-        "version": "2.13.1"
-      },
-      {
-        "name": "footprint_inputs_for",
-        "file": "src/inference/orchestrator.cpp",
-        "version": "2.13.1"
-      },
-      {
-        "name": "mlock_refused",
-        "file": "src/inference/partial_offload.h",
-        "version": "2.13.0"
+        "version": "2.13.2"
       }
     ]
   }

@@ -14,20 +14,21 @@ it was ignoring.**
   engine always counted prefill and always logged it; the result struct never
   received it. If you built anything against that zero, it is about to become
   a number in the hundreds or thousands.
-- **The `[residency]` log now states the margin, every time.** `auto`
-  accepts a placement that merely fits, and on this card the 26B-A4B at IQ2
-  fits fully resident by **15 MiB**. That is measured and it runs, but it is a
-  coincidence rather than a configuration: a longer system prompt, one more
-  tool schema in a tier's `allowed_tools`, or a KV change flips it back to
-  partial residency, with throughput as your first signal. The engine now
-  tells you how much room is left, and says so explicitly under 256 MiB.
-- **`gpu_layers: auto` may lower your `n_ubatch`.** When full residency is
-  reachable only at a smaller micro-batch, `auto` now takes that trade
-  instead of dropping layers or displacing experts — 512, then 256, then 128,
-  stopping at the first that fits. It only ever lowers it, only to buy full
-  residency, and the `[residency]` log line names the reduction beside the
-  placement. If you set `n_ubatch` yourself and the model already fits, it is
-  left alone.
+- **The `[residency]` log now states the margin, every time.** `auto` accepts
+  a placement that merely fits, and "fits" was all the engine was saying. A
+  longer system prompt, one more tool schema in a tier's `allowed_tools`, or a
+  KV change can flip a tight placement back to partial residency with
+  throughput as your first signal, so the engine now tells you how much room
+  is left and says so explicitly under 256 MiB. Real readings on a GTX 1080 Ti
+  during this release's gate: **297 MiB** free after placement, against
+  10481–10618 MiB free at admission.
+- **`gpu_layers: auto` may lower your `n_ubatch` — but read the limit below.**
+  When full residency is reachable only at a smaller micro-batch, `auto` takes
+  that trade instead of dropping layers or displacing experts: 512, then 256,
+  then 128, stopping at the first that fits. It only ever lowers it, only to
+  buy full residency, and the `[residency]` line names the reduction beside
+  the placement. If you set `n_ubatch` yourself and the model already fits, it
+  is left alone.
 
 ## Why that trade
 
@@ -42,6 +43,31 @@ At a fixed 24 layers, `n_ubatch` 128→512 buys prefill **2.02×** and costs
 decode 1.21×. At a fixed `n_ubatch`, dropping 30→24 layers costs prefill
 1.79× **and** decode 2.93×. Both levers move prefill; only residency moves
 decode. Ubatch is the single-axis currency, so it is spent first.
+
+## Correction to this release — read before relying on the ubatch ladder
+
+**The ladder only fires when full residency is reachable at some rung.** If the
+model cannot fit fully resident at 512, 256 *or* 128, the ubatch lever is
+discarded entirely and experts and layers are displaced priced against the
+original 512-token compute buffer. So on a model that simply does not fit, the
+rule this release describes — spend ubatch before spending a layer — does not
+apply.
+
+This was found after publication, in this release's own gate logs: across all
+89 tests, `n_ubatch lowered to` was logged **zero** times, and all four real
+`auto` placements went to expert offload. A consumer measured the cost
+independently: pinning `n_ubatch` to 128 by hand took their placement from
+8 layers' experts host-side to 1.
+
+Tracked as **gh#196**, with the placement decision deliberately open — their
+two arms were a statistical wash (90.8 s vs 95.9 s mean turn, ranges
+overlapping), so extending the ladder trades prefill for decode with no
+evidence yet on which way a given workload wants it.
+
+The earlier draft of these notes also quoted a **15 MiB** margin as a property
+of this card. That figure came from a test fixture's hard-coded free-VRAM
+constant, not from a live placement, and has been replaced above with the
+measured readings.
 
 ## Engine bug fixes
 

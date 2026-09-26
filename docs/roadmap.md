@@ -102,11 +102,21 @@ llama.cpp's default 512 that model died at the compute buffer with its
 weights already loaded. Full residency was never out of reach — one number
 was.
 
-**And `auto` now states its margin.** It accepts a placement that merely
-fits; on this card the IQ2 fits fully resident by 15 MiB. Behaviour is
-unchanged — refusing a placement measured running at 52.46 tok/s would be
-worse — but "fits" and "fits by fifteen megabytes" are different facts and
-only one of them was being reported.
+**And `auto` now states its margin.** It accepts a placement that merely fits,
+and "fits" was all it reported. Real gate readings: 297 MiB free after
+placement against 10481-10618 MiB free at admission. (An earlier version of
+this entry quoted 15 MiB as a property of the card; that came from a test
+fixture constant, not a live placement.)
+
+**Shipped inert for the case it exists for — gh#196.** The ladder only fires
+when full residency is reachable at some rung. Where the model cannot fit at
+512, 256 or 128, the ubatch lever is discarded and experts/layers are priced
+at the original 512 compute buffer. Across the 89-test v2.13.2 gate,
+`n_ubatch lowered to` was logged ZERO times and all four real placements went
+to expert offload. Every test that covered the ladder called the solver with a
+hand-picked free-VRAM figure chosen so a lower rung reached full residency, so
+none of them could see it. A drift guard using the free-VRAM figure the gate
+actually reported now asserts which branch fires.
 
 **A second finding, not yet acted on: partial offload is not just slower, it
 is unpredictable.** Fully resident, decode repeats within ±0.3 tok/s (0.7%).

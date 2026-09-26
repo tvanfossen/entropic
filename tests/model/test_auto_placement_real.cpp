@@ -19,7 +19,7 @@
  *      so this fails on the old code and passes on the new — the property
  *      the whole change exists for.
  *
- * @version 2.13.2
+ * @version 2.13.3
  */
 #include <catch2/catch_test_macros.hpp>
 
@@ -184,6 +184,81 @@ SCENARIO("auto derives full residency for a model measured to fit",
                 CHECK(p.n_ubatch > 0);
                 CHECK(p.n_ubatch < 512);
                 CHECK(p.n_ubatch >= 128);
+            }
+        }
+    }
+}
+
+SCENARIO("auto records WHICH lever it spent on a model that cannot fit",
+         "[model][auto_placement][2.13.3]") {
+    // gh#196. v2.13.2 shipped a rule — spend ubatch before spending a layer,
+    // because ubatch costs prefill alone and layers cost prefill AND decode —
+    // and shipped it inert for every configuration that motivated it.
+    //
+    // `try_smaller_ubatch` only ever asks for FULL residency at a lower rung.
+    // When full residency is unreachable at 512, 256 and 128 alike, it returns
+    // false and the ubatch lever is DISCARDED: expert offload and layer
+    // dropping are then priced against the original 512-token compute buffer.
+    // So the rule holds only where there is no trade to make.
+    //
+    // Nothing caught it because every test called the solver with a
+    // hand-picked `free_vram_bytes` chosen so a lower rung DOES reach full
+    // residency. This case uses a model and a free-VRAM figure READ FROM THE
+    // v2.13.2 GATE LOGS, and asserts which branch actually fires.
+    //
+    // It is GREEN on today's behaviour on purpose: the placement decision is
+    // deferred, not made. Changing the policy turns this red, which is the
+    // point — the next person to touch it has to say so out loud.
+    GIVEN("the 26B-A4B at IQ4_XS, which cannot fit at any ubatch") {
+        const auto path = model_file("gemma-4-26B-A4B-it-UD-IQ4_XS.gguf");
+        if (path.empty()) {
+            SKIP("gemma-4-26B-A4B-it-UD-IQ4_XS.gguf not present");
+        }
+        const GgufShape shape = read_gguf_shape(path.string());
+        REQUIRE(shape.known);
+        REQUIRE(shape.expert_count > 0);
+
+        std::error_code ec;
+        const auto file_bytes = fs::file_size(path, ec);
+        REQUIRE_FALSE(ec);
+
+        FootprintInputs in;
+        in.weights_bytes = static_cast<uint64_t>(file_bytes);
+        in.context_length = 8192;
+        in.cache_type_k = "q4_0";
+        in.cache_type_v = "q4_0";
+        in.vram_reserve_mb = 512;
+
+        WHEN("placed against the free VRAM the gate actually saw") {
+            // From the v2.13.2 gate at 7fd49c1: "9474 MiB estimated of 10481
+            // MiB free; 12967 MiB model, 128 experts". Not a round number
+            // picked to make a branch fire — the number the card reported.
+            const uint64_t free_vram = 10481 * kMiB;
+            const AutoPlacement p =
+                derive_auto_placement(shape, in, free_vram, 0);
+
+            THEN("every layer stays on the card, paid for with experts") {
+                INFO("reason: " << p.reason
+                     << " gpu_layers=" << p.gpu_layers
+                     << " cpu_moe=" << p.cpu_moe_layers
+                     << " n_ubatch=" << p.n_ubatch
+                     << " est=" << p.bytes / kMiB
+                     << " MiB margin=" << p.margin_bytes / kMiB << " MiB");
+                REQUIRE(p.known);
+                CHECK(p.fully_resident);
+                CHECK(p.cpu_moe_layers > 0);
+            }
+            AND_THEN("the ubatch ladder does NOT fire — this is gh#196") {
+                // The assertion that makes the gap visible instead of
+                // discoverable. v2.13.2's gate ran 89 tests and logged
+                // `n_ubatch lowered to` exactly zero times; nothing said so.
+                CHECK(p.n_ubatch == 0);
+            }
+            AND_THEN("it still reports what it left free") {
+                // The margin is the number a consumer sizes against, and the
+                // gate's real reading was 297 MiB — not the 15 MiB the
+                // release notes quoted, which came from a fixture constant.
+                CHECK(p.margin_bytes > 0);
             }
         }
     }

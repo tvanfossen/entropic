@@ -332,6 +332,13 @@ add_bench_entry(test-gh108-config-benchmark
     test-gh108-config-benchmark-mtp-a4b "[mtp-a4b]")
 add_bench_entry(test-gh108-config-benchmark
     test-gh108-config-benchmark-mtp-a4b-experts "[mtp-a4b-experts]")
+# gh#197: one entry per context so each loads in its own process.
+add_bench_entry(test-gh108-config-benchmark
+    test-gh108-config-benchmark-mtp-a4b-ctx32k "[mtp-a4b-ctx32k]")
+add_bench_entry(test-gh108-config-benchmark
+    test-gh108-config-benchmark-mtp-a4b-ctx64k "[mtp-a4b-ctx64k]")
+add_bench_entry(test-gh108-config-benchmark
+    test-gh108-config-benchmark-mtp-a4b-ctx128k "[mtp-a4b-ctx128k]")
 add_bench_entry(test-gh108-config-benchmark
     test-gh108-config-benchmark-mtp-a4b-iq2 "[mtp-a4b-iq2]")
 # gh#193 (v2.13.2): cold prefill against residency — the term the warm-decode

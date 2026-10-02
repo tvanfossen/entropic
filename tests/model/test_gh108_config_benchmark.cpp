@@ -571,6 +571,16 @@ struct BenchModel {
     ///        Non-zero is how a case that does not fit its compute buffer at
     ///        the default 512 asks for a smaller one — see [mtp-a4b-iq2].
     int n_ubatch = 0;
+
+    /// @brief Context length for every arm of this case; 0 keeps the shared
+    /// kContextLength (8192), so every case that predates this field emits
+    /// byte-identical tier blocks and its recorded figures still describe it.
+    ///
+    /// gh#197: a consumer reported `auto` OOMing an MTP-paired 26B-A4B at load
+    /// — a failure they first met at 131072 context. KV size moves the margin
+    /// `auto` has to place against, so a claim made at 131k is not tested by a
+    /// run at 8k. Non-zero is how a case states which context it is about.
+    int context_length = 0;
 };
 
 /// @brief One generation, as the engine recorded it.
@@ -709,7 +719,9 @@ std::string tier_yaml(const BenchModel& m, const ArmSpec& arm) {
     std::string y = "  " + arm.name + ":\n"
         "    path: " + m.target_key + "\n"
         "    adapter: gemma4\n"
-        "    context_length: " + std::to_string(kContextLength) + "\n"
+        "    context_length: "
+            + std::to_string(m.context_length > 0 ? m.context_length
+                                                  : kContextLength) + "\n"
         "    gpu_layers: " + m.gpu_layers + "\n"
         "    flash_attn: true\n"
         "    cache_type_k: q4_0\n"
@@ -1887,6 +1899,66 @@ TEST_CASE("gh#153 MTP vs plain decode throughput — four arms, Gemma 4 26B-A4B 
     // not a different rule.
     gh153::run_four_arm_bench(
         {"a4b", "gemma4_a4b_qat", "mtp_a4b", "auto", 256, 4});
+}
+
+// gh#197 — does `gpu_layers: auto` OOM an MTP-paired 26B-A4B at load?
+//
+// A consumer reported it would, reasoning from an incident of their own: the
+// same trunk and head at `gpu_layers: 999` OOMed on the MTP head's compute
+// graph at 131072 context, and only n_ubatch 512 -> 256 cured it. Their
+// argument is that `auto` never lowers ubatch in a partial placement (gh#196,
+// true) and so must reproduce that OOM. That does not follow on its face:
+// their incident reserved NOTHING for the compute buffer, while `auto`
+// reserves one sized for the ubatch it keeps and displaces experts to make
+// room. Whether the reservation is big enough is the real question — its
+// constant was measured on an E4B MTP context, never on this head.
+//
+// So these are the [mtp-a4b] case with ONE thing changed: context. Each is its
+// own TEST_CASE and its own ctest entry, so each loads in a fresh process —
+// arms sharing a process accumulate VRAM and once produced a false OOM in this
+// very file, which would make a failure here meaningless.
+//
+// What settles #197: a cudaMalloc failure at load is the reported defect. A
+// typed refusal (TIER_MODEL_TOO_LARGE) is the engine working as designed. A
+// clean run is a refutation at that context.
+//
+// MEASURED 2026-10-01, GTX 1080 Ti, one process per point — all four clean:
+//
+//   ctx      experts host  real CUDA0 compute (trunk + head)  free after
+//   8192     16 layers     1032.5 + 532.9 = 1565 MiB          304 MiB
+//   32768    15            1565 MiB                           86 MiB
+//   65536    16            1565 MiB                           351 MiB
+//   131072   17            1032.5 + 823.9 = 1856 MiB          395 MiB
+//
+// `auto` reserves 2 x 1222 = 2444 MiB of compute with a draft head present,
+// so the E4B-derived constant OVER-covers this head by 879 MiB up to 64k and
+// 588 MiB at 128k. MTP active throughout (effect +9 % to +21 %). #197's crash
+// does not reproduce on this card at any of the four.
+//
+// The one trend worth watching: the head's buffer GROWS with context (532.9
+// -> 823.9 from 64k to 128k) and the allowance does not scale with context at
+// all, so headroom shrinks as context rises. Two points are not a slope; this
+// is why the 128k case stays in the file.
+TEST_CASE("gh#197 auto + MTP head on the 26B-A4B QAT at 32768 context",
+          "[.][model][gh197][benchmark][mtp-a4b-ctx32k]") {
+    gh153::run_four_arm_bench(
+        {"a4b_ctx32k", "gemma4_a4b_qat", "mtp_a4b", "auto", 256, 4, 0, 0,
+         32768});
+}
+
+TEST_CASE("gh#197 auto + MTP head on the 26B-A4B QAT at 65536 context",
+          "[.][model][gh197][benchmark][mtp-a4b-ctx64k]") {
+    gh153::run_four_arm_bench(
+        {"a4b_ctx64k", "gemma4_a4b_qat", "mtp_a4b", "auto", 256, 4, 0, 0,
+         65536});
+}
+
+TEST_CASE("gh#197 auto + MTP head on the 26B-A4B QAT at 131072 context",
+          "[.][model][gh197][benchmark][mtp-a4b-ctx128k]") {
+    // The consumer's own context — the one their incident actually OOMed at.
+    gh153::run_four_arm_bench(
+        {"a4b_ctx128k", "gemma4_a4b_qat", "mtp_a4b", "auto", 256, 4, 0, 0,
+         131072});
 }
 
 TEST_CASE("gh#153 MTP vs plain decode throughput — four arms, Gemma 4 26B-A4B "

@@ -973,34 +973,28 @@ inline bool test_log_contains(const std::string& test_name,
 constexpr size_t VRAM_LEAK_THRESHOLD = 64 * 1024 * 1024;
 
 /**
- * @brief Catch2 listener — model loading, VRAM monitoring.
- * @version 1.10.2
+ * @brief Catch2 listener base — log directory + per-case VRAM monitoring.
+ *
+ * gh#188: split out of ModelTestListener so a test that never touches the
+ * shared harness model (`g_ctx`) can keep the VRAM-leak watch without paying
+ * for that model. The facade tests drive their own handle through the C ABI;
+ * registering ModelTestListener made each of them load the generic harness
+ * model from the repository's developer config first — ~6 GB read and held on
+ * the card while the test's real model loaded beside it.
+ * @version 2.14.0
  */
-class ModelTestListener : public Catch::EventListenerBase {
+class VramMonitorListener : public Catch::EventListenerBase {
 public:
     using Catch::EventListenerBase::EventListenerBase;
 
     /**
-     * @brief Load model before test run.
+     * @brief Ensure the log directory exists before any case writes to it.
      * @param info Test run info.
      * @utility
-     * @version 1.10.2
+     * @version 2.14.0
      */
     void testRunStarting(Catch::TestRunInfo const& /*info*/) override {
-        spdlog::info("Loading model for model tests...");
         fs::create_directories(LOG_DIR);
-        // gh#149: load_harness_inputs records WHICH setup step failed
-        // instead of collapsing both into one bool.
-        bool ok = load_harness_inputs(g_ctx, "the generic test model");
-        // gh#87: generic engine-logic tests use a small model (footprint /
-        // OOM safety). Family tests use init_orchestrator_for_v219_* and keep
-        // their large models — they do NOT go through this listener.
-        if (ok) { use_small_default_model(g_ctx); }
-        ok = ok && init_orchestrator(g_ctx);
-        if (!ok) {
-            spdlog::error("Model test init failed — tests will skip: {}",
-                          g_ctx.skip_reason);
-        }
     }
 
     /**
@@ -1036,18 +1030,78 @@ public:
     }
 
     /**
-     * @brief Unload model after run.
+     * @brief Note where the logs went.
      * @param stats Test run stats.
      * @utility
-     * @version 1.10.2
+     * @version 2.14.0
      */
     void testRunEnded(Catch::TestRunStats const& /*stats*/) override {
-        if (g_ctx.orchestrator) {
-            g_ctx.orchestrator->shutdown();
-        }
         spdlog::info("Model tests complete — logs in {}", LOG_DIR.string());
     }
 
 private:
     size_t vram_before_ = 0; ///< VRAM snapshot before test case
+};
+
+/**
+ * @brief Listener for tests that use the shared harness model (`g_ctx`).
+ *
+ * Adds the generic-model load before the run and its shutdown after, on top
+ * of VramMonitorListener. Register this ONLY in a test that reads `g_ctx`; a
+ * test that builds its own handle registers FacadeTestListener instead.
+ * @version 2.14.0
+ */
+class ModelTestListener : public VramMonitorListener {
+public:
+    using VramMonitorListener::VramMonitorListener;
+
+    /**
+     * @brief Load model before test run.
+     * @param info Test run info.
+     * @utility
+     * @version 2.14.0
+     */
+    void testRunStarting(Catch::TestRunInfo const& info) override {
+        VramMonitorListener::testRunStarting(info);
+        spdlog::info("Loading model for model tests...");
+        // gh#149: load_harness_inputs records WHICH setup step failed
+        // instead of collapsing both into one bool.
+        bool ok = load_harness_inputs(g_ctx, "the generic test model");
+        // gh#87: generic engine-logic tests use a small model (footprint /
+        // OOM safety). Family tests use init_orchestrator_for_v219_* and keep
+        // their large models — they do NOT go through this listener.
+        if (ok) { use_small_default_model(g_ctx); }
+        ok = ok && init_orchestrator(g_ctx);
+        if (!ok) {
+            spdlog::error("Model test init failed — tests will skip: {}",
+                          g_ctx.skip_reason);
+        }
+    }
+
+    /**
+     * @brief Unload model after run.
+     * @param stats Test run stats.
+     * @utility
+     * @version 2.14.0
+     */
+    void testRunEnded(Catch::TestRunStats const& stats) override {
+        if (g_ctx.orchestrator) {
+            g_ctx.orchestrator->shutdown();
+        }
+        VramMonitorListener::testRunEnded(stats);
+    }
+};
+
+/**
+ * @brief Listener for facade tests: VRAM watch, no harness model.
+ *
+ * gh#188. A facade test configures its own handle via FacadeProject and never
+ * reads `g_ctx`, so it must not trigger the harness model load. Kept as a
+ * named type rather than registering the base directly, so the intent reads at
+ * the registration site.
+ * @version 2.14.0
+ */
+class FacadeTestListener : public VramMonitorListener {
+public:
+    using VramMonitorListener::VramMonitorListener;
 };

@@ -180,6 +180,7 @@ SCENARIO("gh#144: concurrent bridge clients queue instead of racing",
                    // exceeded the client timeout and looked like a failure.
                    "  max_tokens: 16\n"
                    "mcp:\n"
+                   "  working_dir: " + dir.string() + "\n"  // gh#186
                    "  external:\n"
                    "    enabled: true\n"
                    "    ask_streaming: false\n"

@@ -52,7 +52,7 @@
 #include <unistd.h>
 #include <vector>
 
-CATCH_REGISTER_LISTENER(ModelTestListener)
+CATCH_REGISTER_LISTENER(FacadeTestListener)
 
 namespace {
 
@@ -131,9 +131,8 @@ SCENARIO("outside-root optional: a real model's reads outside its root "
         std::ofstream(bravo) << "The codeword in this file is QUOKKA.\n";
 
         entropic::test::facade::FacadeProject project("outside_root_approval");
-        project.extra_config =
-            "mcp:\n"
-            "  working_dir: " + project.dir().string() + "\n"
+        // Root is the project dir by default (gh#186); only the policy is ours.
+        project.extra_mcp_config =
             "  filesystem:\n"
             "    allow_outside_root: optional\n";
 

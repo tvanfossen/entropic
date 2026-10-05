@@ -82,6 +82,7 @@ SCENARIO("gh#95: identity grammar: field constrains that tier's output",
                    "    gpu_layers: 99\n"
                    "    identity: " + (dir / "identity_lead.md").string() + "\n"
                    "  default: lead\n"
+                   "mcp:\n  working_dir: " + dir.string() + "\n"  // gh#186: never the checkout
                    "constitutional_validation:\n"
                    "  enabled: false\n");
 

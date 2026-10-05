@@ -108,7 +108,7 @@
 #include <string>
 #include <unistd.h>
 
-CATCH_REGISTER_LISTENER(ModelTestListener)
+CATCH_REGISTER_LISTENER(FacadeTestListener)
 
 namespace {
 
@@ -308,11 +308,9 @@ SCENARIO("gh#169: an iteration-capped delegate hands its parent the audit it "
                "anomaly code: TQ-4417-VERMILION\n"
                "belt tension: nominal\n";
         // `mcp.working_dir` is authoritative for the filesystem server's root
-        // (init_mcp_servers falls back to the PROCESS CWD, not to the
-        // configured project), so an unset one would root the child at the
-        // ctest working directory and every read would miss.
-        project.extra_config =
-            "mcp:\n  working_dir: " + project.dir().string() + "\n";
+        // (init_mcp_servers falls back to the PROCESS CWD). FacadeProject now
+        // roots it at the project dir by default (gh#186), which is what this
+        // scenario's reads need.
 
         auto lead = make_lead(
             "You are a depot dispatcher. You have NO filesystem tools and "
@@ -458,8 +456,8 @@ SCENARIO("gh#181: a delegate hard-cut by the thinking budget hands its "
         project.extra_config =
             "generation:\n"
             "  budget_mode: tokens\n"
-            "  budget_limit: 200\n"
-            "mcp:\n  working_dir: " + empty_root.string() + "\n";
+            "  budget_limit: 200\n";
+        project.mcp_working_dir = empty_root;
 
         auto lead = make_lead(
             "You are a works dispatcher for the Pinewood line. You know "

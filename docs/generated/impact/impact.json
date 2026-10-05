@@ -4,14 +4,30 @@
     "req_name": "Model pool dedup and VRAM residency policy govern which tier is resident",
     "functions": [
       {
-        "name": "derive_auto_placement",
-        "file": "src/inference/auto_placement.h",
-        "version": "2.13.2"
+        "name": "query_device_free_vram_bytes",
+        "file": "src/inference/device_memory.cpp",
+        "version": "2.14.0"
       },
       {
-        "name": "resolve_auto_gpu_layers",
+        "name": "device_memory_query_count",
+        "file": "src/inference/device_memory.cpp",
+        "version": "2.14.0"
+      },
+      {
+        "name": "ensure_vram_budget",
         "file": "src/inference/orchestrator.cpp",
-        "version": "2.13.2"
+        "version": "2.14.0"
+      }
+    ]
+  },
+  {
+    "req_id": "REQ-INFER-020",
+    "req_name": "Tier routing, handoff rules and secondary model roles",
+    "functions": [
+      {
+        "name": "classify_task",
+        "file": "src/inference/orchestrator.cpp",
+        "version": "2.14.0"
       }
     ]
   }

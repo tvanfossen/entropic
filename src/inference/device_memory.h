@@ -43,6 +43,21 @@ namespace entropic {
 uint64_t query_device_free_vram_bytes();
 
 /**
+ * @brief How many times this process has asked the device for free VRAM.
+ *
+ * gh#198: the query is the call that creates a CUDA primary context
+ * (`ggml_backend_dev_memory` → `cudaMemGetInfo`), ~138 MiB on a GTX 1080 Ti,
+ * so "did an idle handle touch the device" is exactly "did this count move".
+ * Counted on every build, including CPU-only ones where the query returns 0,
+ * so the property is testable without a GPU.
+ *
+ * @return Number of calls to query_device_free_vram_bytes() so far.
+ * @req REQ-INFER-019
+ * @version 2.14.0
+ */
+uint64_t device_memory_query_count();
+
+/**
  * @brief This process's RLIMIT_MEMLOCK, in bytes (gh#148).
  *
  * The ceiling on what `use_mlock` can pin. Reported so the admission gate

@@ -151,6 +151,8 @@ endfunction()
 # ── Subsystem tests (18) — orchestrator-level ───────────────
 
 add_model_test(test-basic-generation      test_basic_generation.cpp)
+# gh#198 (v2.14.0): a deferred handle owns no GPU memory until it runs.
+add_model_test(test-gh198-idle-device     test_gh198_idle_device.cpp)
 add_model_test(test-tool-call-parsing     test_tool_call_parsing.cpp)
 add_model_test(test-tier-routing          test_tier_routing.cpp)
 add_model_test(test-delegation            test_delegation.cpp)

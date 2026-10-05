@@ -113,6 +113,7 @@ SCENARIO("gh#110: MTP engages through the real agent loop (entropic_run)",
                    "    n_draft: 16\n"
                    "    draft:\n"
                    "      path: " + head.string() + "\n"
+                   "mcp:\n  working_dir: " + dir.string() + "\n"  // gh#186: never the checkout
                    "constitutional_validation:\n"
                    "  enabled: false\n");
 

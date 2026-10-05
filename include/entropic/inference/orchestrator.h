@@ -800,13 +800,26 @@ private:
     /**
      * @brief Cached VRAM budget in bytes. 0 = unknown / unenforced.
      *
-     * Resolved at `initialize()` time: `ENTROPIC_VRAM_BUDGET_BYTES` env
-     * override, else the free VRAM reported by the active GPU device
-     * (gh#142). The env var remains the surface unit tests inject.
-     * Sampled once, so a later VRAM consumer is invisible to the gate.
-     * @version 2.11.0
+     * `ENTROPIC_VRAM_BUDGET_BYTES` env override, else the free VRAM reported
+     * by the active GPU device (gh#142). Sampled once. Eager handles sample
+     * at `initialize()`; a `defer_load` handle samples at its FIRST admission
+     * instead (gh#198), because asking the device creates a CUDA context an
+     * idle handle has no use for. Read it through `ensure_vram_budget()` on
+     * any path that enforces it.
+     * @version 2.14.0
      */
     size_t vram_budget_bytes_{0};
+
+    /// @brief Whether vram_budget_bytes_ has been resolved yet (gh#198).
+    /// Guarded by swap_mutex_ after initialize().
+    /// @version 2.14.0
+    bool vram_budget_resolved_{false};
+
+    /// @brief initialize() chose to defer the device probe (gh#198). Kept
+    /// separate from "not resolved", which is also true of an orchestrator
+    /// that was never initialised — that one is "unknown", not "deferred".
+    /// @version 2.14.0
+    bool vram_budget_deferred_{false};
 
     /**
      * @brief Residency observer (empty = no observer registered).
@@ -887,6 +900,39 @@ private:
      * @version 2.11.0
      */
     static size_t resolve_vram_budget_bytes();
+
+    /**
+     * @brief Resolve the VRAM budget once, on first need (gh#198).
+     *
+     * Idempotent. Called from `initialize()` for an eager handle and from
+     * `residency_admits()` (under swap_mutex_) for every admission, so a
+     * deferred handle measures at its first load and never before. Logs the
+     * budget with its real source — the env override or the device.
+     * @dg_internal
+     * @req REQ-INFER-019
+     * @version 2.14.0
+     */
+    void ensure_vram_budget();
+
+    /**
+     * @brief Whether initialize() should probe the device now.
+     *
+     * False only for a `defer_load` handle with no env override: the override
+     * costs nothing to read, the device costs a CUDA context.
+     * @param config Parsed engine config.
+     * @return true to resolve the budget at initialize().
+     * @dg_internal
+     * @version 2.14.0
+     */
+    static bool budget_resolves_at_init(const ParsedConfig& config);
+
+    /**
+     * @brief Route ggml/llama logs to a file before any model loads.
+     * @param config Parsed engine config.
+     * @dg_internal
+     * @version 2.14.0
+     */
+    static void route_ggml_logs(const ParsedConfig& config);
 
     /**
      * @brief Fire the residency observer if registered.

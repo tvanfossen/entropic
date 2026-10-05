@@ -226,6 +226,32 @@ void ModelOrchestrator::ensure_secondary_roles() {
 }
 
 /**
+ * @brief Route ggml/llama logs to a file before any model loads.
+ *
+ * gh#23 v2.3.24: `llama_log_path` overrides the hardcoded
+ * `<log_dir>/llama_ggml.log` when non-empty. The non-empty-and-no-log-dir
+ * case is also supported so consumers that want llama logs but no
+ * session.log can opt in. Split out of initialize() in v2.14.0 (complexity).
+ *
+ * @param config Parsed engine config.
+ * @dg_internal
+ * @version 2.14.0
+ */
+void ModelOrchestrator::route_ggml_logs(const ParsedConfig& config) {
+    if (!config.ggml_logging) { return; }
+    std::string path;
+    if (!config.llama_log_path.empty()) {
+        path = config.llama_log_path.string();
+    } else if (!config.log_dir.empty()) {
+        path = (config.log_dir / "llama_ggml.log").string();
+    }
+    if (!path.empty()) {
+        entropic_inference_log_to_file(path.c_str());
+        logger->info("ggml logging: {}", path);
+    }
+}
+
+/**
  * @brief Initialize orchestrator: backends, routing, adapters, grammars.
  *
  * Adds speculative-draft activation alongside router activation in
@@ -237,35 +263,21 @@ void ModelOrchestrator::ensure_secondary_roles() {
  * @param config Parsed engine config.
  * @return true on success.
  * @utility
- * @version 2.13.0
+ * @version 2.14.0
  */
 bool ModelOrchestrator::initialize(const ParsedConfig& config) {
     config_ = config;
     default_tier_ = config.models.default_tier;
-    vram_budget_bytes_ = resolve_vram_budget_bytes();
-    if (vram_budget_bytes_ > 0) {
-        logger->info("[residency] VRAM budget: {} bytes "
-                     "(ENTROPIC_VRAM_BUDGET_BYTES)",
-                     vram_budget_bytes_);
+    // gh#198: a deferred handle leaves the device alone until it loads.
+    if (budget_resolves_at_init(config)) {
+        ensure_vram_budget();
+    } else {
+        vram_budget_deferred_ = true;
+        logger->info("[residency] defer_load: VRAM budget will be measured "
+                     "at first admission, not now");
     }
 
-    // Route ggml/llama logs before any model loading.
-    // gh#23 v2.3.24: `llama_log_path` overrides the hardcoded
-    // `<log_dir>/llama_ggml.log` when non-empty. The non-empty-and-no-log-dir
-    // case is also supported so consumers that want llama logs but
-    // no session.log can opt in.
-    if (config.ggml_logging) {
-        std::string path;
-        if (!config.llama_log_path.empty()) {
-            path = config.llama_log_path.string();
-        } else if (!config.log_dir.empty()) {
-            path = (config.log_dir / "llama_ggml.log").string();
-        }
-        if (!path.empty()) {
-            entropic_inference_log_to_file(path.c_str());
-            logger->info("ggml logging: {}", path);
-        }
-    }
+    route_ggml_logs(config);  // before any model loading
 
     logger->info("Initializing model orchestrator");
 
@@ -273,8 +285,14 @@ bool ModelOrchestrator::initialize(const ParsedConfig& config) {
     build_routing_tables(config);
     // gh#157 (v2.13.0): a no-op when `models.defer_load` is set.
     if (!activate_default_tier(config)) { return false; }
-    activate_router(config);
-    activate_draft(config);      // Speculative draft slot (v2.1.11)
+    // gh#198: under defer_load the router and a separate draft were still
+    // loaded here — whole models on an idle handle. The router now loads on
+    // the first classification (classify_task) and the draft with the first
+    // tier activation (get_model -> ensure_secondary_roles).
+    if (!config.models.defer_load) {
+        activate_router(config);
+        activate_draft(config);  // Speculative draft slot (v2.1.11)
+    }
 
     // LoRA adapter preload moved to first activation of the owning model
     // (gh#157): preloading here required the base model to already be
@@ -1179,7 +1197,7 @@ std::string ModelOrchestrator::route(const std::vector<Message>& messages) {
  *         selected it; ("","") when the router slot is not loaded; and
  *         (default_tier_, "") when the router emitted no mapped digit.
  * @req REQ-INFER-020
- * @version 2.13.0
+ * @version 2.14.0
  */
 std::pair<std::string, std::string> ModelOrchestrator::classify_task(
     const std::vector<Message>& messages)
@@ -1195,6 +1213,10 @@ std::pair<std::string, std::string> ModelOrchestrator::classify_task(
     router_params.max_tokens = 1;
     router_params.temperature = 0.0f;
 
+    // gh#198: a defer_load handle did not load the router at init. No-op
+    // when it is already loaded or not configured; ensure_loaded locks its
+    // own slots_mutex_, and this runs under generation_mutex_.
+    activate_router(config_);
     auto* router_backend = secondary_loader_.get("router");
     if (router_backend == nullptr) {
         logger->warn("classify_task: router not loaded; returning empty");
@@ -1585,9 +1607,11 @@ uint64_t ModelOrchestrator::host_expert_bytes_for(const ModelConfig& cfg) {
  * estimate exceeds a known engine VRAM budget. Returns true to admit.
  *
  * @dg_internal
- * @version 2.13.0
+ * @version 2.14.0
  */
 bool ModelOrchestrator::residency_admits(const std::string& tier_name) {
+    // gh#198: a deferred handle measures here, on its first admission.
+    ensure_vram_budget();
     // gh#148: resolve `gpu_layers: auto` and refuse a config that provably
     // cannot work, BEFORE pricing the footprint — both change what is being
     // priced, and both are loud rather than silently corrected.
@@ -2715,6 +2739,35 @@ size_t ModelOrchestrator::resolve_vram_budget_bytes() {
     return budget;
 }
 
+/**
+ * @brief Resolve the VRAM budget once, on first need (gh#198).
+ * @dg_internal
+ * @req REQ-INFER-019
+ * @version 2.14.0
+ */
+void ModelOrchestrator::ensure_vram_budget() {
+    if (vram_budget_resolved_) { return; }
+    const bool from_env = std::getenv("ENTROPIC_VRAM_BUDGET_BYTES") != nullptr;
+    vram_budget_bytes_ = resolve_vram_budget_bytes();
+    vram_budget_resolved_ = true;
+    // The pre-2.14.0 line labelled every budget "(ENTROPIC_VRAM_BUDGET_BYTES)",
+    // including the far more common device-measured one.
+    logger->info("[residency] VRAM budget: {} bytes ({})", vram_budget_bytes_,
+                 from_env ? "ENTROPIC_VRAM_BUDGET_BYTES" : "device free VRAM");
+}
+
+/**
+ * @brief Whether initialize() should probe the device now (gh#198).
+ * @param config Parsed engine config.
+ * @return true unless defer_load is set and there is no env override.
+ * @dg_internal
+ * @version 2.14.0
+ */
+bool ModelOrchestrator::budget_resolves_at_init(const ParsedConfig& config) {
+    return !config.models.defer_load
+        || std::getenv("ENTROPIC_VRAM_BUDGET_BYTES") != nullptr;
+}
+
 
 /**
  * @brief Gather a tier's footprint inputs for the pure estimator.
@@ -2913,7 +2966,7 @@ void ModelOrchestrator::forget_session_kv(const std::string& session_key) {
  * @brief Serialize the current VRAM residency snapshot to JSON.
  * @return JSON object describing budget, tiers and footprints.
  * @dg_internal
- * @version 2.13.0
+ * @version 2.14.0
  */
 std::string ModelOrchestrator::residency_snapshot_json() const {
     std::lock_guard<std::mutex> lock(swap_mutex_);
@@ -2941,7 +2994,11 @@ std::string ModelOrchestrator::residency_snapshot_json() const {
     j["vram_headroom_bytes"] = vram_budget_bytes_ > in_use
         ? vram_budget_bytes_ - in_use
         : 0u;
-    j["backend"] = vram_budget_bytes_ > 0 ? "configured" : "unknown";
+    // gh#198: a status read must never be the thing that creates the CUDA
+    // context, so an unresolved budget reports as deferred rather than probing.
+    const bool deferred = vram_budget_deferred_ && !vram_budget_resolved_;
+    j["backend"] = deferred ? "deferred"
+                 : (vram_budget_bytes_ > 0 ? "configured" : "unknown");
     return j.dump();
 }
 

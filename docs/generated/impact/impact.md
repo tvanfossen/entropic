@@ -2,6 +2,7 @@
 
 | REQ | Name | Functions Changed |
 |-----|------|-------------------|
-| REQ-INFER-019 | Model pool dedup and VRAM residency policy govern which tier is resident | derive_auto_placement, resolve_auto_gpu_layers |
+| REQ-INFER-019 | Model pool dedup and VRAM residency policy govern which tier is resident | query_device_free_vram_bytes, device_memory_query_count, ensure_vram_budget |
+| REQ-INFER-020 | Tier routing, handoff rules and secondary model roles | classify_task |
 
-**Total: 1 requirement(s) affected, 2 function(s) changed**
+**Total: 2 requirement(s) affected, 4 function(s) changed**

@@ -251,6 +251,13 @@ public:
     /// @version 2.14.0
     fs::path mcp_working_dir;
 
+    /// @brief Emit `models.defer_load: true` (gh#157/gh#198).
+    ///
+    /// Lives in the generated `models:` block, which extra_config cannot add
+    /// to without duplicating the key.
+    /// @version 2.14.0
+    bool defer_load = false;
+
     /// @brief Extra lines inside the generated `mcp:` block, two-space indented.
     ///
     /// e.g. "  filesystem:\n    allow_outside_root: optional\n".
@@ -344,6 +351,7 @@ private:
             }
             cfg += tier_config_block(t);
         }
+        if (defer_load) { cfg += "  defer_load: true\n"; }
         cfg += "  default: "
              + (default_tier.empty() ? tiers.front().name : default_tier) + "\n";
         cfg += "constitutional_validation:\n  enabled: false\n";

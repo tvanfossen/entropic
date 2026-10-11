@@ -852,11 +852,25 @@ struct FilesystemConfig {
 struct ExternalMCPConfig {
     bool enabled = false;                                ///< Enable external MCP
     std::optional<std::filesystem::path> socket_path;    ///< Socket path (nullopt = derived)
-    int rate_limit = 10;                                 ///< Requests per minute (1–100)
+    /// @brief NOT ENFORCED. Parsed since the bridge shipped and read by
+    /// nothing; the bridge logs a warning at start when it is set to anything
+    /// but the default (v2.14.0). Kept only so existing configs still load —
+    /// enforcing it now at 10/min would throttle every consumer.
+    int rate_limit = 10;
     /// Route entropic.ask through entropic_run (false) or entropic_run_streaming
     /// (true, default). Set false when MTP is active — streaming binds on_token
     /// and trips the MTP incompatibility guard (gh#115, v2.9.12).
     bool ask_streaming = true;
+
+    /// @brief Also serve the bridge over Streamable HTTP on 127.0.0.1:<port>
+    /// (gh#204, v2.14.0). 0 (default) = unix socket only.
+    ///
+    /// One URL for every MCP client, instead of a host per client. Loopback
+    /// only; clients authenticate with the bearer token written to
+    /// `~/.entropic/serve/<port>.token` (mode 0600) on each start. For remote
+    /// use, tunnel with `ssh -L <port>:127.0.0.1:<port> host`. If the port
+    /// cannot be served, configure fails with ENTROPIC_ERROR_IO.
+    int http_port = 0;
 
     /// @brief Namespace for the tools this bridge advertises (gh#145).
     ///

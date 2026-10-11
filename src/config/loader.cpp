@@ -593,7 +593,7 @@ static void parse_tool_descriptions(
  * @param[out] config Output external MCP config.
  * @return Empty string on success, error message on failure.
  * @dg_internal
- * @version 2.12.0
+ * @version 2.14.0
  */
 static std::string parse_external_mcp_config(
     ryml::ConstNodeRef node,
@@ -602,6 +602,9 @@ static std::string parse_external_mcp_config(
     extract(node, "enabled", config.enabled);
     extract(node, "rate_limit", config.rate_limit);
     extract(node, "ask_streaming", config.ask_streaming);
+    // gh#204 (v2.14.0): range-checked where it is used — the listener fails
+    // configure loudly on a bad port rather than this parse dropping it.
+    extract(node, "http_port", config.http_port);
     // gh#145: consumer-owned identity. Both default to "entropic", so an
     // unset config advertises exactly the pre-2.12.0 names.
     extract(node, "tool_prefix", config.tool_prefix);

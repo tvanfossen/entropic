@@ -10,6 +10,7 @@ target_sources(entropic-facade PRIVATE
     entropic_audit.cpp
     entropic_compaction.cpp
     external_bridge.cpp
+    http_listener.cpp
 )
 
 # v2.0.5: sublibs are OBJECT libraries consumed as raw object files

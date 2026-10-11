@@ -1740,6 +1740,37 @@ static entropic::LoopConfig build_loop_config(entropic_handle_t h) {
 }
 
 /**
+ * @brief Start the Streamable-HTTP listener when one is configured (gh#204).
+ *
+ * Fails LOUD: an operator who set `mcp.external.http_port` asked for a URL
+ * clients will connect to, and a host that silently is not serving it is
+ * worse than one that refuses to come up.
+ *
+ * @param h Engine handle, with external_bridge running.
+ * @return ENTROPIC_OK, or ENTROPIC_ERROR_IO with last_error set.
+ * @req REQ-BRIDGE-001
+ * @version 2.14.0
+ */
+static entropic_error_t start_http_listener(entropic_handle_t h) {
+    const int port = h->config.mcp.external.http_port;
+    std::string err;
+    if (port != 0 && (port < 0 || port > 65535)) {
+        err = "mcp.external.http_port out of range: " + std::to_string(port);
+    } else if (port != 0 && !h->external_bridge) {
+        err = "the unix bridge did not start";
+    } else if (port != 0) {
+        h->http_listener = std::make_unique<entropic::http::HttpListener>(
+            h->external_bridge.get(), port);
+        if (!h->http_listener->start(err)) { h->http_listener.reset(); }
+    }
+    if (!err.empty()) {
+        h->last_error = "HTTP listener: " + err;
+        s_log->error("{}", h->last_error);
+    }
+    return err.empty() ? ENTROPIC_OK : ENTROPIC_ERROR_IO;
+}
+
+/**
  * @brief Start the external MCP bridge if enabled in config.
  *
  * Creates an ExternalBridge listening on a unix domain socket so
@@ -1985,7 +2016,7 @@ static void warn_tier_grammars_step(
  * @return ENTROPIC_OK on success, else the first failing step's
  *        error code.
  * @req REQ-API-004
- * @version 2.13.0
+ * @version 2.14.0
  */
 static entropic_error_t configure_common(entropic_handle_t h) {
     auto rc = reject_if_configured(h);
@@ -2024,8 +2055,11 @@ static entropic_error_t configure_common(entropic_handle_t h) {
 
     h->configured.store(true);
     start_external_bridge(h);
+    // gh#204: an explicitly configured HTTP listener that cannot start fails
+    // configure, so a headless host exits instead of running unreachable.
+    const auto http_rc = start_http_listener(h);
     s_log->info("configure complete");
-    return ENTROPIC_OK;
+    return http_rc;
 }
 
 /**
@@ -2209,7 +2243,7 @@ entropic_error_t entropic_configure_dir(
  * @req REQ-API-002
  * @req REQ-API-003
  * @req REQ-ABI-001
- * @version 2.13.0
+ * @version 2.14.0
  */
 void entropic_destroy(entropic_handle_t handle) {
     if (handle == nullptr) {
@@ -2218,6 +2252,8 @@ void entropic_destroy(entropic_handle_t handle) {
     s_log->info("entropic_destroy()");
 
     // Stop external bridge FIRST — it holds a raw pointer to handle
+    // gh#204: the HTTP front end dispatches into the bridge — stop it first.
+    handle->http_listener.reset();
     if (handle->external_bridge) {
         handle->external_bridge->stop();
         handle->external_bridge.reset();
@@ -3333,37 +3369,49 @@ entropic_error_t entropic_run_session_as(
 }
 
 /**
- * @brief Streaming turn on a named session (gh#144, v2.12.0).
- * @param handle Engine handle.
- * @param session_key Session to run under; NULL or "" = default session.
+ * @brief Validate a streaming session turn's arguments (gh#205).
+ * @param handle Engine handle (orchestrator already checked).
+ * @param tier Requested tier, or nullptr for a routed turn.
  * @param input User input.
- * @param on_token Per-token callback.
+ * @param on_token Token callback.
+ * @return ENTROPIC_OK, or the first argument error.
+ * @dg_internal
+ * @version 2.14.0
+ */
+static entropic_error_t check_stream_args(
+    entropic_handle_t handle, const char* tier, const char* input,
+    void (*on_token)(const char*, size_t, void*)) {
+    entropic_error_t rc = ENTROPIC_OK;
+    if (!input || !on_token || !handle->engine) {
+        rc = ENTROPIC_ERROR_INVALID_ARGUMENT;
+    } else if (tier != nullptr && !handle->engine->has_tier(tier)) {
+        handle->last_error = std::string("unknown tier: ") + tier;
+        rc = ENTROPIC_ERROR_IDENTITY_NOT_FOUND;
+    }
+    return rc;
+}
+
+/**
+ * @brief Run one streaming turn on a claimed session (gh#144, gh#205).
+ * @param handle Engine handle.
+ * @param session_key Session key; NULL = default.
+ * @param tier Tier to lock to, or "" to route.
+ * @param input User input.
+ * @param on_token Token callback.
  * @param user_data Forwarded to on_token.
  * @param cancel_flag Optional cancel flag.
- * @return ENTROPIC_OK or ENTROPIC_ERROR_ALREADY_RUNNING.
- * @req REQ-API-009
- * @version 2.13.0
+ * @return ENTROPIC_OK, CANCELLED, or GENERATE_FAILED.
+ * @dg_internal
+ * @version 2.14.0
  */
-entropic_error_t entropic_run_session_streaming(
-    entropic_handle_t handle,
-    const char* session_key,
-    const char* input,
-    void (*on_token)(const char* token, size_t len, void* user_data),
-    void* user_data,
-    int* cancel_flag) {
-    entropic::HandleTurnGuard turn(handle, session_key);
-    auto rc = check_orchestrator(handle);
-    if (rc != ENTROPIC_OK || !input || !on_token || !handle->engine
-        || !turn.claim()) {
-        return rc != ENTROPIC_OK ? rc
-            : (!input || !on_token || !handle->engine)
-                ? ENTROPIC_ERROR_INVALID_ARGUMENT
-            : ENTROPIC_ERROR_ALREADY_RUNNING;
-    }
+static entropic_error_t stream_session_turn(
+    entropic_handle_t handle, const char* session_key, const std::string& tier,
+    const char* input, void (*on_token)(const char*, size_t, void*),
+    void* user_data, int* cancel_flag) {
     handle->engine->set_active_session(session_key ? session_key : "");
     try {
         int code = handle->engine->run_streaming(
-            input, on_token, user_data, cancel_flag);
+            input, on_token, user_data, cancel_flag, tier);
         if (handle->stream_observer != nullptr) {
             handle->stream_observer("", 0, handle->stream_observer_data);
         }
@@ -3373,6 +3421,84 @@ entropic_error_t entropic_run_session_streaming(
         s_log->error("run_session_streaming: {}", handle->last_error);
         return ENTROPIC_ERROR_GENERATE_FAILED;
     }
+}
+
+/**
+ * @brief Streaming turn on a named session, optionally under a tier.
+ * @param handle Engine handle.
+ * @param session_key Session key; NULL = default.
+ * @param tier Tier to lock to, or nullptr to route.
+ * @param input User input.
+ * @param on_token Token callback.
+ * @param user_data Forwarded to on_token.
+ * @param cancel_flag Optional cancel flag.
+ * @return As entropic_run_session_streaming_as().
+ * @dg_internal
+ * @version 2.14.0
+ */
+static entropic_error_t run_session_streaming_impl(
+    entropic_handle_t handle, const char* session_key, const char* tier,
+    const char* input, void (*on_token)(const char*, size_t, void*),
+    void* user_data, int* cancel_flag) {
+    entropic::HandleTurnGuard turn(handle, session_key);
+    auto rc = check_orchestrator(handle);
+    if (rc == ENTROPIC_OK) { rc = check_stream_args(handle, tier, input, on_token); }
+    if (rc == ENTROPIC_OK && !turn.claim()) { rc = ENTROPIC_ERROR_ALREADY_RUNNING; }
+    if (rc == ENTROPIC_OK) {
+        rc = stream_session_turn(handle, session_key, tier ? tier : "",
+                                 input, on_token, user_data, cancel_flag);
+    }
+    return rc;
+}
+
+/**
+ * @brief Streaming turn on a named session (gh#144, v2.12.0).
+ * @param handle Engine handle.
+ * @param session_key Session to run under; NULL or "" = default session.
+ * @param input User input.
+ * @param on_token Per-token callback.
+ * @param user_data Forwarded to on_token.
+ * @param cancel_flag Optional cancel flag.
+ * @return ENTROPIC_OK or ENTROPIC_ERROR_ALREADY_RUNNING.
+ * @req REQ-API-009
+ * @version 2.14.0
+ */
+entropic_error_t entropic_run_session_streaming(
+    entropic_handle_t handle,
+    const char* session_key,
+    const char* input,
+    void (*on_token)(const char* token, size_t len, void* user_data),
+    void* user_data,
+    int* cancel_flag) {
+    return run_session_streaming_impl(handle, session_key, nullptr, input,
+                                      on_token, user_data, cancel_flag);
+}
+
+/**
+ * @brief Streaming turn on a named session under a named tier (gh#205).
+ * @param handle Engine handle.
+ * @param session_key Session to run under; NULL or "" = default session.
+ * @param tier_or_identity Tier to lock this turn to.
+ * @param input User input.
+ * @param on_token Per-token callback.
+ * @param user_data Forwarded to on_token.
+ * @param cancel_flag Optional cancel flag.
+ * @return See entropic.h.
+ * @req REQ-API-009
+ * @req REQ-IDEN-001
+ * @version 2.14.0
+ */
+entropic_error_t entropic_run_session_streaming_as(
+    entropic_handle_t handle,
+    const char* session_key,
+    const char* tier_or_identity,
+    const char* input,
+    void (*on_token)(const char* token, size_t len, void* user_data),
+    void* user_data,
+    int* cancel_flag) {
+    if (tier_or_identity == nullptr) { return ENTROPIC_ERROR_INVALID_ARGUMENT; }
+    return run_session_streaming_impl(handle, session_key, tier_or_identity,
+                                      input, on_token, user_data, cancel_flag);
 }
 
 /**

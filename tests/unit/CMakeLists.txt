@@ -561,6 +561,10 @@ add_executable(entropic-api-tests
     # v2.14.0 (gh#199, gh#200): external MCP servers connect only when an
     # operator enabled them; YAML external_servers finally connect.
     api/mcp_discovery_gate_test.cpp
+    # gh#205 (v2.14.0): streaming under a named tier — argument contract.
+    api/run_session_streaming_as_test.cpp
+    # gh#204 (v2.14.0): Streamable-HTTP front end and its security bar.
+    api/http_listener_test.cpp
     # gh#158 (v2.13.0): the built-in servers' own state — read tracker and
     # working directory — shared by concurrent sessions on the default set.
     api/builtin_server_sharing_test.cpp
@@ -577,6 +581,8 @@ add_executable(entropic-api-tests
     api/tool_namespace_test.cpp
     # v2.1.7 (gh#34): mcp-bridge CLI relay round-trip tests.
     mcp/mcp_bridge_relay_test.cpp
+    # gh#204 (v2.14.0): `entropic serve` end to end, over HTTP.
+    api/serve_cli_test.cpp
 )
 
 # v2.1.1 (#3): serialize_messages_utf8_test.cpp #includes the private
@@ -608,6 +614,8 @@ target_link_libraries(entropic-api-tests PRIVATE
     entropic-types
     spdlog::spdlog
     Catch2::Catch2WithMain
+    # gh#204 (v2.14.0): http_listener_test is an HTTP client of the listener.
+    httplib::httplib
 )
 
 # v1.8.9: C99 header compilation test (pure C, not C++)

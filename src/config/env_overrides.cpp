@@ -60,9 +60,37 @@ static void apply_env(const char* key, Setter setter) {
 }
 
 /**
+ * @brief The `mcp.external` overrides `entropic serve` sets (gh#204).
+ *
+ * `ENTROPIC_MCP__EXTERNAL__ENABLED` and `ENTROPIC_MCP__EXTERNAL__HTTP_PORT`.
+ * A port that does not parse becomes -1, which the HTTP listener then
+ * refuses loudly at configure — never an exception out of the loader.
+ *
+ * @param config Config to override.
+ * @dg_internal
+ * @req REQ-CFG-001
+ * @version 2.14.0
+ */
+static void apply_mcp_external_env(ParsedConfig& config)
+{
+    apply_env("ENTROPIC_MCP__EXTERNAL__ENABLED",
+              [&](const std::string& v) {
+                  config.mcp.external.enabled = parse_bool(v);
+              });
+    apply_env("ENTROPIC_MCP__EXTERNAL__HTTP_PORT",
+              [&](const std::string& v) {
+                  char* end = nullptr;
+                  const long port = std::strtol(v.c_str(), &end, 10);
+                  config.mcp.external.http_port =
+                      (end != v.c_str() && *end == '\0') ? static_cast<int>(port)
+                                                          : -1;
+              });
+}
+
+/**
  * @brief Apply ENTROPIC_* environment variable overrides.
  * @param[in,out] config Config to override.
- * @version 2.3.7
+ * @version 2.14.0
  * @req REQ-CFG-001
  */
 void apply_env_overrides(ParsedConfig& config)
@@ -93,6 +121,7 @@ void apply_env_overrides(ParsedConfig& config)
               [&](const std::string& v) {
                   config.config_dir = std::filesystem::path(v);
               });
+    apply_mcp_external_env(config);  // gh#204 (v2.14.0)
 }
 
 } // namespace entropic::config

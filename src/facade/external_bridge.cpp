@@ -3,10 +3,12 @@
  * @file external_bridge.cpp
  * @brief Unix socket MCP bridge implementation.
  *
- * Listens on a unix domain socket, accepts one client at a time, and
- * serves JSON-RPC 2.0 (MCP) dispatching to the engine handle.
+ * Listens on a unix domain socket, serves every connected client on its
+ * own thread, and dispatches JSON-RPC 2.0 (MCP) to the engine handle. Turns
+ * queue per session (v2.14.0); a session's async completions, clears and
+ * cancels touch only that session and that client.
  *
- * @version 2.0.8
+ * @version 2.14.0
  */
 
 #include <entropic/mcp/external_bridge.h>
@@ -200,7 +202,7 @@ static json session_scoped_tool(const ExternalMCPConfig& cfg,
  * @param cfg External MCP config supplying prefix and description overrides.
  * @return One MCP tool definition object.
  * @utility
- * @version 2.12.0-rc1
+ * @version 2.14.0
  */
 static json ask_tool(const ExternalMCPConfig& cfg) {
     return {
@@ -226,7 +228,19 @@ static json ask_tool(const ExternalMCPConfig& cfg) {
                              {"description",
                               "Conversation to run under. Callers passing "
                               "the same value share a conversation; "
-                              "omit for the shared default session."}}}
+                              "omit for the shared default session."}}},
+                // gh#205 (v2.14.0): both optional; absent = pre-2.14.0.
+                {"tier", {{"type", "string"},
+                          {"description",
+                           "Tier or identity to run this turn under; omit "
+                           "to route as usual."}}},
+                {"workspace", {{"type", "string"},
+                               {"description",
+                                "Repository this session works in: an "
+                                "absolute directory (a workspace is created "
+                                "for it on first use) or the name of a "
+                                "workspace the host created. Fixed for the "
+                                "session once it has messages."}}}
             }},
             {"required", json::array({"prompt"})}
         }}};
@@ -304,19 +318,26 @@ static void write_json_line(int fd, const json& msg) {
 /**
  * @brief Send an MCP progress notification with a text token.
  * @param fd Client socket fd.
- * @param token_text Token string to send.
- * @param progress_token Progress token ID for correlation.
+ * @param token_text Token string to send (carried in `message`).
+ * @param progress_token The caller's `_meta.progressToken`, else the
+ *        request id (pre-2.14.0 behaviour, kept for clients that never
+ *        send one).
+ * @param seq Monotonic notification count (MCP's numeric `progress`).
  * @utility
  * @version 2.0.10
  */
 static void send_progress(int fd, const std::string& token_text,
-                          const std::string& progress_token) {
+                          const json& progress_token, uint64_t seq) {
+    // v2.14.0: MCP's `progress` is a NUMBER that increases with each
+    // notification; the token text rides in `message`. Pre-2.14.0 put the
+    // text in `progress`, which spec-validating clients reject.
     json notif = {
         {"jsonrpc", "2.0"},
         {"method", "notifications/progress"},
         {"params", {
             {"progressToken", progress_token},
-            {"progress", token_text}
+            {"progress", seq},
+            {"message", token_text}
         }}
     };
     write_json_line(fd, notif);
@@ -349,6 +370,53 @@ static json final_answer_from_context(entropic_handle_t handle,
 }
 
 /**
+ * @brief Run one non-streaming turn, under `tier` when one is given (gh#205).
+ * @param handle Engine handle.
+ * @param session_key Session key.
+ * @param tier Tier or identity; "" routes as usual.
+ * @param prompt User prompt.
+ * @param[out] result_json Serialized result (free with entropic_free).
+ * @return The run's error code.
+ * @utility
+ * @version 2.14.0
+ */
+static entropic_error_t run_plain_turn(entropic_handle_t handle,
+                                       const std::string& session_key,
+                                       const std::string& tier,
+                                       const std::string& prompt,
+                                       char** result_json) {
+    return tier.empty()
+        ? entropic_run_session(handle, session_key.c_str(), prompt.c_str(),
+                               result_json)
+        : entropic_run_session_as(handle, session_key.c_str(), tier.c_str(),
+                                  prompt.c_str(), result_json);
+}
+
+/**
+ * @brief Run one streaming turn, under `tier` when one is given (gh#205).
+ * @param handle Engine handle.
+ * @param session_key Session key.
+ * @param tier Tier or identity; "" routes as usual.
+ * @param prompt User prompt.
+ * @param on_token Token callback.
+ * @param ud Forwarded to on_token.
+ * @return The run's error code.
+ * @utility
+ * @version 2.14.0
+ */
+static entropic_error_t run_stream_turn(
+    entropic_handle_t handle, const std::string& session_key,
+    const std::string& tier, const std::string& prompt,
+    void (*on_token)(const char*, size_t, void*), void* ud) {
+    return tier.empty()
+        ? entropic_run_session_streaming(handle, session_key.c_str(),
+                                         prompt.c_str(), on_token, ud, nullptr)
+        : entropic_run_session_streaming_as(handle, session_key.c_str(),
+                                            tier.c_str(), prompt.c_str(),
+                                            on_token, ud, nullptr);
+}
+
+/**
  * @brief Handle entropic.ask — non-streaming path (gh#115, v2.9.12).
  *
  * Routes through entropic_run (no on_token callback) so that MTP can
@@ -361,7 +429,7 @@ static json final_answer_from_context(entropic_handle_t handle,
  * @return MCP tool result JSON (final clean text from entropic_run).
  * @req REQ-API-012
  * @req REQ-BRIDGE-001
- * @version 2.10.2
+ * @version 2.14.0
  */
 static json handle_ask_plain(entropic_handle_t handle, const json& args,
                              const std::string& session_key) {
@@ -370,9 +438,9 @@ static json handle_ask_plain(entropic_handle_t handle, const json& args,
         return tool_text("error: missing 'prompt' argument");
     }
     char* result_json = nullptr;
-    auto err = entropic_run_session(handle, session_key.c_str(),
-                                    it->get<std::string>().c_str(),
-                                    &result_json);
+    auto err = run_plain_turn(handle, session_key,
+                              args.value("tier", std::string{}),  // gh#205
+                              it->get<std::string>(), &result_json);
     if (err != ENTROPIC_OK) {
         const char* msg = entropic_last_error(handle);
         entropic_free(result_json);
@@ -403,7 +471,7 @@ static json handle_ask_plain(entropic_handle_t handle, const json& args,
  */
 static json handle_ask(entropic_handle_t handle, const json& args,
                        const std::string& session_key,
-                       int client_fd, const std::string& call_id) {
+                       int client_fd, const json& progress_token) {
     auto it = args.find("prompt");
     if (it == args.end() || !it->is_string()) {
         return tool_text("error: missing 'prompt' argument");
@@ -411,15 +479,16 @@ static json handle_ask(entropic_handle_t handle, const json& args,
     std::string prompt = it->get<std::string>();
 
     // Stream tokens as progress notifications
-    struct StreamCtx { int fd; std::string token_id; };
-    StreamCtx sctx{client_fd, call_id};
+    struct StreamCtx { int fd; json token; uint64_t seq; };
+    StreamCtx sctx{client_fd, progress_token, 0};
     auto on_token = [](const char* tok, size_t len, void* ud) {
         auto* ctx = static_cast<StreamCtx*>(ud);
-        send_progress(ctx->fd, std::string(tok, len), ctx->token_id);
+        send_progress(ctx->fd, std::string(tok, len), ctx->token, ++ctx->seq);
     };
-    auto err = entropic_run_session_streaming(
-        handle, session_key.c_str(), prompt.c_str(), on_token, &sctx,
-        nullptr);
+    // gh#205: a requested tier locks the turn; absent routes as before.
+    auto err = run_stream_turn(handle, session_key,
+                               args.value("tier", std::string{}), prompt,
+                               on_token, &sctx);
     if (err != ENTROPIC_OK) {
         const char* msg = entropic_last_error(handle);
         return tool_text(std::string("error: ") + (msg ? msg : "unknown"));
@@ -553,16 +622,20 @@ static AsyncFinalState derive_async_final_state(
 }
 
 /**
- * @brief Mark every queued/running task as cancelling.
+ * @brief Mark one session's queued/running tasks as cancelling.
  * @param bridge Bridge holding the task registry.
+ * @param session_key Session whose tasks are cancelled (v2.14.0).
  * @return true if any task was still in-flight.
  * @utility
  * @version 2.0.6-rc16
  */
-static bool mark_tasks_cancelling(ExternalBridge* bridge) {
+static bool mark_tasks_cancelling(ExternalBridge* bridge,
+                                  const std::string& session_key) {
     std::lock_guard<std::mutex> lock(bridge->tasks_mutex_);
     bool any = false;
     for (auto& [_, task] : bridge->tasks_for_cancel()) {
+        // v2.14.0: only the cleared session's tasks.
+        if (task.session_key != session_key) { continue; }
         if (task.status == "queued" || task.status == "running") {
             task.status = "cancelled";
             task.phase = "cancelling";
@@ -573,17 +646,22 @@ static bool mark_tasks_cancelling(ExternalBridge* bridge) {
 }
 
 /**
- * @brief True while any task is still phase=cancelling.
+ * @brief True while one session's task is still phase=cancelling.
  * @param bridge Bridge holding the task registry.
+ * @param session_key Session being cleared (v2.14.0).
+ * @return true when a task of that session is still cancelling.
  * @utility
  * @version 2.0.6-rc16
  */
-static bool any_cancelling_left(ExternalBridge* bridge) {
+static bool any_cancelling_left(ExternalBridge* bridge,
+                                const std::string& session_key) {
     std::lock_guard<std::mutex> lock(bridge->tasks_mutex_);
+    bool left = false;
     for (auto& [_, task] : bridge->tasks_for_cancel()) {
-        if (task.phase == "cancelling") { return true; }
+        left = left || (task.session_key == session_key
+                        && task.phase == "cancelling");
     }
-    return false;
+    return left;
 }
 
 /**
@@ -598,15 +676,19 @@ static bool any_cancelling_left(ExternalBridge* bridge) {
  *
  * @param handle Engine handle (for interrupt).
  * @param bridge Bridge whose tasks_ registry is being canceled.
+ * @param session_key Session being cleared; nothing else is touched.
  * @req REQ-BRIDGE-001
  * @version 2.1.0
  */
 static void cancel_inflight_async_tasks(
-    entropic_handle_t handle, ExternalBridge* bridge) {
+    entropic_handle_t handle, ExternalBridge* bridge,
+    const std::string& session_key) {
     if (bridge == nullptr) { return; }
-    entropic_interrupt(handle);  // idempotent, cheap
-    if (!mark_tasks_cancelling(bridge)) { return; }
-    for (int i = 0; i < 20 && any_cancelling_left(bridge); ++i) {
+    // v2.14.0: THIS session's run only. entropic_interrupt is handle-wide —
+    // clearing session A used to cancel session B's turn.
+    entropic_interrupt_session(handle, session_key.c_str());
+    if (!mark_tasks_cancelling(bridge, session_key)) { return; }
+    for (int i = 0; i < 20 && any_cancelling_left(bridge, session_key); ++i) {
         std::this_thread::sleep_for(std::chrono::milliseconds(50));
     }
     bridge->detach_phase_observer();  // bump gen; silences any stale observer
@@ -622,12 +704,12 @@ static void cancel_inflight_async_tasks(
  * @param bridge Bridge instance (used to reach the task registry).
  * @return MCP tool result JSON.
  * @req REQ-BRIDGE-001
- * @version 2.0.6-rc16
+ * @version 2.14.0
  */
 static json handle_clear(entropic_handle_t handle,
                          ExternalBridge* bridge,
                          const std::string& session_key) {
-    cancel_inflight_async_tasks(handle, bridge);
+    cancel_inflight_async_tasks(handle, bridge, session_key);
     // gh#144 (v2.12.0): clear ONLY the named session. The unscoped clear
     // wiped every caller's context, which the issue correctly observed "is
     // not isolation" — with two callers active there is no ordering in which
@@ -715,21 +797,22 @@ constexpr long kTurnWaitTimeoutMs = 300000;  // 5 minutes
 class TurnTicket {
 public:
     /**
-     * @brief Take a ticket and wait for this caller's turn.
+     * @brief Take a ticket and wait for this session's turn.
      * @param b Bridge owning the queue.
+     * @param session_key Session the turn runs under (v2.14.0).
      * @dg_internal
      * @version 2.12.0
      */
-    explicit TurnTicket(ExternalBridge* b)
-        : bridge_(b),
-          held_(b->begin_turn_wait(kTurnWaitTimeoutMs, &waited_ms_)) {}
+    TurnTicket(ExternalBridge* b, std::string session_key)
+        : bridge_(b), session_(std::move(session_key)),
+          held_(b->begin_turn_wait(kTurnWaitTimeoutMs, &waited_ms_, session_)) {}
 
     /**
      * @brief Hand the turn on, if this ticket held it.
      * @dg_internal
-     * @version 2.12.0
+     * @version 2.14.0
      */
-    ~TurnTicket() { if (held_) { bridge_->end_turn_wait(); } }
+    ~TurnTicket() { if (held_) { bridge_->end_turn_wait(session_); } }
 
     TurnTicket(const TurnTicket&) = delete;
     TurnTicket& operator=(const TurnTicket&) = delete;
@@ -752,6 +835,7 @@ public:
 
 private:
     ExternalBridge* bridge_;
+    std::string session_;
     long waited_ms_ = 0;
     bool held_;
 };
@@ -774,6 +858,123 @@ json turn_timeout_result(const ExternalBridge* bridge, long waited_ms) {
 // ── Dispatch ─────────────────────────────────────────────
 
 /**
+ * @brief The session's current workspace binding, or "" (gh#205).
+ * @param handle Engine handle.
+ * @param session_key Session key.
+ * @return Bound workspace name, or "" when unbound.
+ * @dg_internal
+ * @version 2.14.0
+ */
+static std::string bound_workspace(entropic_handle_t handle,
+                                   const std::string& session_key) {
+    std::lock_guard<std::mutex> guard(handle->workspace_mutex);
+    auto it = handle->session_workspace.find(session_key);
+    return it == handle->session_workspace.end() ? std::string{} : it->second;
+}
+
+/**
+ * @brief Resolve `workspace` to a workspace name, creating one for a path.
+ *
+ * An absolute directory names the repository the caller is in; its
+ * canonical path IS the workspace name, so every client in that repository
+ * lands in the same workspace. Creating one no longer spawns the
+ * repository's `.mcp.json` (gh#199), and the caller is already an
+ * authenticated same-user client, so a path is safe to act on. Anything
+ * else must name a workspace the host created.
+ *
+ * @param handle Engine handle.
+ * @param workspace Path or name from the ask arguments.
+ * @param[out] err Set on failure.
+ * @return Workspace name, or "" with `err` set.
+ * @dg_internal
+ * @version 2.14.0
+ */
+static std::string resolve_workspace(entropic_handle_t handle,
+                                     const std::string& workspace,
+                                     std::string& err) {
+    namespace fs = std::filesystem;
+    std::string name = workspace;
+    if (fs::path(workspace).is_absolute()) {
+        std::error_code ec;
+        name = fs::weakly_canonical(workspace, ec).string();
+        bool exists = false;
+        {
+            std::lock_guard<std::mutex> guard(handle->workspace_mutex);
+            exists = handle->workspaces.count(name) > 0;
+        }
+        if (!exists && entropic_workspace_create(handle, name.c_str(),
+                                                 name.c_str()) != ENTROPIC_OK) {
+            const char* msg = entropic_last_error(handle);
+            err = "workspace '" + workspace + "': "
+                + (msg ? msg : "create failed");
+        }
+    }
+    return err.empty() ? name : std::string{};
+}
+
+/**
+ * @brief Bind a session to the requested workspace, idempotently (gh#205).
+ *
+ * A client sends `workspace` on every call, so a session already bound to
+ * the same workspace is left alone — the engine refuses ANY bind once a
+ * session holds messages. A different workspace for a session with history
+ * is a typed error: its context belongs to the other repository.
+ *
+ * @param handle Engine handle.
+ * @param session_key Session key.
+ * @param workspace Requested workspace path or name ("" = none).
+ * @return "" on success, else a message for the caller.
+ * @dg_internal
+ * @version 2.14.0
+ */
+static std::string bind_session_workspace(entropic_handle_t handle,
+                                          const std::string& session_key,
+                                          const std::string& workspace) {
+    std::string err;
+    if (workspace.empty()) { return err; }
+    const std::string name = resolve_workspace(handle, workspace, err);
+    const std::string current = err.empty()
+        ? bound_workspace(handle, session_key) : std::string{};
+    if (err.empty() && current != name) {
+        if (entropic_session_bind_workspace(handle, session_key.c_str(),
+                                            name.c_str()) != ENTROPIC_OK) {
+            const char* msg = entropic_last_error(handle);
+            err = msg ? msg : "workspace bind failed";
+        }
+    }
+    return err;
+}
+
+/**
+ * @brief Run a sync ask once this session's turn comes up (gh#144, gh#205).
+ *
+ * Queue rather than race: the engine admits one turn per session and
+ * refuses the loser with ALREADY_RUNNING; from a shared host the right
+ * answer is to WAIT, so the refusal is never reached from here.
+ *
+ * @param handle Engine handle.
+ * @param bridge Bridge owning the queue.
+ * @param args Tool arguments.
+ * @param session_key Session key.
+ * @param client_fd Socket fd (streaming progress).
+ * @param progress_token Progress token for streaming.
+ * @return MCP tool result JSON.
+ * @req REQ-BRIDGE-001
+ * @version 2.14.0
+ */
+static json ask_in_turn(entropic_handle_t handle, ExternalBridge* bridge,
+                        const json& args, const std::string& session_key,
+                        int client_fd, const json& progress_token) {
+    TurnTicket ticket(bridge, session_key);
+    if (!ticket.held()) {
+        return turn_timeout_result(bridge, ticket.waited_ms());
+    }
+    return bridge->ask_streaming()
+        ? handle_ask(handle, args, session_key, client_fd, progress_token)
+        : handle_ask_plain(handle, args, session_key);
+}
+
+/**
  * @brief Route entropic.ask — sync (streaming) or async.
  * @param handle Engine handle.
  * @param bridge Bridge (for async task registry).
@@ -788,29 +989,30 @@ static json dispatch_ask(entropic_handle_t handle,
                          ExternalBridge* bridge,
                          const json& args,
                          int client_fd,
-                         const std::string& call_id) {
+                         const json& progress_token) {
     // gh#144 (v2.12.0): optional. Absent means the shared default session,
     // i.e. exactly what every pre-2.12.0 client already gets.
     const std::string session_key = args.value("session", std::string{});
-    if (args.value("async", false)) {
+    // gh#205 (v2.14.0): bind the session to its repository before it runs.
+    const std::string ws_err = bind_session_workspace(
+        handle, session_key, args.value("workspace", std::string{}));
+    json result;
+    if (!ws_err.empty()) {
+        result = tool_text("error: " + ws_err);
+    } else if (args.value("async", false)) {
         // The async worker takes its own ticket inside run_async_ask — it
         // must not hold one here, or registering the task would block behind
         // an in-flight turn and defeat the point of async.
         auto task_id = generate_task_id();
         bridge->run_async_ask(
-            args.value("prompt", ""), task_id, client_fd, session_key);
-        return tool_text("async task started: " + task_id);
+            args.value("prompt", ""), task_id, client_fd, session_key,
+            args.value("tier", std::string{}));
+        result = tool_text("async task started: " + task_id);
+    } else {
+        result = ask_in_turn(handle, bridge, args, session_key, client_fd,
+                             progress_token);
     }
-    // gh#144 (v2.12.0): queue rather than race. The engine admits one turn
-    // and refuses the loser with ALREADY_RUNNING; from a shared host the
-    // right answer is to WAIT, so the refusal is never reached from here.
-    TurnTicket ticket(bridge);
-    if (!ticket.held()) {
-        return turn_timeout_result(bridge, ticket.waited_ms());
-    }
-    return bridge->ask_streaming()
-        ? handle_ask(handle, args, session_key, client_fd, call_id)
-        : handle_ask_plain(handle, args, session_key);
+    return result;
 }
 
 /**
@@ -827,7 +1029,7 @@ static json dispatch_ask(entropic_handle_t handle,
  * @param call_id JSON-RPC request id for progress correlation.
  * @return MCP tool result JSON.
  * @req REQ-BRIDGE-001
- * @version 2.12.0-rc2
+ * @version 2.14.0
  */
 static json dispatch_tool(entropic_handle_t handle,
                           ExternalBridge* bridge,
@@ -842,7 +1044,14 @@ static json dispatch_tool(entropic_handle_t handle,
         facade::strip_tool_prefix(
             bridge->config().tool_prefix, name);
     if (suffix == tool_suffix::kAsk) {
-        return dispatch_ask(handle, bridge, args, client_fd, call_id);
+        // v2.14.0: the client's own _meta.progressToken when it sent one
+        // (MCP), else the request id so pre-2.14.0 clients keep streaming.
+        json token = call_id;
+        if (params.contains("_meta") && params["_meta"].is_object()
+            && params["_meta"].contains("progressToken")) {
+            token = params["_meta"]["progressToken"];
+        }
+        return dispatch_ask(handle, bridge, args, client_fd, token);
     }
     json result;
     if      (suffix == tool_suffix::kAskStatus)    { result = bridge->handle_ask_status(args); }
@@ -867,18 +1076,21 @@ static json dispatch_tool(entropic_handle_t handle,
  * @req REQ-BRIDGE-001
  * @version 2.12.0
  */
-bool ExternalBridge::begin_turn_wait(long timeout_ms, long* waited_ms_out) {
+bool ExternalBridge::begin_turn_wait(long timeout_ms, long* waited_ms_out,
+                                     const std::string& session_key) {
     const auto t0 = std::chrono::steady_clock::now();
+    const std::string key = lane_for(session_key);
     std::unique_lock<std::mutex> lock(turn_mutex_);
-    const uint64_t ticket = next_ticket_++;
-    const bool first = (ticket == now_serving_);
-    if (!first) { waiters_.fetch_add(1); }
+    TurnLane& lane = lanes_[key];  // map nodes are stable across inserts
+    const uint64_t ticket = lane.next_ticket++;
+    const bool first = (ticket == lane.now_serving);
+    if (!first) { ++lane.waiters; }
 
     const bool ours = turn_cv_.wait_for(
         lock, std::chrono::milliseconds(timeout_ms),
-        [&] { return now_serving_ == ticket; });
+        [&] { return lane.now_serving == ticket; });
 
-    if (!first) { waiters_.fetch_sub(1); }
+    if (!first) { --lane.waiters; }
     if (waited_ms_out != nullptr) {
         *waited_ms_out = static_cast<long>(
             std::chrono::duration_cast<std::chrono::milliseconds>(
@@ -890,10 +1102,10 @@ bool ExternalBridge::begin_turn_wait(long timeout_ms, long* waited_ms_out) {
         // advance now_serving_ here: it currently names ANOTHER caller's
         // in-flight turn, and stepping over it would hand the engine to two
         // callers at once — the exact race this queue exists to prevent.
-        abandoned_tickets_.insert(ticket);
+        lane.abandoned.insert(ticket);
         return false;
     }
-    turn_busy_.store(true);
+    lane.busy = true;
     return true;
 }
 
@@ -902,18 +1114,63 @@ bool ExternalBridge::begin_turn_wait(long timeout_ms, long* waited_ms_out) {
  * @req REQ-BRIDGE-001
  * @version 2.12.0
  */
-void ExternalBridge::end_turn_wait() {
+void ExternalBridge::end_turn_wait(const std::string& session_key) {
     {
         std::lock_guard<std::mutex> lock(turn_mutex_);
-        turn_busy_.store(false);
-        ++now_serving_;
-        // Step over anyone who gave up while waiting, or the line stalls on
-        // a ticket whose owner is long gone.
-        while (abandoned_tickets_.erase(now_serving_) > 0) {
-            ++now_serving_;
+        auto it = lanes_.find(lane_for(session_key));
+        if (it != lanes_.end()) {
+            TurnLane& lane = it->second;
+            lane.busy = false;
+            ++lane.now_serving;
+            // Step over anyone who gave up while waiting, or the line stalls
+            // on a ticket whose owner is long gone.
+            while (lane.abandoned.erase(lane.now_serving) > 0) {
+                ++lane.now_serving;
+            }
+            // An idle lane holds nothing worth keeping.
+            if (lane.now_serving == lane.next_ticket) { lanes_.erase(it); }
         }
     }
     turn_cv_.notify_all();
+}
+
+/**
+ * @brief The lane a session's turns queue in (v2.14.0).
+ * @param session_key Session key.
+ * @return The key when the engine runs sessions concurrently, else "".
+ * @dg_internal
+ * @version 2.14.0
+ */
+std::string ExternalBridge::lane_for(const std::string& session_key) const {
+    const bool concurrent = handle_ == nullptr
+        || handle_->config.concurrent_sessions;
+    return concurrent ? session_key : std::string{};
+}
+
+/**
+ * @brief Waiters summed over every lane (v2.14.0).
+ * @return Callers waiting behind a held turn.
+ * @utility
+ * @version 2.14.0
+ */
+size_t ExternalBridge::turn_queue_depth() const {
+    std::lock_guard<std::mutex> lock(turn_mutex_);
+    size_t n = 0;
+    for (const auto& [_, lane] : lanes_) { n += lane.waiters; }
+    return n;
+}
+
+/**
+ * @brief Whether any lane holds a turn (v2.14.0).
+ * @return true while some session's turn runs.
+ * @utility
+ * @version 2.14.0
+ */
+bool ExternalBridge::turn_in_flight() const {
+    std::lock_guard<std::mutex> lock(turn_mutex_);
+    bool busy = false;
+    for (const auto& [_, lane] : lanes_) { busy = busy || lane.busy; }
+    return busy;
 }
 
 
@@ -998,7 +1255,7 @@ static bool socket_path_safe(const std::filesystem::path& path) {
  * @param path Bind path (already validated by socket_path_safe).
  * @return true on success.
  * @req REQ-BRIDGE-001
- * @version 2.1.7
+ * @version 2.14.0
  */
 static bool bind_and_listen(int fd, const std::filesystem::path& path) {
     auto s = path.string();
@@ -1011,7 +1268,9 @@ static bool bind_and_listen(int fd, const std::filesystem::path& path) {
         return false;
     }
     ::chmod(s.c_str(), S_IRUSR | S_IWUSR);  // 0600 — owner only
-    return listen(fd, 1) == 0;
+    // v2.14.0: several clients may connect at once; a backlog of 1 refused
+    // the second while the accept loop was busy with the first.
+    return listen(fd, SOMAXCONN) == 0;
 }
 
 /**
@@ -1027,7 +1286,7 @@ static bool bind_and_listen(int fd, const std::filesystem::path& path) {
  * @param path Socket filesystem path.
  * @return Listening fd, or -1 on failure.
  * @req REQ-BRIDGE-001
- * @version 2.1.7
+ * @version 2.14.0
  */
 static int create_listen_socket(const std::filesystem::path& path) {
     prepare_socket_dir(path.parent_path());
@@ -1042,9 +1301,8 @@ static int create_listen_socket(const std::filesystem::path& path) {
         if (fd >= 0) { ::close(fd); }
         return -1;
     }
-    logger->info(
-        "External MCP bridge ready: project_dir(canonical)={} socket={}",
-        path.parent_path().parent_path().string(), path.string());
+    // v2.14.0: the old line labelled ~/.entropic as "project_dir(canonical)".
+    logger->info("External MCP bridge ready: socket={}", path.string());
     return fd;
 }
 
@@ -1084,9 +1342,15 @@ static bool peer_uid_matches(int client_fd) {
  * @brief Start the background accept loop.
  * @return true if the socket was created and listening.
  * @req REQ-BRIDGE-001
- * @version 2.0.8
+ * @version 2.14.0
  */
 bool ExternalBridge::start() {
+    // v2.14.0: a key that bounds nothing must say so rather than look like
+    // a control (cf. gh#175).
+    if (config_.rate_limit != ExternalMCPConfig{}.rate_limit) {
+        logger->warn("mcp.external.rate_limit={} is not enforced and is "
+                     "ignored", config_.rate_limit);
+    }
     // Refuse to start if another handle in this process already owns
     // this socket path. The pre-fix create_listen_socket call unlinks
     // any existing socket file before binding — that's correct for
@@ -1154,16 +1418,23 @@ bool ExternalBridge::start() {
  *      we run it again as a defensive measure on shutdown errors)
  *
  * @req REQ-BRIDGE-001
- * @version 2.1.2
+ * @version 2.14.0
  */
 void ExternalBridge::stop() {
     running_.store(false);
+    // v2.14.0: the accept thread READS listen_fd_ every poll, so it must be
+    // joined before listen_fd_ is written. shutdown() wakes a blocked
+    // poll/accept without touching the variable; the loop then sees
+    // running_ == false (it re-checks at least every 500 ms regardless).
+    // Closing first was a data race TSan reported the first time a test
+    // destroyed a handle with the bridge enabled.
+    if (listen_fd_ >= 0) { ::shutdown(listen_fd_, SHUT_RDWR); }
+    if (accept_thread_.joinable()) {
+        accept_thread_.join();
+    }
     if (listen_fd_ >= 0) {
         ::close(listen_fd_);
         listen_fd_ = -1;
-    }
-    if (accept_thread_.joinable()) {
-        accept_thread_.join();
     }
 
     // Wake every connected client's blocking read so the per-client
@@ -1527,6 +1798,37 @@ void ExternalBridge::fail_task_engine_busy(const std::string& task_id,
 }
 
 /**
+ * @brief The completion notification for an async task (Issue #4, v2.1.2).
+ *
+ * The spec-defined notifications/progress rather than the old non-spec
+ * notifications/ask_complete, which some clients silently buffered or
+ * stalled on. progressToken is the task_id, correlating it back to the
+ * ask that returned that id. The result body is NOT shipped inline —
+ * consumers fetch it via ask_status — which caps the notification at ~200
+ * bytes whatever was generated; `status` rides in `message` so a consumer
+ * can branch on done / error / cancelled without a round-trip.
+ *
+ * @param task_id Task id.
+ * @param status Terminal status.
+ * @return JSON-RPC notification.
+ * @utility
+ * @version 2.14.0
+ */
+static json task_complete_notification(const std::string& task_id,
+                                       const std::string& status) {
+    return {
+        {"jsonrpc", "2.0"},
+        {"method", "notifications/progress"},
+        {"params", {
+            {"progressToken", task_id},
+            {"progress", 100},
+            {"total", 100},
+            {"message", status}
+        }}
+    };
+}
+
+/**
  * @brief Run an async entropic.ask in a detached background thread.
  *
  * Creates a task registry entry, runs the engine, stores the result,
@@ -1543,87 +1845,70 @@ void ExternalBridge::run_async_ask(
     const std::string& prompt,
     const std::string& task_id,
     int client_fd,
-    const std::string& session_key) {
+    const std::string& session_key,
+    const std::string& tier) {
     {
         std::lock_guard<std::mutex> lock(tasks_mutex_);
         AsyncTask t;
         t.status = "queued";
         t.phase = "queued";
         t.created = std::chrono::steady_clock::now();
+        t.session_key = session_key;  // v2.14.0: clear cancels per session
+        t.owner_fd = client_fd;       // v2.14.0: only the owner is notified
         tasks_[task_id] = std::move(t);
     }
 
     // gh#59 (v2.3.1): the async-ask worker runs entropic_run on this
     // handle's behalf — scope its logs to the owning handle.
     int log_id = handle_ ? handle_->log_id : 0;
-    std::thread([this, prompt, task_id, client_fd, log_id, session_key]() {
+    std::thread([this, prompt, task_id, client_fd, log_id, session_key,
+                 tier]() {
         entropic::log::HandleLogScope scope(log_id);
-
-        // gh#144 (v2.12.0): the async worker reaches the engine like any
-        // other caller and must take the same ticket. Without this an async
-        // ask bypasses the queue and collides with a sync one, earning an
-        // ALREADY_RUNNING where the caller expected to be queued. The task
-        // stays "queued" until the ticket is actually held, so ask_status
-        // reports the truth rather than claiming to run while blocked.
-        long waited_ms = 0;
-        if (!begin_turn_wait(kTurnWaitTimeoutMs, &waited_ms)) {
-            fail_task_engine_busy(task_id, waited_ms);
-            return;
-        }
-
-        update_task_phase(task_id, "running", "running");
-        attach_phase_observer(task_id);
-
-        char* result_json = nullptr;
-        // gh#144 (v2.12.0): async asks are session-scoped like sync ones.
-        auto err = entropic_run_session(
-            handle_, session_key.c_str(), prompt.c_str(), &result_json);
-
-        detach_phase_observer();
-        end_turn_wait();
-
-        auto final_state = derive_async_final_state(
-            handle_, err, result_json);
-        commit_async_final_state(task_id, final_state.status,
-                                 final_state.phase, final_state.text);
-        auto status = final_state.status;
-
-        // Issue #4 (v2.1.2, parts A+B): emit the spec-defined
-        // ``notifications/progress`` method instead of the previous
-        // non-spec ``notifications/ask_complete``. MCP-compliant
-        // clients are obligated to drain ``notifications/progress``
-        // (it's in the documented set); some clients silently
-        // buffered or stalled on the unknown method name, which
-        // combined with the bridge's blocking broadcast (fixed in
-        // part C of this release) produced the deadlock observed
-        // against entropic-explorer ↔ Claude Code in the field.
-        //
-        // ``progressToken`` is the ``task_id`` so the consumer can
-        // correlate the notification back to the originating
-        // ``entropic.ask`` response (which carried the same
-        // ``task_id``). The result body is NO LONGER shipped inline
-        // — consumers fetch via ``entropic.ask_status``. This caps
-        // notification size at ~200 bytes regardless of generated
-        // output, eliminating a real DoS surface (a 50KB result
-        // would otherwise flood the broadcast write path on every
-        // subscriber). ``status`` rides in ``message`` so consumers
-        // can branch on done / error / cancelled without an extra
-        // round-trip just to learn which result kind to fetch.
-        json notif = {
-            {"jsonrpc", "2.0"},
-            {"method", "notifications/progress"},
-            {"params", {
-                {"progressToken", task_id},
-                {"progress", 100},
-                {"total", 100},
-                {"message", status}
-            }}
-        };
-        broadcast_notification(notif);
-
-        cleanup_expired_tasks();
-        logger->info("Async task {} completed: {}", task_id, status);
+        async_worker(prompt, task_id, client_fd, session_key, tier);
     }).detach();
+}
+
+/**
+ * @brief Body of one async ask: wait, run, record, notify the owner.
+ *
+ * gh#144: the worker reaches the engine like any other caller and takes the
+ * same ticket, so an async ask cannot bypass the queue; the task stays
+ * "queued" until the ticket is actually held, so ask_status reports the
+ * truth. v2.14.0: it queues in ITS session's lane, may run under a tier,
+ * and notifies only the client that started it.
+ *
+ * @param prompt User prompt.
+ * @param task_id Task id.
+ * @param client_fd Owning client.
+ * @param session_key Session key.
+ * @param tier Tier or identity; "" routes as usual.
+ * @req REQ-BRIDGE-001
+ * @version 2.14.0
+ */
+void ExternalBridge::async_worker(const std::string& prompt,
+                                  const std::string& task_id, int client_fd,
+                                  const std::string& session_key,
+                                  const std::string& tier) {
+    long waited_ms = 0;
+    if (!begin_turn_wait(kTurnWaitTimeoutMs, &waited_ms, session_key)) {
+        fail_task_engine_busy(task_id, waited_ms);
+        return;
+    }
+    update_task_phase(task_id, "running", "running");
+    attach_phase_observer(task_id);
+    char* result_json = nullptr;
+    auto err = run_plain_turn(handle_, session_key, tier, prompt,
+                              &result_json);
+    detach_phase_observer();
+    end_turn_wait(session_key);
+
+    auto final_state = derive_async_final_state(handle_, err, result_json);
+    commit_async_final_state(task_id, final_state.status,
+                             final_state.phase, final_state.text);
+    notify_client(client_fd,
+                  task_complete_notification(task_id, final_state.status));
+    cleanup_expired_tasks();
+    logger->info("Async task {} completed: {}", task_id, final_state.status);
 }
 
 /**
@@ -1651,6 +1936,51 @@ void ExternalBridge::subscribe(int fd) {
 void ExternalBridge::unsubscribe(int fd) {
     std::lock_guard<std::mutex> lock(subscribers_mutex_);
     subscribers_.erase(fd);
+}
+
+/**
+ * @brief One non-blocking write of a whole payload to one fd.
+ *
+ * EAGAIN / EWOULDBLOCK (a slow consumer's full buffer), EBADF / EPIPE /
+ * ECONNRESET (a dead peer) and a partial write all collapse to "drop" —
+ * the long-term per-subscriber queue lives in proposal P2-20260429-001.
+ *
+ * @param fd Destination.
+ * @param payload Bytes to write.
+ * @return true when every byte was written.
+ * @utility
+ * @version 2.14.0
+ */
+static bool send_nonblocking(int fd, const std::string& payload) {
+    ssize_t rc = ::send(fd, payload.c_str(), payload.size(),
+                        MSG_DONTWAIT | MSG_NOSIGNAL);
+    if (rc < 0) {
+        logger->warn("Subscriber fd {} send failed (errno={}) — dropping",
+                     fd, errno);
+    } else if (static_cast<size_t>(rc) < payload.size()) {
+        logger->warn("Subscriber fd {} partial send ({}/{}) — dropping",
+                     fd, rc, payload.size());
+    }
+    return rc >= 0 && static_cast<size_t>(rc) == payload.size();
+}
+
+/**
+ * @brief Write a notification to ONE subscribed client (v2.14.0).
+ * @param fd Owning client's fd; negative = nobody.
+ * @param notif JSON-RPC notification object.
+ * @dg_internal
+ * @version 2.14.0
+ */
+void ExternalBridge::notify_client(int fd, const json& notif) {
+    bool subscribed = false;
+    {
+        std::lock_guard<std::mutex> lock(subscribers_mutex_);
+        subscribed = fd >= 0 && subscribers_.count(fd) > 0;
+    }
+    if (subscribed && !send_nonblocking(fd, notif.dump() + "\n")) {
+        std::lock_guard<std::mutex> lock(subscribers_mutex_);
+        subscribers_.erase(fd);
+    }
 }
 
 /**
@@ -1684,7 +2014,7 @@ void ExternalBridge::unsubscribe(int fd) {
  *
  * @param notif JSON-RPC notification object.
  * @req REQ-BRIDGE-001
- * @version 2.1.2
+ * @version 2.14.0
  */
 void ExternalBridge::broadcast_notification(const json& notif) {
     auto payload = notif.dump() + "\n";
@@ -1697,21 +2027,7 @@ void ExternalBridge::broadcast_notification(const json& notif) {
 
     std::vector<int> dead;
     for (int fd : snapshot) {
-        ssize_t rc = ::send(fd, payload.c_str(), payload.size(),
-                            MSG_DONTWAIT | MSG_NOSIGNAL);
-        if (rc < 0) {
-            // EAGAIN / EWOULDBLOCK: peer recv buffer full (slow consumer).
-            // EBADF / EPIPE / ECONNRESET: peer closed or otherwise dead.
-            // All collapse to "drop" — the long-term per-subscriber
-            // queue lives in proposal P2-20260429-001.
-            logger->warn("Subscriber fd {} send failed (errno={}) — dropping",
-                         fd, errno);
-            dead.push_back(fd);
-        } else if (static_cast<size_t>(rc) < payload.size()) {
-            logger->warn("Subscriber fd {} partial send ({}/{}) — dropping",
-                         fd, rc, payload.size());
-            dead.push_back(fd);
-        }
+        if (!send_nonblocking(fd, payload)) { dead.push_back(fd); }
     }
 
     if (!dead.empty()) {

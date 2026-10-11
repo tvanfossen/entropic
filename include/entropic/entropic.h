@@ -36,10 +36,23 @@
  * entropic_alloc(). Strings returned as const char* are owned by
  * the handle and valid until the next call on that handle.
  *
+ * @par Serving many MCP clients (v2.14.0, gh#204)
+ * With `mcp.external.enabled` and `mcp.external.http_port: N`, configure
+ * also serves the external MCP bridge over Streamable HTTP at
+ * `http://127.0.0.1:N/mcp` (loopback only; reach it remotely with
+ * `ssh -L N:127.0.0.1:N host`). Clients authenticate with
+ * `Authorization: Bearer <token>`, where the token is the contents of
+ * `$HOME/.entropic/serve/N.token`: 64 hex characters, regenerated on every
+ * start, mode 0600 in a 0700 directory, removed by entropic_destroy().
+ * Requests carrying an `Origin` header or a foreign `Host` are refused. If
+ * the port cannot be served, configure fails with ENTROPIC_ERROR_IO.
+ * `entropic serve --config FILE --port N` is the headless host built on
+ * this. See docs/security.md.
+ *
  * @req REQ-API-014
  * @req REQ-ABI-001
  * @req REQ-ABI-002
- * @version 1.9.10
+ * @version 2.14.0
  */
 
 #pragma once
@@ -1173,6 +1186,47 @@ ENTROPIC_EXPORT entropic_error_t entropic_run_session_as(
 ENTROPIC_EXPORT entropic_error_t entropic_run_session_streaming(
     entropic_handle_t handle,
     const char* session_key,
+    const char* input,
+    void (*on_token)(const char* token, size_t len, void* user_data),
+    void* user_data,
+    int* cancel_flag);
+
+/**
+ * @brief Streaming turn on a named session, under a named tier (gh#205).
+ *
+ * The streaming counterpart of entropic_run_session_as(): the turn is locked
+ * to `tier_or_identity` with exactly its semantics (the tier's grammar and
+ * samplers apply to this turn; its system prompt is seeded only on an empty
+ * conversation). This is what lets ONE host serve several output contracts —
+ * before it, a streaming caller could not pick a tier at all, so a consumer
+ * needing two tiers ran two hosts.
+ *
+ * A set `cancel_flag` stops THIS turn only, never another session's (v2.14.0;
+ * the same now holds for entropic_run_session_streaming()).
+ *
+ * Additive: ENTROPIC_API_VERSION does not move.
+ *
+ * @param handle Engine handle.
+ * @param session_key Session to run under; NULL or "" = default session.
+ * @param tier_or_identity Tier (or identity) to lock this turn to.
+ * @param input Null-terminated user input.
+ * @param on_token Per-token callback.
+ * @param user_data Forwarded to on_token.
+ * @param cancel_flag Optional cancel flag (NULL for none).
+ * @return ENTROPIC_OK; ENTROPIC_ERROR_CANCELLED when cancelled;
+ *         ENTROPIC_ERROR_IDENTITY_NOT_FOUND for an unknown tier;
+ *         ENTROPIC_ERROR_ALREADY_RUNNING when this session has a turn in
+ *         flight; ENTROPIC_ERROR_INVALID_ARGUMENT for a NULL tier, input or
+ *         callback.
+ * @threadsafety NOT serialized. See entropic_run_session().
+ * @req REQ-API-009
+ * @req REQ-IDEN-001
+ * @version 2.14.0
+ */
+ENTROPIC_EXPORT entropic_error_t entropic_run_session_streaming_as(
+    entropic_handle_t handle,
+    const char* session_key,
+    const char* tier_or_identity,
     const char* input,
     void (*on_token)(const char* token, size_t len, void* user_data),
     void* user_data,

@@ -1020,3 +1020,38 @@ SCENARIO("gh#171: an external server can come and go while runs route calls",
         mgr.shutdown();
     }
 }
+
+// ── v2.14.0 (gh#205): a stream's cancel is scoped to its own run ──
+
+SCENARIO("v2.14.0: cancelling one session's stream leaves other sessions running",
+         "[concurrency][stream][gh205][2.14.0]") {
+    // run_streaming's cancel path called AgentEngine::interrupt(), which is
+    // handle-wide by design (gh#158 keeps it that way and fans it out to every
+    // run). gh#158 moved the pause-prompt site to cancel_current_run() and
+    // missed this one. Harmless with one client; on a host serving several
+    // clients (v2.14.0) one client cancelling its stream killed every other
+    // client's turn.
+    GIVEN("session B mid-turn, and session A streaming with its cancel set") {
+        entropic::test::MockInference mock;
+        auto iface = entropic::test::make_mock_interface(mock);
+        auto engine = make_session_engine(iface);
+        engine.set_concurrent_sessions(true);
+        REQUIRE(engine.try_begin_turn("B"));
+
+        WHEN("A's stream observes its cancel flag") {
+            std::thread a([&] {
+                engine.set_active_session("A");
+                int cancel = 1;
+                (void)engine.run_streaming(
+                    "hello", [](const char*, size_t, void*) {}, nullptr,
+                    &cancel);
+            });
+            a.join();
+
+            THEN("B's run carries no interrupt") {
+                CHECK_FALSE(engine.session_interrupted("B"));
+            }
+        }
+        engine.end_turn("B");
+    }
+}

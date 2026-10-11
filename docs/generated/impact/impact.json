@@ -1,47 +1,27 @@
 [
   {
-    "req_id": "REQ-LOOP-006",
-    "req_name": "Interrupt and pause semantics across nested loops",
+    "req_id": "REQ-BRIDGE-001",
+    "req_name": "External bridge exposes the engine over a peer-authenticated unix socket",
     "functions": [
       {
-        "name": "poll_stop",
-        "file": "src/mcp/servers/bash.cpp",
+        "name": "run_serve",
+        "file": "src/cli/serve.cpp",
         "version": "2.14.0"
       }
     ]
   },
   {
-    "req_id": "REQ-MCP-023",
-    "req_name": "Bash and git servers gate on operator approval, not command pattern matching; bash enforces a timeout on the whole process group",
+    "req_id": "REQ-CFG-001",
+    "req_name": "Layered configuration resolution with most-specific-layer-wins precedence",
     "functions": [
       {
-        "name": "poll_stop",
-        "file": "src/mcp/servers/bash.cpp",
+        "name": "apply_mcp_external_env",
+        "file": "src/config/env_overrides.cpp",
         "version": "2.14.0"
       },
       {
-        "name": "collect_until_exit",
-        "file": "src/mcp/servers/bash.cpp",
-        "version": "2.14.0"
-      },
-      {
-        "name": "run_shell",
-        "file": "src/mcp/servers/bash.cpp",
-        "version": "2.14.0"
-      },
-      {
-        "name": "cancelled_error",
-        "file": "src/mcp/servers/bash.cpp",
-        "version": "2.14.0"
-      },
-      {
-        "name": "shell_result",
-        "file": "src/mcp/servers/bash.cpp",
-        "version": "2.14.0"
-      },
-      {
-        "name": "execute",
-        "file": "src/mcp/servers/bash.cpp",
+        "name": "apply_env_overrides",
+        "file": "src/config/env_overrides.cpp",
         "version": "2.14.0"
       }
     ]

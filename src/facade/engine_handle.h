@@ -27,6 +27,8 @@
 #include <entropic/inference/orchestrator.h>
 #include <entropic/mcp/mcp_authorization.h>
 #include <entropic/mcp/external_bridge.h>
+
+#include "http_listener.h"
 #include <entropic/mcp/server_manager.h>
 #include <entropic/mcp/tool_executor.h>
 #include <entropic/storage/audit_logger.h>
@@ -165,6 +167,9 @@ struct entropic_engine {
 
     // ── Phase 7: External MCP bridge (v2.0.8) ──────────────────
     std::unique_ptr<entropic::ExternalBridge> external_bridge;   ///< Unix socket MCP bridge
+    /// @brief Streamable-HTTP front end for external_bridge (gh#204). Declared
+    /// AFTER it so it is destroyed FIRST: it dispatches into the bridge.
+    std::unique_ptr<entropic::http::HttpListener> http_listener;
 
     // ── Stream observer (v2.0.10) ────────────────────────────
     /// @brief Global stream observer — fires for all streaming output.

@@ -1418,16 +1418,23 @@ bool ExternalBridge::start() {
  *      we run it again as a defensive measure on shutdown errors)
  *
  * @req REQ-BRIDGE-001
- * @version 2.1.2
+ * @version 2.14.0
  */
 void ExternalBridge::stop() {
     running_.store(false);
+    // v2.14.0: the accept thread READS listen_fd_ every poll, so it must be
+    // joined before listen_fd_ is written. shutdown() wakes a blocked
+    // poll/accept without touching the variable; the loop then sees
+    // running_ == false (it re-checks at least every 500 ms regardless).
+    // Closing first was a data race TSan reported the first time a test
+    // destroyed a handle with the bridge enabled.
+    if (listen_fd_ >= 0) { ::shutdown(listen_fd_, SHUT_RDWR); }
+    if (accept_thread_.joinable()) {
+        accept_thread_.join();
+    }
     if (listen_fd_ >= 0) {
         ::close(listen_fd_);
         listen_fd_ = -1;
-    }
-    if (accept_thread_.joinable()) {
-        accept_thread_.join();
     }
 
     // Wake every connected client's blocking read so the per-client

@@ -862,6 +862,16 @@ struct ExternalMCPConfig {
     /// and trips the MTP incompatibility guard (gh#115, v2.9.12).
     bool ask_streaming = true;
 
+    /// @brief Also serve the bridge over Streamable HTTP on 127.0.0.1:<port>
+    /// (gh#204, v2.14.0). 0 (default) = unix socket only.
+    ///
+    /// One URL for every MCP client, instead of a host per client. Loopback
+    /// only; clients authenticate with the bearer token written to
+    /// `~/.entropic/serve/<port>.token` (mode 0600) on each start. For remote
+    /// use, tunnel with `ssh -L <port>:127.0.0.1:<port> host`. If the port
+    /// cannot be served, configure fails with ENTROPIC_ERROR_IO.
+    int http_port = 0;
+
     /// @brief Namespace for the tools this bridge advertises (gh#145).
     ///
     /// The engine is a substrate, not the product: `librentropic.so` is

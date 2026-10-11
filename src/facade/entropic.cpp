@@ -1740,6 +1740,37 @@ static entropic::LoopConfig build_loop_config(entropic_handle_t h) {
 }
 
 /**
+ * @brief Start the Streamable-HTTP listener when one is configured (gh#204).
+ *
+ * Fails LOUD: an operator who set `mcp.external.http_port` asked for a URL
+ * clients will connect to, and a host that silently is not serving it is
+ * worse than one that refuses to come up.
+ *
+ * @param h Engine handle, with external_bridge running.
+ * @return ENTROPIC_OK, or ENTROPIC_ERROR_IO with last_error set.
+ * @req REQ-BRIDGE-001
+ * @version 2.14.0
+ */
+static entropic_error_t start_http_listener(entropic_handle_t h) {
+    const int port = h->config.mcp.external.http_port;
+    std::string err;
+    if (port != 0 && (port < 0 || port > 65535)) {
+        err = "mcp.external.http_port out of range: " + std::to_string(port);
+    } else if (port != 0 && !h->external_bridge) {
+        err = "the unix bridge did not start";
+    } else if (port != 0) {
+        h->http_listener = std::make_unique<entropic::http::HttpListener>(
+            h->external_bridge.get(), port);
+        if (!h->http_listener->start(err)) { h->http_listener.reset(); }
+    }
+    if (!err.empty()) {
+        h->last_error = "HTTP listener: " + err;
+        s_log->error("{}", h->last_error);
+    }
+    return err.empty() ? ENTROPIC_OK : ENTROPIC_ERROR_IO;
+}
+
+/**
  * @brief Start the external MCP bridge if enabled in config.
  *
  * Creates an ExternalBridge listening on a unix domain socket so
@@ -1985,7 +2016,7 @@ static void warn_tier_grammars_step(
  * @return ENTROPIC_OK on success, else the first failing step's
  *        error code.
  * @req REQ-API-004
- * @version 2.13.0
+ * @version 2.14.0
  */
 static entropic_error_t configure_common(entropic_handle_t h) {
     auto rc = reject_if_configured(h);
@@ -2024,8 +2055,11 @@ static entropic_error_t configure_common(entropic_handle_t h) {
 
     h->configured.store(true);
     start_external_bridge(h);
+    // gh#204: an explicitly configured HTTP listener that cannot start fails
+    // configure, so a headless host exits instead of running unreachable.
+    const auto http_rc = start_http_listener(h);
     s_log->info("configure complete");
-    return ENTROPIC_OK;
+    return http_rc;
 }
 
 /**
@@ -2209,7 +2243,7 @@ entropic_error_t entropic_configure_dir(
  * @req REQ-API-002
  * @req REQ-API-003
  * @req REQ-ABI-001
- * @version 2.13.0
+ * @version 2.14.0
  */
 void entropic_destroy(entropic_handle_t handle) {
     if (handle == nullptr) {
@@ -2218,6 +2252,8 @@ void entropic_destroy(entropic_handle_t handle) {
     s_log->info("entropic_destroy()");
 
     // Stop external bridge FIRST — it holds a raw pointer to handle
+    // gh#204: the HTTP front end dispatches into the bridge — stop it first.
+    handle->http_listener.reset();
     if (handle->external_bridge) {
         handle->external_bridge->stop();
         handle->external_bridge.reset();

@@ -1,5 +1,65 @@
 [
   {
+    "req_id": "REQ-ABI-001",
+    "req_name": "Pure C at every .so boundary \u2014 opaque handles and explicit ownership",
+    "functions": [
+      {
+        "name": "entropic_destroy",
+        "file": "src/facade/entropic.cpp",
+        "version": "2.14.0"
+      }
+    ]
+  },
+  {
+    "req_id": "REQ-API-002",
+    "req_name": "Handle lifecycle \u2014 create, configure, destroy, NULL-safe teardown",
+    "functions": [
+      {
+        "name": "entropic_destroy",
+        "file": "src/facade/entropic.cpp",
+        "version": "2.14.0"
+      }
+    ]
+  },
+  {
+    "req_id": "REQ-API-003",
+    "req_name": "Multiple handles are fully independent within one process",
+    "functions": [
+      {
+        "name": "entropic_destroy",
+        "file": "src/facade/entropic.cpp",
+        "version": "2.14.0"
+      }
+    ]
+  },
+  {
+    "req_id": "REQ-API-004",
+    "req_name": "Three configure entry points, one shared body, one-shot per handle",
+    "functions": [
+      {
+        "name": "configure_common",
+        "file": "src/facade/entropic.cpp",
+        "version": "2.14.0"
+      }
+    ]
+  },
+  {
+    "req_id": "REQ-API-009",
+    "req_name": "Run entry-point family, result contract, and cross-thread interruptibility",
+    "functions": [
+      {
+        "name": "entropic_run_session_as",
+        "file": "src/facade/entropic.cpp",
+        "version": "2.13.0"
+      },
+      {
+        "name": "entropic_run_session_streaming",
+        "file": "src/facade/entropic.cpp",
+        "version": "2.14.0"
+      }
+    ]
+  },
+  {
     "req_id": "REQ-API-012",
     "req_name": "Final-answer selection from a serialized conversation",
     "functions": [
@@ -19,6 +79,11 @@
     "req_id": "REQ-BRIDGE-001",
     "req_name": "External bridge exposes the engine over a peer-authenticated unix socket",
     "functions": [
+      {
+        "name": "start_http_listener",
+        "file": "src/facade/entropic.cpp",
+        "version": "2.14.0"
+      },
       {
         "name": "handle_ask_plain",
         "file": "src/facade/external_bridge.cpp",
@@ -80,6 +145,11 @@
         "version": "2.14.0"
       },
       {
+        "name": "stop",
+        "file": "src/facade/external_bridge.cpp",
+        "version": "2.14.0"
+      },
+      {
         "name": "run_async_ask",
         "file": "src/facade/external_bridge.cpp",
         "version": "2.12.0"
@@ -90,9 +160,109 @@
         "version": "2.14.0"
       },
       {
+        "name": "unsubscribe",
+        "file": "src/facade/external_bridge.cpp",
+        "version": "2.0.6-rc16"
+      },
+      {
         "name": "broadcast_notification",
         "file": "src/facade/external_bridge.cpp",
         "version": "2.14.0"
+      },
+      {
+        "name": "blocked",
+        "file": "src/facade/http_listener.cpp",
+        "version": "2.14.0"
+      },
+      {
+        "name": "record_failure",
+        "file": "src/facade/http_listener.cpp",
+        "version": "2.14.0"
+      },
+      {
+        "name": "~SseJob",
+        "file": "src/facade/http_listener.cpp",
+        "version": "2.14.0"
+      },
+      {
+        "name": "~HttpListener",
+        "file": "src/facade/http_listener.cpp",
+        "version": "2.14.0"
+      },
+      {
+        "name": "publish_token",
+        "file": "src/facade/http_listener.cpp",
+        "version": "2.14.0"
+      },
+      {
+        "name": "start",
+        "file": "src/facade/http_listener.cpp",
+        "version": "2.14.0"
+      },
+      {
+        "name": "await_running",
+        "file": "src/facade/http_listener.cpp",
+        "version": "2.14.0"
+      },
+      {
+        "name": "stop",
+        "file": "src/facade/http_listener.cpp",
+        "version": "2.14.0"
+      }
+    ]
+  },
+  {
+    "req_id": "REQ-CFG-001",
+    "req_name": "Layered configuration resolution with most-specific-layer-wins precedence",
+    "functions": [
+      {
+        "name": "load_layered",
+        "file": "src/config/loader.cpp",
+        "version": "2.14.0"
+      }
+    ]
+  },
+  {
+    "req_id": "REQ-CFG-002",
+    "req_name": "Whole-block replace semantics for models and routing across layers",
+    "functions": [
+      {
+        "name": "load_layered",
+        "file": "src/config/loader.cpp",
+        "version": "2.14.0"
+      }
+    ]
+  },
+  {
+    "req_id": "REQ-CFG-007",
+    "req_name": "Usable configuration with no user config present",
+    "functions": [
+      {
+        "name": "load_layered",
+        "file": "src/config/loader.cpp",
+        "version": "2.14.0"
+      }
+    ]
+  },
+  {
+    "req_id": "REQ-IDEN-001",
+    "req_name": "Tier resolution contract and per-tier loop overrides",
+    "functions": [
+      {
+        "name": "entropic_run_session_as",
+        "file": "src/facade/entropic.cpp",
+        "version": "2.13.0"
+      }
+    ]
+  },
+  {
+    "req_id": "REQ-MCP-023",
+    "req_name": "Bash and git servers gate on operator approval, not command pattern matching; bash enforces a timeout on the whole process group",
+    "functions": [
+      {
+        "name": "parse_bash_config",
+        "file": "src/config/loader.cpp",
+        "version": "2.13.0"
       }
     ]
   }

@@ -44,6 +44,7 @@
 #include <map>
 #include <memory>
 #include <mutex>
+#include <optional>
 #include <string>
 
 // Forward declarations for Phase 1+ subsystems.
@@ -75,9 +76,10 @@ struct InterfaceContext;  // gh#58 follow-up (v2.2.6): per-handle iface ctx
  * which is the entire point: switching repository must not cost a 13 GiB
  * reload.
  *
- * Per-workspace `app_context` is deliberately out of scope (follow-up).
+ * v2.14.0 (gh#179): a workspace may carry its own `app_context`, which
+ * replaces the handle's in the prompts its bound sessions are seeded with.
  *
- * @version 2.13.0
+ * @version 2.14.0
  */
 struct EntropicWorkspace {
     std::string name;                    ///< Caller-chosen workspace name
@@ -87,6 +89,8 @@ struct EntropicWorkspace {
     /// what lets two sessions in DIFFERENT repositories delegate
     /// concurrently.
     std::unique_ptr<entropic::ServerManager> servers;
+    /// @brief gh#179: this workspace's app_context; nullopt = the handle's.
+    std::optional<std::string> app_context;
 };
 
 /**
@@ -311,6 +315,24 @@ std::filesystem::path bridge_project_dir(entropic_handle_t h);
  */
 void wire_external_server_policy(entropic_handle_t h,
                                  ServerManager& servers, bool with_declared);
+
+/**
+ * @brief Give a workspace's sessions prompts built on its own app_context
+ *        (gh#179), or return them to the handle's.
+ *
+ * Assembles exactly what configure assembles — constitution, app_context,
+ * tier identity — with the workspace's text in the app_context slot, and
+ * registers the result with the engine for the workspace.
+ *
+ * @param h Engine handle (configured).
+ * @param workspace Workspace name.
+ * @param app_context The workspace's text; nullopt = use the handle's.
+ * @req REQ-MCP-027
+ * @version 2.14.0
+ */
+void apply_workspace_app_context(entropic_handle_t h,
+                                 const std::string& workspace,
+                                 const std::optional<std::string>& app_context);
 
 /**
  * @brief The facade's gh#160 `ScopedSandbox` swap callback.

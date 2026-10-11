@@ -3494,14 +3494,17 @@ void AgentEngine::set_system_prompt(const std::string& prompt) {
 }
 
 /**
- * @brief Read the handle's system prompt (gh#158).
+ * @brief The untiered system prompt for the calling session (gh#158, gh#179).
+ *
+ * v2.14.0: a session bound to a workspace that has its own prompts gets
+ * that workspace's default prompt; every other session gets the handle's.
+ *
  * @return A copy taken under `prompt_mutex_`; empty when none is set.
  * @dg_internal
- * @version 2.13.0
+ * @version 2.14.0
  */
 std::string AgentEngine::system_prompt_copy() const {
-    std::lock_guard<std::mutex> guard(prompt_mutex_);
-    return system_prompt_;
+    return session_system_prompt(active_session_key());
 }
 
 /**
@@ -3832,29 +3835,111 @@ std::vector<Message> AgentEngine::run_turn_as(const std::string& tier,
 }
 
 /**
+ * @brief Register (or replace) one workspace's assembled prompts (gh#179).
+ * @param workspace Workspace name.
+ * @param prompts Assembled prompts.
+ * @req REQ-MCP-027
+ * @version 2.14.0
+ */
+void AgentEngine::set_workspace_prompts(const std::string& workspace,
+                                        WorkspacePrompts prompts) {
+    logger->info("[workspace] '{}' prompts set: default {} chars, {} tier(s)",
+                 workspace, prompts.default_prompt.size(),
+                 prompts.tier_prompts.size());
+    std::lock_guard<std::mutex> guard(prompt_mutex_);
+    workspace_prompts_[workspace] = std::move(prompts);
+}
+
+/**
+ * @brief Forget a workspace's prompts (gh#179).
+ * @param workspace Workspace name.
+ * @req REQ-MCP-027
+ * @version 2.14.0
+ */
+void AgentEngine::clear_workspace_prompts(const std::string& workspace) {
+    logger->info("[workspace] '{}' prompts cleared — its sessions use the "
+                 "handle's", workspace);
+    std::lock_guard<std::mutex> guard(prompt_mutex_);
+    workspace_prompts_.erase(workspace);
+}
+
+/**
+ * @brief Record a session's workspace (gh#179).
+ * @param session Session key.
+ * @param workspace Workspace name.
+ * @req REQ-MCP-027
+ * @version 2.14.0
+ */
+void AgentEngine::bind_session_workspace(const std::string& session,
+                                         const std::string& workspace) {
+    std::lock_guard<std::mutex> guard(prompt_mutex_);
+    session_workspace_[session] = workspace;
+}
+
+/**
+ * @brief A session's workspace prompt for a tier (gh#179).
+ * @param session Session key.
+ * @param tier Tier name; "" = untiered default.
+ * @return The prompt, or nullopt when unbound or not provided.
+ * @dg_internal
+ * @version 2.14.0
+ */
+std::optional<std::string> AgentEngine::workspace_prompt_for(
+    const std::string& session, const std::string& tier) const {
+    std::lock_guard<std::mutex> guard(prompt_mutex_);
+    std::optional<std::string> out;
+    auto bound = session_workspace_.find(session);
+    auto ws = bound == session_workspace_.end()
+        ? workspace_prompts_.end() : workspace_prompts_.find(bound->second);
+    if (ws != workspace_prompts_.end() && tier.empty()) {
+        out = ws->second.default_prompt;
+    } else if (ws != workspace_prompts_.end()) {
+        auto t = ws->second.tier_prompts.find(tier);
+        if (t != ws->second.tier_prompts.end()) { out = t->second; }
+    }
+    return out;
+}
+
+/**
+ * @brief The untiered prompt a fresh conversation in `session` gets (gh#179).
+ * @param session Session key.
+ * @return The workspace's default prompt when the session is bound to a
+ *         workspace that has one, else the handle's system prompt.
+ * @req REQ-MCP-027
+ * @version 2.14.0
+ */
+std::string AgentEngine::session_system_prompt(const std::string& session) const {
+    auto ws = workspace_prompt_for(session, "");
+    std::lock_guard<std::mutex> guard(prompt_mutex_);
+    return ws.value_or(system_prompt_);
+}
+
+/**
  * @brief Seed a tier's system prompt on an empty conversation (gh#99).
  *
- * Pushes `tier_info_[tier].system_prompt`; falls back to the global
- * `system_prompt_` when the tier carries no info. No-op once the conversation
- * has started — like run_turn's first-turn seeding, the system prompt is NOT
- * re-seeded mid-session when a later run_turn_as names a different tier (the
+ * Precedence: the session's workspace prompt for the tier (gh#179,
+ * v2.14.0), then `tier_info_[tier].system_prompt`, then the session's
+ * untiered prompt. No-op once the conversation has started — like
+ * run_turn's first-turn seeding, the system prompt is NOT re-seeded
+ * mid-session when a later run_turn_as names a different tier (the
  * grammar/samplers still switch; only the prompt persists). See run_turn_as.
  * @param tier Tier whose system prompt to seed.
  * @req REQ-IDEN-001
- * @version 2.13.0
+ * @version 2.14.0
  */
 void AgentEngine::seed_system_prompt_for_tier(const std::string& tier) {
     auto& convo = active_conversation();
     if (!convo.messages.empty()) { return; }
+    auto sp = workspace_prompt_for(active_session_key(), tier);
     auto it = tier_info_.find(tier);
-    std::string sp =
-        (it != tier_info_.end() && !it->second.system_prompt.empty())
-            ? it->second.system_prompt
-            : system_prompt_copy();
-    if (sp.empty()) { return; }
+    if (!sp && it != tier_info_.end() && !it->second.system_prompt.empty()) {
+        sp = it->second.system_prompt;
+    }
+    if (!sp) { sp = system_prompt_copy(); }
+    if (sp->empty()) { return; }
     Message sys;
     sys.role = "system";
-    sys.content = sp;
+    sys.content = *sp;
     convo.messages.push_back(std::move(sys));
 }
 
@@ -4510,10 +4595,15 @@ void AgentEngine::set_handoff_rules(
 
 /**
  * @brief Wire internal TierResolutionInterface from stored data.
+ *
+ * v2.14.0 (gh#179): a child delegated from a workspace-bound session gets
+ * the workspace's prompt for its tier, so the project context a session
+ * runs under follows its delegations.
+ *
  * @return ChildContextInfo for the named tier, resolved from the
  *         engine's stored tier data; info.valid is false when unknown.
  * @req REQ-IDEN-001
- * @version 2.0.2
+ * @version 2.14.0
  */
 ChildContextInfo AgentEngine::tri_resolve_tier(
     const std::string& name, void* ud) {
@@ -4524,6 +4614,9 @@ ChildContextInfo AgentEngine::tri_resolve_tier(
         info.valid = false;
     } else {
         info = it->second;
+        info.system_prompt = self->workspace_prompt_for(
+                                 self->active_session_key(), name)
+                                 .value_or(info.system_prompt);
     }
     return info;
 }

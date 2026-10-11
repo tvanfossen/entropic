@@ -150,5 +150,6 @@ EXPORTS = frozenset(
         "entropic_validation_set_identity",
         "entropic_version",
         "entropic_workspace_create",
+        "entropic_workspace_set_app_context",
     }
 )

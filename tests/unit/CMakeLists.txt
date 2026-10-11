@@ -384,6 +384,7 @@ add_executable(entropic-core-tests
     core/message_queue_test.cpp  # gh#40 (v2.1.10)
     core/turn_exclusion_test.cpp  # gh#144 (v2.12.0)
     core/session_conversation_test.cpp  # gh#144 (v2.12.0)
+    core/workspace_prompt_test.cpp      # gh#179 (v2.14.0)
     # v2.3.10: backstop coverage for streaming <think> tag filter
     core/stream_think_filter_test.cpp
 )
@@ -588,6 +589,8 @@ add_executable(entropic-api-tests
     api/serve_cli_test.cpp
     # gh#203 (v2.14.0): followup shape through the real storage provider.
     api/followup_provider_test.cpp
+    # gh#179 (v2.14.0): per-workspace app_context.
+    api/workspace_app_context_test.cpp
 )
 
 # v2.1.1 (#3): serialize_messages_utf8_test.cpp #includes the private

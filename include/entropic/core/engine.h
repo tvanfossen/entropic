@@ -1041,6 +1041,49 @@ public:
      */
     ToolExecutorHooks build_directive_hooks();
 
+    // ── Per-workspace prompts (gh#179, v2.14.0) ─────────────
+
+    /**
+     * @brief Register (or replace) one workspace's assembled prompts.
+     *
+     * Takes effect for every session bound to `workspace` whose
+     * conversation has not started; a started conversation keeps the
+     * system message it was seeded with.
+     *
+     * @param workspace Workspace name.
+     * @param prompts Assembled prompts.
+     * @version 2.14.0
+     */
+    void set_workspace_prompts(const std::string& workspace,
+                               WorkspacePrompts prompts);
+
+    /**
+     * @brief Forget a workspace's prompts; its sessions fall back to the
+     *        handle's.
+     * @param workspace Workspace name.
+     * @version 2.14.0
+     */
+    void clear_workspace_prompts(const std::string& workspace);
+
+    /**
+     * @brief Record that `session` belongs to `workspace`.
+     * @param session Session key.
+     * @param workspace Workspace name.
+     * @version 2.14.0
+     */
+    void bind_session_workspace(const std::string& session,
+                                const std::string& workspace);
+
+    /**
+     * @brief The untiered system prompt a fresh conversation in `session`
+     *        would be seeded with (gh#179).
+     * @param session Session key.
+     * @return The bound workspace's default prompt when it has one, else
+     *         the handle's system prompt.
+     * @version 2.14.0
+     */
+    std::string session_system_prompt(const std::string& session) const;
+
     // ── Tier info (v2.0.2) ──────────────────────────────────
 
     /**
@@ -2162,6 +2205,21 @@ private:
     /// under `api_mutex`, read on every run thread — which holds nothing
     /// since gh#109 — so `api_mutex` never covered the pair.
     mutable std::mutex prompt_mutex_;
+    /// @brief gh#179: workspace → assembled prompts, under `prompt_mutex_`.
+    std::unordered_map<std::string, WorkspacePrompts> workspace_prompts_;
+    /// @brief gh#179: session → workspace, under `prompt_mutex_`.
+    std::unordered_map<std::string, std::string> session_workspace_;
+
+    /**
+     * @brief A session's workspace prompt for `tier`, if any.
+     * @param session Session key.
+     * @param tier Tier name; "" = the untiered default prompt.
+     * @return The workspace's prompt, or nullopt when the session is not
+     *         bound or its workspace has none for that tier.
+     * @version 2.14.0
+     */
+    std::optional<std::string> workspace_prompt_for(const std::string& session,
+                                                    const std::string& tier) const;
     SessionLogger* session_logger_ = nullptr;              ///< Non-owning model log
 
     // ── Pre-resolved tier data (v2.0.2) ─────────────────────

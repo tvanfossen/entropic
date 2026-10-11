@@ -263,6 +263,21 @@ struct ChildContextInfo {
 };
 
 /**
+ * @brief One workspace's assembled system prompts (gh#179, v2.14.0).
+ *
+ * Built by the facade from the handle's constitution, the WORKSPACE's
+ * app_context and each tier's identity — the same assembly the handle-wide
+ * prompts get, with one source swapped. A session bound to the workspace
+ * is seeded with these instead of the handle's.
+ *
+ * @version 2.14.0
+ */
+struct WorkspacePrompts {
+    std::string default_prompt;                                ///< Untiered first turn
+    std::unordered_map<std::string, std::string> tier_prompts; ///< Tier → system prompt
+};
+
+/**
  * @brief Tier resolution callbacks for delegation and auto-chain.
  *
  * Injected by the facade. Allows core.so to resolve tier identity

@@ -1362,6 +1362,20 @@ struct ParsedConfig {
     std::optional<std::string> app_context_content;
 
     /**
+     * @brief Per-workspace app_context file, relative to each workspace root
+     *        (gh#179, v2.14.0). Empty = off (the default).
+     *
+     * When set (e.g. `.entropic/ENTROPIC.md`), a workspace whose root holds
+     * that file uses its text as the app_context for every session bound
+     * to it, in place of the handle's. A workspace without the file keeps
+     * the handle's. Off by default because it puts repository-supplied text
+     * into the system prompt — the same "the repository decides" exposure
+     * gh#199 closed for `.mcp.json`. Must be relative and stay inside the
+     * root (no `..`). Read once, when the workspace is created.
+     */
+    std::filesystem::path workspace_app_context;
+
+    /**
      * @brief gh#158 (v2.13.0): may DIFFERENT session keys run together?
      *
      * ON by default since the audit that decision #66 records was completed:

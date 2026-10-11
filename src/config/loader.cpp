@@ -1007,7 +1007,7 @@ static std::string parse_optional_subsections(
  * @param root YAML root node.
  * @param config Config to populate.
  * @dg_internal
- * @version 2.13.0
+ * @version 2.14.0
  */
 static void extract_scalar_fields(ryml::ConstNodeRef root,
                                   ParsedConfig& config)
@@ -1034,6 +1034,32 @@ static void extract_scalar_fields(ryml::ConstNodeRef root,
         extract_tri_state_path(root, "app_context",
                                config.app_context, config.app_context_disabled);
     }
+    // gh#179 (v2.14.0): per-workspace app_context file, opt-in.
+    extract_path(root, "workspace_app_context", config.workspace_app_context);
+}
+
+/**
+ * @brief Refuse a workspace_app_context that could leave a workspace root.
+ *
+ * The path is joined to every workspace's root, so an absolute path or a
+ * `..` component would read the same file outside every repository — the
+ * opposite of a per-repository document.
+ *
+ * @param config Parsed config.
+ * @return "" when unset or valid, else the reason.
+ * @req REQ-CFG-001
+ * @version 2.14.0
+ */
+static std::string validate_workspace_app_context(const ParsedConfig& config) {
+    const auto& p = config.workspace_app_context;
+    std::string err;
+    bool escapes = false;
+    for (const auto& part : p) { escapes = escapes || part == ".."; }
+    if (!p.empty() && (p.is_absolute() || escapes)) {
+        err = "workspace_app_context must be a path relative to the workspace "
+              "root with no '..' (got '" + p.string() + "')";
+    }
+    return err;
 }
 
 /**
@@ -1049,7 +1075,7 @@ static void extract_scalar_fields(ryml::ConstNodeRef root,
  * @param config Config to populate.
  * @return Empty string on success, error message on failure.
  * @dg_internal
- * @version 2.13.0 [reviewed]
+ * @version 2.14.0
  */
 static std::string parse_optional_sections(
     ryml::ConstNodeRef root,
@@ -1058,6 +1084,7 @@ static std::string parse_optional_sections(
 {
     auto err = parse_optional_subsections(root, registry, config);
     extract_scalar_fields(root, config);
+    if (err.empty()) { err = validate_workspace_app_context(config); }  // gh#179
     if (err.empty() && root.has_child("delegation")) {
         err = parse_delegation_config(root["delegation"],
                                       config.delegation);

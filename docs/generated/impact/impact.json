@@ -1,189 +1,47 @@
 [
   {
-    "req_id": "REQ-CFG-001",
-    "req_name": "Layered configuration resolution with most-specific-layer-wins precedence",
+    "req_id": "REQ-LOOP-006",
+    "req_name": "Interrupt and pause semantics across nested loops",
     "functions": [
       {
-        "name": "load_layered",
-        "file": "src/config/loader.cpp",
+        "name": "poll_stop",
+        "file": "src/mcp/servers/bash.cpp",
         "version": "2.14.0"
       }
     ]
   },
   {
-    "req_id": "REQ-CFG-002",
-    "req_name": "Whole-block replace semantics for models and routing across layers",
+    "req_id": "REQ-MCP-023",
+    "req_name": "Bash and git servers gate on operator approval, not command pattern matching; bash enforces a timeout on the whole process group",
     "functions": [
       {
-        "name": "load_layered",
-        "file": "src/config/loader.cpp",
-        "version": "2.14.0"
-      }
-    ]
-  },
-  {
-    "req_id": "REQ-CFG-007",
-    "req_name": "Usable configuration with no user config present",
-    "functions": [
-      {
-        "name": "load_layered",
-        "file": "src/config/loader.cpp",
-        "version": "2.14.0"
-      }
-    ]
-  },
-  {
-    "req_id": "REQ-MCP-002",
-    "req_name": "Tool results always cross boundaries as a ServerResponse JSON envelope",
-    "functions": [
-      {
-        "name": "route_external_or_unknown",
-        "file": "src/mcp/server_manager.cpp",
-        "version": "2.14.0"
-      }
-    ]
-  },
-  {
-    "req_id": "REQ-MCP-005",
-    "req_name": "Configured plugins load loudly or fail loudly \u2014 never silently skipped",
-    "functions": [
-      {
-        "name": "load_plugins",
-        "file": "src/mcp/server_manager.cpp",
-        "version": "2.14.0"
-      }
-    ]
-  },
-  {
-    "req_id": "REQ-MCP-006",
-    "req_name": "Plugin instances get serialised calls and ordered teardown",
-    "functions": [
-      {
-        "name": "shutdown",
-        "file": "src/mcp/server_manager.cpp",
-        "version": "2.14.0"
-      }
-    ]
-  },
-  {
-    "req_id": "REQ-MCP-007",
-    "req_name": "Tool calls route by server prefix uniformly across all three server kinds",
-    "functions": [
-      {
-        "name": "query_tools",
-        "file": "src/mcp/external_client.cpp",
+        "name": "poll_stop",
+        "file": "src/mcp/servers/bash.cpp",
         "version": "2.14.0"
       },
       {
-        "name": "append_external_tools",
-        "file": "src/mcp/server_manager.cpp",
+        "name": "collect_until_exit",
+        "file": "src/mcp/servers/bash.cpp",
         "version": "2.14.0"
       },
       {
-        "name": "external_tools_without_readonly_hint",
-        "file": "src/mcp/server_manager.cpp",
+        "name": "run_shell",
+        "file": "src/mcp/servers/bash.cpp",
         "version": "2.14.0"
       },
       {
-        "name": "list_tools",
-        "file": "src/mcp/server_manager.cpp",
+        "name": "cancelled_error",
+        "file": "src/mcp/servers/bash.cpp",
         "version": "2.14.0"
       },
       {
-        "name": "server_names",
-        "file": "src/mcp/server_manager.cpp",
+        "name": "shell_result",
+        "file": "src/mcp/servers/bash.cpp",
         "version": "2.14.0"
       },
       {
-        "name": "route_external_or_unknown",
-        "file": "src/mcp/server_manager.cpp",
-        "version": "2.14.0"
-      },
-      {
-        "name": "connect_external_server",
-        "file": "src/mcp/server_manager.cpp",
-        "version": "2.14.0"
-      },
-      {
-        "name": "list_server_info",
-        "file": "src/mcp/server_manager.cpp",
-        "version": "2.14.0"
-      }
-    ]
-  },
-  {
-    "req_id": "REQ-MCP-025",
-    "req_name": "External servers are discovered safely, directive-stripped, and health-monitored",
-    "functions": [
-      {
-        "name": "send_initialize",
-        "file": "src/mcp/external_client.cpp",
-        "version": "2.14.0"
-      },
-      {
-        "name": "query_tools",
-        "file": "src/mcp/external_client.cpp",
-        "version": "2.14.0"
-      },
-      {
-        "name": "set_init_timeout_ms",
-        "file": "src/mcp/external_client.cpp",
-        "version": "2.14.0"
-      },
-      {
-        "name": "shutdown",
-        "file": "src/mcp/server_manager.cpp",
-        "version": "2.14.0"
-      },
-      {
-        "name": "interrupt_external_tools",
-        "file": "src/mcp/server_manager.cpp",
-        "version": "2.14.0"
-      },
-      {
-        "name": "clear_external_tool_interrupts",
-        "file": "src/mcp/server_manager.cpp",
-        "version": "2.14.0"
-      },
-      {
-        "name": "initialize_external_servers",
-        "file": "src/mcp/server_manager.cpp",
-        "version": "2.14.0"
-      },
-      {
-        "name": "set_discovered_server_approver",
-        "file": "src/mcp/server_manager.cpp",
-        "version": "2.14.0"
-      },
-      {
-        "name": "set_own_bridge_socket",
-        "file": "src/mcp/server_manager.cpp",
-        "version": "2.14.0"
-      },
-      {
-        "name": "connect_and_register_external",
-        "file": "src/mcp/server_manager.cpp",
-        "version": "2.14.0"
-      },
-      {
-        "name": "connect_external_server",
-        "file": "src/mcp/server_manager.cpp",
-        "version": "2.14.0"
-      }
-    ]
-  },
-  {
-    "req_id": "REQ-MCP-026",
-    "req_name": "A JSON-RPC response is paired with the request that asked for it",
-    "functions": [
-      {
-        "name": "send_initialize",
-        "file": "src/mcp/external_client.cpp",
-        "version": "2.14.0"
-      },
-      {
-        "name": "query_tools",
-        "file": "src/mcp/external_client.cpp",
+        "name": "execute",
+        "file": "src/mcp/servers/bash.cpp",
         "version": "2.14.0"
       }
     ]

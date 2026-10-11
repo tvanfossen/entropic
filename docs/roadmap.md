@@ -12,7 +12,7 @@ cite them.
 
 ---
 
-## Current State (v2.13.2 on `main`)
+## Current State (v2.13.2 on `main`; v2.14.0 in gate on `develop`)
 
 - C++20 engine, pure C ABI at every `.so` boundary
 - Unit + regression tests (CPU pre-commit gate), ThreadSanitizer preset
@@ -52,6 +52,26 @@ cite them.
 > convention. Do not read the absence of a section as absence of work.
 
 ---
+
+## v2.14.0 — one engine host, many clients (IN GATE)
+
+Tracking issue gh#206. Goal: one long-running host that every editor reaches at
+one URL, safe across many repositories and costing nothing while idle — so
+sumac can ship as a user-scope Claude Code plugin. Seven workstreams, branch
+per workstream, merged to develop:
+
+| WS | Issues | Landed |
+|---|---|---|
+| 7 Hygiene | #186, #188, #197 | facade tests rooted in temp dirs; decisions #81–82 |
+| 3 Idle device | #198 | deferred handle creates no device context |
+| 2 Discovery safety | #199, #200 | Claude-Code-style enablement, fail closed; self-guard rebuilt (#83) |
+| 5 Multi-client safety | #171, #175, #172 | external registry locked; bring-up timeout; bash honours per-run cancel |
+| 1 Serving | #204, #205 | Streamable HTTP + bearer token, `entropic serve`, per-session lanes, ask tier/workspace (#84) |
+| 4 Tool contracts | #203, #173, #201, #202, #190, #174 | outputSchema on every tool, generated Response format, contract gate (#85) |
+| 6 Per-workspace context | #179 | setter + opt-in `workspace_app_context` file (#86) |
+
+Engagement tests: gh#204 multi-client HTTP (two sessions admitted after 0 ms
+while both turns in flight) and gh#179 concurrent per-workspace context.
 
 ## v2.13.2 — the prefill term, and the lever auto was not using (SHIPPED)
 

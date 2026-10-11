@@ -852,7 +852,11 @@ struct FilesystemConfig {
 struct ExternalMCPConfig {
     bool enabled = false;                                ///< Enable external MCP
     std::optional<std::filesystem::path> socket_path;    ///< Socket path (nullopt = derived)
-    int rate_limit = 10;                                 ///< Requests per minute (1–100)
+    /// @brief NOT ENFORCED. Parsed since the bridge shipped and read by
+    /// nothing; the bridge logs a warning at start when it is set to anything
+    /// but the default (v2.14.0). Kept only so existing configs still load —
+    /// enforcing it now at 10/min would throttle every consumer.
+    int rate_limit = 10;
     /// Route entropic.ask through entropic_run (false) or entropic_run_streaming
     /// (true, default). Set false when MTP is active — streaming binds on_token
     /// and trips the MTP incompatibility guard (gh#115, v2.9.12).

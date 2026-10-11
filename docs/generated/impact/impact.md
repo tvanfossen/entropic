@@ -2,10 +2,7 @@
 
 | REQ | Name | Functions Changed |
 |-----|------|-------------------|
-| REQ-API-009 | Run entry-point family, result contract, and cross-thread interruptibility | entropic_run_session_streaming, entropic_run_session_streaming_as |
-| REQ-BRIDGE-001 | External bridge exposes the engine over a peer-authenticated unix socket | start_external_bridge |
-| REQ-IDEN-001 | Tier resolution contract and per-tier loop overrides | entropic_run_session_streaming_as |
-| REQ-LOOP-001 | Agent state machine with observable, dual-channel transitions | run_streaming, run_streaming |
-| REQ-LOOP-008 | Family-aware streaming reasoning filter with UTF-8 alignment | run_streaming, run_streaming |
+| REQ-API-012 | Final-answer selection from a serialized conversation | handle_ask_plain, handle_ask |
+| REQ-BRIDGE-001 | External bridge exposes the engine over a peer-authenticated unix socket | handle_ask_plain, handle_ask, cancel_inflight_async_tasks, handle_clear, ask_in_turn, dispatch_ask, dispatch_tool, begin_turn_wait, end_turn_wait, bind_and_listen, create_listen_socket, start, run_async_ask, async_worker, broadcast_notification |
 
-**Total: 5 requirement(s) affected, 8 function(s) changed**
+**Total: 2 requirement(s) affected, 17 function(s) changed**

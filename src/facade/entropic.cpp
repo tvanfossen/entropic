@@ -853,7 +853,7 @@ static std::vector<std::string> collect_delegatable_tiers(
  * @param h Engine handle with config loaded.
  * @param data_dir Bundled data directory path.
  * @dg_internal
- * @version 2.13.0 [reviewed]
+ * @version 2.14.0
  */
 static void init_mcp_servers(entropic_handle_t h,
                              const std::filesystem::path& data_dir) {
@@ -882,6 +882,12 @@ static void init_mcp_servers(entropic_handle_t h,
     // continues so the rest of the engine stays usable and the operator sees
     // the whole diagnosis at once.
     h->server_manager->load_plugins(h->config.mcp);
+
+    // v2.14.0: the default set connects external servers too — declared ones
+    // (mcp.external_servers, dead since v1.8.7: nothing called initialize()
+    // here) and enabled .mcp.json ones, behind the same gate as a workspace.
+    entropic::wire_external_server_policy(h, *h->server_manager, true);
+    h->server_manager->initialize();
 }
 
 /**
@@ -1742,15 +1748,13 @@ static entropic::LoopConfig build_loop_config(entropic_handle_t h) {
  *
  * @param h Engine handle (must be fully configured).
  * @req REQ-BRIDGE-001
- * @version 2.0.8
+ * @version 2.14.0
  */
 static void start_external_bridge(entropic_handle_t h) {
     if (!h->config.mcp.external.enabled) { return; }
-    auto project_dir = h->config.config_dir.empty()
-        ? std::filesystem::current_path()
-        : h->config.config_dir;
+    // Same derivation the self-connection guard uses (gh#200).
     h->external_bridge = std::make_unique<entropic::ExternalBridge>(
-        h, h->config.mcp.external, project_dir);
+        h, h->config.mcp.external, entropic::bridge_project_dir(h));
     if (!h->external_bridge->start()) {
         s_log->warn("External MCP bridge failed to start");
         h->external_bridge.reset();

@@ -265,6 +265,49 @@ inline entropic::ServerManager* workspace_servers(entropic_handle_t h,
 void wire_outside_root_approver(entropic_handle_t h);
 
 /**
+ * @brief The socket this handle's external bridge binds, or empty when the
+ *        handle runs no bridge (v2.14.0, gh#200).
+ *
+ * One function for the bridge and the self-connection guard, so the guard
+ * can never compare against a path the bridge does not bind — the exact
+ * disagreement gh#200 reported.
+ *
+ * @param h Engine handle with config loaded.
+ * @return Socket path, or empty.
+ * @version 2.14.0
+ */
+std::filesystem::path expected_bridge_socket(entropic_handle_t h);
+
+/**
+ * @brief The project dir the external bridge derives its socket from.
+ * @param h Engine handle with config loaded.
+ * @return `config_dir`, else the process cwd.
+ * @version 2.14.0
+ */
+std::filesystem::path bridge_project_dir(entropic_handle_t h);
+
+/**
+ * @brief Give a server set the handle's external-server policy (v2.14.0).
+ *
+ * The set receives the handle's `.mcp.json` enablement keys, the bridge
+ * socket to refuse, and an approver over the handle's
+ * ENTROPIC_HOOK_PRE_MCP_SERVER_CONNECT hooks — the same for the default set
+ * and every workspace, which is what makes a workspace stop spawning its
+ * root's `.mcp.json` (gh#199). Declared `external_servers` go to the default
+ * set only: they are the handle's, not every repository's.
+ *
+ * Call before `ServerManager::initialize()`.
+ *
+ * @param h Engine handle with config loaded.
+ * @param servers Server set to configure.
+ * @param with_declared Whether this set connects `mcp.external_servers`.
+ * @req REQ-MCP-025
+ * @version 2.14.0
+ */
+void wire_external_server_policy(entropic_handle_t h,
+                                 ServerManager& servers, bool with_declared);
+
+/**
  * @brief The facade's gh#160 `ScopedSandbox` swap callback.
  *
  * Moves the session's server set (its workspace's, else the handle's

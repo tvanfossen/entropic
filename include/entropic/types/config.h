@@ -960,7 +960,31 @@ struct MCPConfig {
     std::vector<std::filesystem::path> plugins;
 
     /* ── v1.8.7: External MCP client settings ──────────── */
-    std::unordered_map<std::string, ExternalServerEntry> external_servers; ///< Named external servers
+    /// @brief Named external servers the operator declared (v1.8.7).
+    ///
+    /// Declared here = enabled: an operator who writes an entry asked for it.
+    /// Before v2.14.0 this key was in the struct and the schema but parsed
+    /// from no config file and connected by nothing.
+    /// @version 2.14.0
+    std::unordered_map<std::string, ExternalServerEntry> external_servers;
+
+    /* ── v2.14.0: .mcp.json discovery, Claude-Code style ─── */
+    /// @brief `.mcp.json` servers pre-approved by name (gh#199).
+    ///
+    /// Discovery reads `<root>/.mcp.json` and `~/.entropic/.mcp.json`, then
+    /// connects ONLY enabled entries: refused if named in
+    /// `disabled_mcpjson_servers`; connected if named here or
+    /// `enable_all_project_mcp_servers` is true; otherwise the
+    /// `ENTROPIC_HOOK_PRE_MCP_SERVER_CONNECT` pre-hook decides; with no hook
+    /// registered, NOT connected. Inherited by every workspace.
+    /// @version 2.14.0
+    std::vector<std::string> enabled_mcpjson_servers;
+    /// @brief `.mcp.json` servers always refused, even under enable-all.
+    /// @version 2.14.0
+    std::vector<std::string> disabled_mcpjson_servers;
+    /// @brief Pre-approve every discovered server not explicitly disabled.
+    /// @version 2.14.0
+    bool enable_all_project_mcp_servers = false;
     ReconnectConfig reconnect;                   ///< Reconnection backoff policy
     uint32_t health_check_interval_ms = 0;       ///< Ping interval (0 = disabled)
     uint32_t tool_call_timeout_ms = 30000;       ///< Per-call timeout for external tools

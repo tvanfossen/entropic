@@ -140,6 +140,79 @@ void entropic::wire_outside_root_approver(entropic_handle_t h) {
 }
 
 /**
+ * @brief Ask the handle's PRE_MCP_SERVER_CONNECT hooks about one server.
+ *
+ * Fail-closed (gh#199): with no handler registered the answer is "no" —
+ * the inverse of every other pre-hook, and the reason this point exists.
+ *
+ * @param context_json Server description (see hooks.h).
+ * @param ud The engine handle.
+ * @return true to connect.
+ * @dg_internal
+ * @version 2.14.0
+ */
+static bool discovered_server_thunk(const std::string& context_json, void* ud) {
+    auto* h = static_cast<entropic_handle_t>(ud);
+    constexpr auto kPoint = ENTROPIC_HOOK_PRE_MCP_SERVER_CONNECT;
+    bool approved = false;
+    if (h->hook_registry.hook_count(kPoint) > 0) {
+        char* ignored = nullptr;
+        const int rc = h->hook_registry.fire_pre(kPoint, context_json.c_str(),
+                                                 &ignored);
+        free(ignored);
+        approved = rc == 0;
+    }
+    return approved;
+}
+
+/**
+ * @brief The project dir the external bridge derives its socket from.
+ * @param h Engine handle with config loaded.
+ * @return `config_dir`, else the process cwd.
+ * @req REQ-BRIDGE-001
+ * @version 2.14.0
+ */
+std::filesystem::path entropic::bridge_project_dir(entropic_handle_t h) {
+    return h->config.config_dir.empty() ? std::filesystem::current_path()
+                                        : h->config.config_dir;
+}
+
+/**
+ * @brief The socket this handle's bridge binds, or empty (gh#200).
+ * @param h Engine handle with config loaded.
+ * @return Socket path, or empty when the bridge is disabled.
+ * @req REQ-MCP-025
+ * @version 2.14.0
+ */
+std::filesystem::path entropic::expected_bridge_socket(entropic_handle_t h) {
+    const auto& ext = h->config.mcp.external;
+    std::filesystem::path sock;
+    if (ext.enabled) {
+        sock = ext.socket_path.has_value()
+            ? *ext.socket_path : compute_socket_path(bridge_project_dir(h));
+    }
+    return sock;
+}
+
+/**
+ * @brief Give a server set the handle's external-server policy (v2.14.0).
+ * @param h Engine handle with config loaded.
+ * @param servers Server set to configure.
+ * @param with_declared Whether this set connects `mcp.external_servers`.
+ * @req REQ-MCP-025
+ * @version 2.14.0
+ */
+void entropic::wire_external_server_policy(entropic_handle_t h,
+                                           ServerManager& servers,
+                                           bool with_declared) {
+    MCPConfig policy = h->config.mcp;
+    if (!with_declared) { policy.external_servers.clear(); }
+    servers.set_mcp_config(policy);
+    servers.set_own_bridge_socket(expected_bridge_socket(h));
+    servers.set_discovered_server_approver(discovered_server_thunk, h);
+}
+
+/**
  * @brief Move a session's servers into (or back out of) a sandbox.
  *
  * The implementation `sandbox.h` has described since v2.1.5 and nobody
@@ -265,7 +338,7 @@ entropic_set_path_approval_callback(entropic_handle_t handle,
  * @return Owned workspace with connected servers.
  * @utility
  * @req REQ-MCP-027
- * @version 2.13.0 [reviewed]
+ * @version 2.14.0 [reviewed]
  */
 static std::unique_ptr<EntropicWorkspace> build_workspace(
     entropic_handle_t h, const std::string& name,
@@ -288,6 +361,9 @@ static std::unique_ptr<EntropicWorkspace> build_workspace(
     ws->servers->init_builtins(mcp, tier_names,
                                data_dir.string(), require_context);
     ws->servers->load_plugins(mcp);
+    // gh#199: the workspace inherits the handle's enablement policy, so its
+    // root's .mcp.json launches nothing the operator did not enable.
+    entropic::wire_external_server_policy(h, *ws->servers, false);
     return ws;
 }
 

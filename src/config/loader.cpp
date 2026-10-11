@@ -652,6 +652,78 @@ static std::string parse_bash_config(
 }
 
 /**
+ * @brief Parse one declared external server (v2.14.0).
+ * @param node YAML node for one `mcp.external_servers.<name>` entry.
+ * @return The entry; an empty command AND url means "not usable".
+ * @dg_internal
+ * @version 2.14.0
+ */
+static ExternalServerEntry parse_external_server_entry(ryml::ConstNodeRef node) {
+    ExternalServerEntry entry;
+    extract(node, "command", entry.command);
+    extract(node, "url", entry.url);
+    extract_string_list(node, "args", entry.args);
+    if (node.has_child("env") && node["env"].is_map()) {
+        for (auto kv : node["env"]) {
+            if (kv.has_key() && kv.has_val()) {
+                entry.env[to_string(kv.key())] = to_string(kv.val());
+            }
+        }
+    }
+    return entry;
+}
+
+/**
+ * @brief Parse `mcp.external_servers` (v2.14.0).
+ *
+ * The key has been in MCPConfig and the schema since v1.8.7; until now no
+ * config file could set it. An entry with neither `command` nor `url` is a
+ * typed error rather than a silent skip — it can only be a mistake.
+ *
+ * @param node YAML node for the "mcp" section.
+ * @param[in,out] config MCP config to populate.
+ * @return Empty on success, else the first bad entry's error.
+ * @dg_internal
+ * @version 2.14.0
+ */
+static std::string parse_external_servers(ryml::ConstNodeRef node,
+                                          MCPConfig& config) {
+    if (!node.has_child("external_servers")) { return ""; }
+    auto servers = node["external_servers"];
+    if (!servers.is_map()) {
+        return "mcp.external_servers: must be a map of name -> server";
+    }
+    std::string err;
+    for (auto child : servers) {
+        const std::string name = to_string(child.key());
+        auto entry = parse_external_server_entry(child);
+        if (entry.command.empty() && entry.url.empty()) {
+            err = "mcp.external_servers." + name + ": needs `command` or `url`";
+            break;
+        }
+        config.external_servers[name] = std::move(entry);
+    }
+    return err;
+}
+
+/**
+ * @brief Parse the `.mcp.json` enablement keys (v2.14.0, gh#199).
+ * @param node YAML node for the "mcp" section.
+ * @param[in,out] config MCP config to populate.
+ * @dg_internal
+ * @version 2.14.0
+ */
+static void parse_mcpjson_enablement(ryml::ConstNodeRef node,
+                                     MCPConfig& config) {
+    extract_string_list(node, "enabled_mcpjson_servers",
+                        config.enabled_mcpjson_servers);
+    extract_string_list(node, "disabled_mcpjson_servers",
+                        config.disabled_mcpjson_servers);
+    extract(node, "enable_all_project_mcp_servers",
+            config.enable_all_project_mcp_servers);
+}
+
+/**
  * @brief Parse the MCP section's per-server sub-sections (v2.13.0).
  *
  * Split out of parse_mcp_config when `mcp.bash` joined `filesystem` and
@@ -662,7 +734,7 @@ static std::string parse_bash_config(
  * @param[out] config Output MCP config.
  * @return Empty string on success, else the first section's error.
  * @dg_internal
- * @version 2.13.0
+ * @version 2.14.0
  */
 static std::string parse_mcp_sections(
     ryml::ConstNodeRef node,
@@ -678,6 +750,8 @@ static std::string parse_mcp_sections(
     if (node.has_child("external")) {
         parse_external_mcp_config(node["external"], config.external);
     }
+    parse_mcpjson_enablement(node, config);
+    if (err.empty()) { err = parse_external_servers(node, config); }
     return err;
 }
 
@@ -1169,40 +1243,6 @@ std::string load_config_from_file(
 }
 
 /**
- * @brief Parse a single mcpServers entry from .mcp.json.
- * @param name Server name (key in mcpServers object).
- * @param entry JSON value for that server.
- * @return ExternalServerEntry populated from JSON.
- * @utility
- * @version 2.0.3
- */
-static ExternalServerEntry parse_mcp_json_entry(
-    const std::string& name,
-    const nlohmann::json& entry) {
-    ExternalServerEntry result;
-    std::string type = entry.value("type", std::string("stdio"));
-    if (type == "sse") {
-        result.url = entry.value("url", std::string{});
-    } else {
-        result.command = entry.value("command", std::string{});
-        if (entry.contains("args") && entry["args"].is_array()) {
-            for (const auto& a : entry["args"]) {
-                result.args.push_back(a.get<std::string>());
-            }
-        }
-        if (entry.contains("env") && entry["env"].is_object()) {
-            for (auto it = entry["env"].begin();
-                 it != entry["env"].end(); ++it) {
-                result.env[it.key()] = it.value().get<std::string>();
-            }
-        }
-    }
-    s_log->info("Discovered external MCP server: {} (type={})",
-                 name, type);
-    return result;
-}
-
-/**
  * @brief Discover and parse .mcp.json from the project directory.
  *
  * Auto-registers external MCP servers (stdio/SSE) declared in the
@@ -1217,61 +1257,6 @@ static ExternalServerEntry parse_mcp_json_entry(
  * @utility
  * @version 2.0.3
  */
-/**
- * @brief Read + validate the mcpServers object from a .mcp.json file.
- * @param path Path to .mcp.json.
- * @return The mcpServers object node, or nullopt if missing/malformed.
- * @dg_internal
- * @version 2.3.7
- */
-static std::optional<nlohmann::json> read_mcp_servers(
-    const std::filesystem::path& path) {
-    std::ifstream f(path);
-    nlohmann::json j;
-    if (f.is_open()) {
-        std::stringstream ss;
-        ss << f.rdbuf();
-        j = nlohmann::json::parse(ss.str(), nullptr, false);
-    }
-    bool valid = f.is_open() && !j.is_discarded() && j.is_object()
-                 && j.contains("mcpServers")
-                 && j["mcpServers"].is_object();
-    if (!valid) {
-        s_log->warn(".mcp.json missing/malformed: {}", path.string());
-        return std::nullopt;
-    }
-    return j["mcpServers"];
-}
-
-/**
- * @brief Discover + merge external MCP servers from <dir>/.mcp.json.
- * @dg_internal
- * @version 2.3.7
- */
-static void discover_mcp_json(
-    const std::filesystem::path& project_dir,
-    ParsedConfig& config) {
-    if (project_dir.empty()) { return; }
-    auto path = project_dir / ".mcp.json";
-    if (!std::filesystem::exists(path)) { return; }
-    auto servers = read_mcp_servers(path);
-    if (!servers) { return; }
-
-    int added = 0;
-    for (auto it = servers->begin(); it != servers->end(); ++it) {
-        const std::string& name = it.key();
-        if (config.mcp.external_servers.count(name)) {
-            s_log->info(".mcp.json: {} already in config, skipping", name);
-            continue;
-        }
-        config.mcp.external_servers[name] = parse_mcp_json_entry(
-            name, it.value());
-        added++;
-    }
-    s_log->info("Loaded {} external MCP server(s) from {}",
-                 added, path.string());
-}
-
 /**
  * @brief Load the global user config layer if present.
  * @req REQ-CFG-001
@@ -1482,7 +1467,7 @@ static std::string load_project_layer(
  * @req REQ-CFG-001
  * @req REQ-CFG-002
  * @req REQ-CFG-007
- * @version 2.11.1
+ * @version 2.14.0
  */
 std::string load_layered(
     const std::filesystem::path& project_dir,
@@ -1520,8 +1505,10 @@ std::string load_layered(
         }
     }
     if (err.empty()) {
+        // v2.14.0: .mcp.json is no longer merged here. This path only ever
+        // fed `external_servers`, which nothing connected; discovery now runs
+        // once, in the MCP layer, behind the enablement gate (gh#199).
         apply_env_overrides(config);
-        discover_mcp_json(project_dir, config);
     }
     return err;
 }

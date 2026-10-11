@@ -6,6 +6,8 @@
  */
 
 #include <entropic/mcp/server_manager.h>
+
+#include "discovery_policy.h"
 #include <entropic/mcp/servers/bash.h>
 #include <entropic/mcp/servers/diagnostics.h>
 #include <entropic/mcp/servers/entropic_server.h>
@@ -1025,60 +1027,144 @@ void ServerManager::clear_external_tool_interrupts() {
 }
 
 /**
- * @brief Initialize external servers from config + .mcp.json.
+ * @brief Connect declared servers, then the enabled discovered ones.
  *
- * YAML `external_servers` are connected first, then `.mcp.json`
- * discovery runs with the already-registered names passed in so a
- * discovered entry can never shadow one of them. A HealthMonitor is
- * started only when at least one external server exists.
+ * Declared (`mcp.external_servers`) first, so a discovered entry can never
+ * shadow one; each half refuses anything that would connect back to this
+ * handle's own bridge. A HealthMonitor starts only when a server connected.
  *
  * @req REQ-MCP-025
- * @version 1.8.7
+ * @version 2.14.0
  */
 void ServerManager::initialize_external_servers() {
-    // Create .mcp.json discovery
-    mcp_json_discovery_ = std::make_unique<MCPJsonDiscovery>(
-        project_dir_);
+    connect_declared_servers();
+    connect_discovered_servers();
 
-    // YAML config external_servers
-    for (const auto& [name, entry] : mcp_config_.external_servers) {
-        auto client = create_external_client(name, entry);
-        connect_and_register_external(name, std::move(client),
-                                      "config", entry.url,
-                                      entry.command);
-    }
-
-    // .mcp.json discovery
-    std::set<std::string> existing;
-    for (const auto& [name, _] : servers_) {
-        existing.insert(name);
-    }
-    for (const auto& [name, _] : external_clients_) {
-        existing.insert(name);
-    }
-
-    auto discovered = mcp_json_discovery_->discover(existing);
-    for (const auto& cfg : discovered) {
-        auto client = create_external_client(cfg);
-        connect_and_register_external(cfg.name, std::move(client),
-                                      "mcp_json", cfg.url,
-                                      cfg.command);
-    }
-
-    // Start health monitor
     health_monitor_ = std::make_unique<HealthMonitor>(
         ReconnectPolicy(mcp_config_.reconnect),
         mcp_config_.health_check_interval_ms);
-
     for (auto& [name, client] : external_clients_) {
         health_monitor_->watch(name, client.get());
     }
     if (!external_clients_.empty()) {
         health_monitor_->start();
     }
-
     logger->info("External MCP: {} servers connected",
                  external_clients_.size());
+}
+
+/**
+ * @brief Connect every server the operator declared in config (v2.14.0).
+ *
+ * Declared = enabled: no hook is consulted. The one refusal is a server that
+ * would connect back to this handle's own bridge (gh#200) — that is never a
+ * request anyone meant to make.
+ *
+ * @dg_internal
+ * @version 2.14.0
+ */
+void ServerManager::connect_declared_servers() {
+    for (const auto& [name, entry] : mcp_config_.external_servers) {
+        ExternalServerConfig probe;
+        probe.name = name;
+        probe.transport = entry.command.empty() ? "sse" : "stdio";
+        probe.command = entry.command;
+        probe.args = entry.args;
+        if (launches_own_bridge(probe, own_bridge_socket_, project_dir_)) {
+            logger->warn("[mcp] declared server '{}' would connect to this "
+                         "handle's own bridge ({}) — refused (gh#200)",
+                         name, own_bridge_socket_.string());
+            continue;
+        }
+        auto client = create_external_client(name, entry);
+        connect_and_register_external(name, std::move(client),
+                                      "config", entry.url, entry.command);
+    }
+}
+
+/**
+ * @brief Discover `.mcp.json` servers and connect only the enabled ones.
+ * @dg_internal
+ * @version 2.14.0
+ */
+void ServerManager::connect_discovered_servers() {
+    mcp_json_discovery_ = std::make_unique<MCPJsonDiscovery>(project_dir_);
+    std::set<std::string> existing;
+    for (const auto& [name, _] : servers_) { existing.insert(name); }
+    for (const auto& [name, _] : external_clients_) { existing.insert(name); }
+
+    for (const auto& cfg : mcp_json_discovery_->discover(existing)) {
+        if (!admit_discovered(cfg)) { continue; }
+        auto client = create_external_client(cfg);
+        connect_and_register_external(cfg.name, std::move(client),
+                                      "mcp_json", cfg.url, cfg.command);
+    }
+}
+
+/**
+ * @brief Whether a discovered server may be launched (gh#199/#200).
+ *
+ * Own bridge: never. Then config: disabled refuses, enabled admits. Then the
+ * approver; with none installed, refuse — silence is not consent here.
+ * Every refusal is logged with its reason so an operator can see why a
+ * server their repository declares is not running.
+ *
+ * @param cfg Discovered server config.
+ * @return true to connect.
+ * @dg_internal
+ * @version 2.14.0
+ */
+bool ServerManager::admit_discovered(const ExternalServerConfig& cfg) const {
+    const char* why = nullptr;
+    if (launches_own_bridge(cfg, own_bridge_socket_, project_dir_)) {
+        why = "it would connect to this handle's own bridge (gh#200)";
+    } else {
+        switch (mcpjson_config_verdict(cfg.name, mcp_config_)) {
+        case McpJsonConfigVerdict::disabled:
+            why = "it is listed in mcp.disabled_mcpjson_servers";
+            break;
+        case McpJsonConfigVerdict::enabled:
+            break;
+        case McpJsonConfigVerdict::ask:
+            if (discovered_approver_ == nullptr) {
+                why = "it is not enabled and no PRE_MCP_SERVER_CONNECT hook "
+                      "is registered to approve it";
+            } else if (!discovered_approver_(
+                           discovered_server_json(cfg, project_dir_),
+                           discovered_approver_ud_)) {
+                why = "the PRE_MCP_SERVER_CONNECT hook refused it";
+            }
+            break;
+        }
+    }
+    if (why != nullptr) {
+        logger->info("[mcp] discovered server '{}' not connected: {}",
+                     cfg.name, why);
+    }
+    return why == nullptr;
+}
+
+/**
+ * @brief Install the discovered-server approver (v2.14.0, gh#199).
+ * @param fn Approver, or nullptr to clear.
+ * @param user_data Forwarded to `fn`.
+ * @req REQ-MCP-025
+ * @version 2.14.0
+ */
+void ServerManager::set_discovered_server_approver(
+    DiscoveredServerApprover fn, void* user_data) {
+    discovered_approver_ = fn;
+    discovered_approver_ud_ = user_data;
+}
+
+/**
+ * @brief Record the socket this handle's bridge binds (v2.14.0, gh#200).
+ * @param socket Bridge socket path; empty when the handle runs no bridge.
+ * @req REQ-MCP-025
+ * @version 2.14.0
+ */
+void ServerManager::set_own_bridge_socket(const std::filesystem::path& socket) {
+    own_bridge_socket_ = socket;
 }
 
 /**

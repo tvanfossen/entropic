@@ -140,8 +140,12 @@ SCENARIO("Invalid hook point rejected via C API", "[api][hooks]") {
 
 SCENARIO("Hook count sentinel value", "[api][hooks]") {
     GIVEN("the hook enum") {
-        THEN("ENTROPIC_HOOK_COUNT_ is 23") {
-            REQUIRE(ENTROPIC_HOOK_COUNT_ == 23);
+        THEN("ENTROPIC_HOOK_COUNT_ is 24") {
+            // A public-enum tripwire: every hook point added must move this
+            // on purpose. 23 -> 24 in v2.14.0 for
+            // ENTROPIC_HOOK_PRE_MCP_SERVER_CONNECT (gh#199).
+            REQUIRE(ENTROPIC_HOOK_COUNT_ == 24);
+            REQUIRE(ENTROPIC_HOOK_PRE_MCP_SERVER_CONNECT == 23);
         }
     }
 }

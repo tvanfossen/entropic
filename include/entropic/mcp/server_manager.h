@@ -167,6 +167,43 @@ public:
     bool set_outside_root_approver(OutsideRootApprover fn, void* user_data);
 
     /**
+     * @brief Approver consulted for a discovered `.mcp.json` server that
+     *        config neither disabled nor pre-approved (v2.14.0, gh#199).
+     * @param context_json See ENTROPIC_HOOK_PRE_MCP_SERVER_CONNECT.
+     * @param user_data Forwarded from set_discovered_server_approver().
+     * @return true to connect, false to refuse.
+     */
+    using DiscoveredServerApprover = bool (*)(const std::string& context_json,
+                                              void* user_data);
+
+    /**
+     * @brief Install the discovered-server approver (v2.14.0, gh#199).
+     *
+     * Without one, a discovered server that config did not enable is NOT
+     * connected — silence is a refusal. The facade installs a thunk over the
+     * handle's ENTROPIC_HOOK_PRE_MCP_SERVER_CONNECT hooks on every set it
+     * builds, default and workspace alike.
+     *
+     * @param fn Approver, or nullptr to clear.
+     * @param user_data Forwarded to `fn`.
+     * @version 2.14.0
+     */
+    void set_discovered_server_approver(DiscoveredServerApprover fn,
+                                        void* user_data);
+
+    /**
+     * @brief The socket this handle's external bridge binds (v2.14.0, gh#200).
+     *
+     * Any external server that would connect back to it — declared or
+     * discovered — is refused. Empty (the default) means the handle runs no
+     * bridge, so there is nothing to connect back to.
+     *
+     * @param socket Bound (or about-to-be-bound) bridge socket path.
+     * @version 2.14.0
+     */
+    void set_own_bridge_socket(const std::filesystem::path& socket);
+
+    /**
      * @brief Release every in-process server's state for one session
      *        (gh#158).
      *
@@ -453,6 +490,9 @@ private:
 
     PermissionManager permissions_;                                 ///< Permission manager
     std::filesystem::path project_dir_;                             ///< Project root
+    DiscoveredServerApprover discovered_approver_ = nullptr;        ///< gh#199
+    void* discovered_approver_ud_ = nullptr;                        ///< gh#199
+    std::filesystem::path own_bridge_socket_;                       ///< gh#200
     std::map<std::string, std::unique_ptr<MCPServerBase>> servers_; ///< Name → in-process server
 
     /// @brief gh#158: guards the working directory every in-process and
@@ -538,6 +578,29 @@ private:
      * @version 1.8.7
      */
     void initialize_external_servers();
+
+    /**
+     * @brief Connect every server the operator declared in config (v2.14.0).
+     * @dg_internal
+     * @version 2.14.0
+     */
+    void connect_declared_servers();
+
+    /**
+     * @brief Discover `.mcp.json` servers and connect the enabled ones.
+     * @dg_internal
+     * @version 2.14.0
+     */
+    void connect_discovered_servers();
+
+    /**
+     * @brief Whether a discovered server may be launched (gh#199/#200).
+     * @param cfg Discovered server config.
+     * @return true to connect.
+     * @dg_internal
+     * @version 2.14.0
+     */
+    bool admit_discovered(const ExternalServerConfig& cfg) const;
 
     /**
      * @brief Route a tool call to the correct server.

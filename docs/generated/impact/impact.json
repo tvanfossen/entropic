@@ -1,11 +1,113 @@
 [
   {
+    "req_id": "REQ-ABI-001",
+    "req_name": "Pure C at every .so boundary \u2014 opaque handles and explicit ownership",
+    "functions": [
+      {
+        "name": "entropic_configure_dir",
+        "file": "src/facade/entropic.cpp",
+        "version": "2.1.6"
+      },
+      {
+        "name": "entropic_destroy",
+        "file": "src/facade/entropic.cpp",
+        "version": "2.14.0"
+      }
+    ]
+  },
+  {
+    "req_id": "REQ-ABI-002",
+    "req_name": "C++ exceptions never cross any .so boundary",
+    "functions": [
+      {
+        "name": "entropic_configure_dir",
+        "file": "src/facade/entropic.cpp",
+        "version": "2.1.6"
+      }
+    ]
+  },
+  {
+    "req_id": "REQ-API-002",
+    "req_name": "Handle lifecycle \u2014 create, configure, destroy, NULL-safe teardown",
+    "functions": [
+      {
+        "name": "entropic_destroy",
+        "file": "src/facade/entropic.cpp",
+        "version": "2.14.0"
+      }
+    ]
+  },
+  {
+    "req_id": "REQ-API-003",
+    "req_name": "Multiple handles are fully independent within one process",
+    "functions": [
+      {
+        "name": "entropic_destroy",
+        "file": "src/facade/entropic.cpp",
+        "version": "2.14.0"
+      }
+    ]
+  },
+  {
+    "req_id": "REQ-API-004",
+    "req_name": "Three configure entry points, one shared body, one-shot per handle",
+    "functions": [
+      {
+        "name": "configure_common",
+        "file": "src/facade/entropic.cpp",
+        "version": "2.14.0"
+      },
+      {
+        "name": "entropic_configure_dir",
+        "file": "src/facade/entropic.cpp",
+        "version": "2.1.6"
+      }
+    ]
+  },
+  {
+    "req_id": "REQ-API-005",
+    "req_name": "Uniform precondition guard on every exported entry point",
+    "functions": [
+      {
+        "name": "entropic_configure_dir",
+        "file": "src/facade/entropic.cpp",
+        "version": "2.1.6"
+      }
+    ]
+  },
+  {
+    "req_id": "REQ-API-009",
+    "req_name": "Run entry-point family, result contract, and cross-thread interruptibility",
+    "functions": [
+      {
+        "name": "entropic_run_session_as",
+        "file": "src/facade/entropic.cpp",
+        "version": "2.13.0"
+      },
+      {
+        "name": "entropic_run_session_streaming",
+        "file": "src/facade/entropic.cpp",
+        "version": "2.14.0"
+      },
+      {
+        "name": "entropic_run_session_streaming_as",
+        "file": "src/facade/entropic.cpp",
+        "version": "2.14.0"
+      }
+    ]
+  },
+  {
     "req_id": "REQ-BRIDGE-001",
     "req_name": "External bridge exposes the engine over a peer-authenticated unix socket",
     "functions": [
       {
-        "name": "run_serve",
-        "file": "src/cli/serve.cpp",
+        "name": "start_http_listener",
+        "file": "src/facade/entropic.cpp",
+        "version": "2.14.0"
+      },
+      {
+        "name": "start_external_bridge",
+        "file": "src/facade/entropic.cpp",
         "version": "2.14.0"
       }
     ]
@@ -15,13 +117,332 @@
     "req_name": "Layered configuration resolution with most-specific-layer-wins precedence",
     "functions": [
       {
-        "name": "apply_mcp_external_env",
-        "file": "src/config/env_overrides.cpp",
+        "name": "entropic_configure_dir",
+        "file": "src/facade/entropic.cpp",
+        "version": "2.1.6"
+      }
+    ]
+  },
+  {
+    "req_id": "REQ-DELEG-006",
+    "req_name": "Explicit delegation context, required-context tiers, resume by target",
+    "functions": [
+      {
+        "name": "execute",
+        "file": "src/mcp/servers/entropic_server.cpp",
         "version": "2.14.0"
       },
       {
-        "name": "apply_env_overrides",
-        "file": "src/config/env_overrides.cpp",
+        "name": "pipeline_rejection",
+        "file": "src/mcp/servers/entropic_server.cpp",
+        "version": "2.14.0"
+      }
+    ]
+  },
+  {
+    "req_id": "REQ-IDEN-001",
+    "req_name": "Tier resolution contract and per-tier loop overrides",
+    "functions": [
+      {
+        "name": "entropic_run_session_as",
+        "file": "src/facade/entropic.cpp",
+        "version": "2.13.0"
+      },
+      {
+        "name": "entropic_run_session_streaming_as",
+        "file": "src/facade/entropic.cpp",
+        "version": "2.14.0"
+      }
+    ]
+  },
+  {
+    "req_id": "REQ-INFER-007",
+    "req_name": "Named grammars are registered, validated, and resolved by a fixed precedence",
+    "functions": [
+      {
+        "name": "warn_tier_grammars_step",
+        "file": "src/facade/entropic.cpp",
+        "version": "2.13.0"
+      }
+    ]
+  },
+  {
+    "req_id": "REQ-LOOP-009",
+    "req_name": "Per-session-key run concurrency, on by default, with one lock on the generation path",
+    "functions": [
+      {
+        "name": "execute",
+        "file": "src/mcp/servers/entropic_server.cpp",
+        "version": "2.14.0"
+      }
+    ]
+  },
+  {
+    "req_id": "REQ-MCP-002",
+    "req_name": "Tool results always cross boundaries as a ServerResponse JSON envelope",
+    "functions": [
+      {
+        "name": "build_response",
+        "file": "src/mcp/external_client.cpp",
+        "version": "1.8.7"
+      }
+    ]
+  },
+  {
+    "req_id": "REQ-MCP-007",
+    "req_name": "Tool calls route by server prefix uniformly across all three server kinds",
+    "functions": [
+      {
+        "name": "query_tools",
+        "file": "src/mcp/external_client.cpp",
+        "version": "2.14.0"
+      }
+    ]
+  },
+  {
+    "req_id": "REQ-MCP-013",
+    "req_name": "Tool arguments are validated against the declared JSON schema before dispatch",
+    "functions": [
+      {
+        "name": "render_response_format",
+        "file": "src/mcp/tool_base.cpp",
+        "version": "2.14.0"
+      },
+      {
+        "name": "load_tool_definition",
+        "file": "src/mcp/tool_base.cpp",
+        "version": "2.14.0"
+      },
+      {
+        "name": "check_range",
+        "file": "src/mcp/tool_executor.cpp",
+        "version": "2.14.0"
+      },
+      {
+        "name": "check_property_constraints",
+        "file": "src/mcp/tool_executor.cpp",
+        "version": "2.14.0"
+      }
+    ]
+  },
+  {
+    "req_id": "REQ-MCP-015",
+    "req_name": "Duplicates, errors, and denials return corrective guidance, not bare failure",
+    "functions": [
+      {
+        "name": "tool_error_json",
+        "file": "src/mcp/tool_base.cpp",
+        "version": "2.14.0"
+      },
+      {
+        "name": "record_tool_call",
+        "file": "src/mcp/tool_executor.cpp",
+        "version": "2.14.0"
+      }
+    ]
+  },
+  {
+    "req_id": "REQ-MCP-020",
+    "req_name": "A bounded, thread-safe ring buffer retains recent tool calls for introspection",
+    "functions": [
+      {
+        "name": "record_tool_history",
+        "file": "src/mcp/tool_executor.cpp",
+        "version": "2.14.0"
+      }
+    ]
+  },
+  {
+    "req_id": "REQ-MCP-021",
+    "req_name": "Filesystem tools are root-confined, read-before-write gated, and size-bounded",
+    "functions": [
+      {
+        "name": "read_numbered_lines",
+        "file": "src/mcp/servers/filesystem.cpp",
+        "version": "2.14.0"
+      },
+      {
+        "name": "apply_insert",
+        "file": "src/mcp/servers/filesystem.cpp",
+        "version": "2.14.0"
+      },
+      {
+        "name": "collect_glob_matches",
+        "file": "src/mcp/servers/filesystem.cpp",
+        "version": "2.14.0"
+      },
+      {
+        "name": "collect_entries",
+        "file": "src/mcp/servers/filesystem.cpp",
+        "version": "2.14.0"
+      },
+      {
+        "name": "do_str_replace",
+        "file": "src/mcp/servers/filesystem.cpp",
+        "version": "2.14.0"
+      },
+      {
+        "name": "do_insert",
+        "file": "src/mcp/servers/filesystem.cpp",
+        "version": "2.14.0"
+      },
+      {
+        "name": "apply_edit",
+        "file": "src/mcp/servers/filesystem.cpp",
+        "version": "2.14.0"
+      },
+      {
+        "name": "check_read_gates",
+        "file": "src/mcp/servers/filesystem.cpp",
+        "version": "2.14.0"
+      },
+      {
+        "name": "execute",
+        "file": "src/mcp/servers/filesystem.cpp",
+        "version": "2.14.0"
+      },
+      {
+        "name": "execute",
+        "file": "src/mcp/servers/filesystem.cpp",
+        "version": "2.14.0"
+      },
+      {
+        "name": "execute",
+        "file": "src/mcp/servers/filesystem.cpp",
+        "version": "2.14.0"
+      },
+      {
+        "name": "execute",
+        "file": "src/mcp/servers/filesystem.cpp",
+        "version": "2.14.0"
+      }
+    ]
+  },
+  {
+    "req_id": "REQ-MCP-022",
+    "req_name": "Glob, grep, and read honour .gitignore plus .explorerignore semantics",
+    "functions": [
+      {
+        "name": "read_page",
+        "file": "src/mcp/servers/filesystem.cpp",
+        "version": "2.14.0"
+      },
+      {
+        "name": "collect_glob_matches",
+        "file": "src/mcp/servers/filesystem.cpp",
+        "version": "2.14.0"
+      },
+      {
+        "name": "grep_file",
+        "file": "src/mcp/servers/filesystem.cpp",
+        "version": "2.14.0"
+      },
+      {
+        "name": "check_read_gates",
+        "file": "src/mcp/servers/filesystem.cpp",
+        "version": "2.14.0"
+      },
+      {
+        "name": "execute",
+        "file": "src/mcp/servers/filesystem.cpp",
+        "version": "2.14.0"
+      },
+      {
+        "name": "grep_search",
+        "file": "src/mcp/servers/filesystem.cpp",
+        "version": "2.14.0"
+      },
+      {
+        "name": "execute",
+        "file": "src/mcp/servers/filesystem.cpp",
+        "version": "2.14.0"
+      }
+    ]
+  },
+  {
+    "req_id": "REQ-MCP-024",
+    "req_name": "Engine-level entropic.* tools validate their arguments and emit typed directives",
+    "functions": [
+      {
+        "name": "execute",
+        "file": "src/mcp/servers/entropic_server.cpp",
+        "version": "2.14.0"
+      },
+      {
+        "name": "execute",
+        "file": "src/mcp/servers/entropic_server.cpp",
+        "version": "2.14.0"
+      },
+      {
+        "name": "pipeline_rejection",
+        "file": "src/mcp/servers/entropic_server.cpp",
+        "version": "2.14.0"
+      },
+      {
+        "name": "execute",
+        "file": "src/mcp/servers/entropic_server.cpp",
+        "version": "2.14.0"
+      },
+      {
+        "name": "execute",
+        "file": "src/mcp/servers/entropic_server.cpp",
+        "version": "2.14.0"
+      },
+      {
+        "name": "execute",
+        "file": "src/mcp/servers/entropic_server.cpp",
+        "version": "2.14.0"
+      },
+      {
+        "name": "execute",
+        "file": "src/mcp/servers/entropic_server.cpp",
+        "version": "2.14.0"
+      },
+      {
+        "name": "execute",
+        "file": "src/mcp/servers/entropic_server.cpp",
+        "version": "2.14.0"
+      }
+    ]
+  },
+  {
+    "req_id": "REQ-MCP-025",
+    "req_name": "External servers are discovered safely, directive-stripped, and health-monitored",
+    "functions": [
+      {
+        "name": "send_initialize",
+        "file": "src/mcp/external_client.cpp",
+        "version": "2.14.0"
+      },
+      {
+        "name": "query_tools",
+        "file": "src/mcp/external_client.cpp",
+        "version": "2.14.0"
+      },
+      {
+        "name": "build_response",
+        "file": "src/mcp/external_client.cpp",
+        "version": "1.8.7"
+      },
+      {
+        "name": "set_init_timeout_ms",
+        "file": "src/mcp/external_client.cpp",
+        "version": "2.14.0"
+      }
+    ]
+  },
+  {
+    "req_id": "REQ-MCP-026",
+    "req_name": "A JSON-RPC response is paired with the request that asked for it",
+    "functions": [
+      {
+        "name": "send_initialize",
+        "file": "src/mcp/external_client.cpp",
+        "version": "2.14.0"
+      },
+      {
+        "name": "query_tools",
+        "file": "src/mcp/external_client.cpp",
         "version": "2.14.0"
       }
     ]

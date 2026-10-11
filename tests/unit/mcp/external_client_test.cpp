@@ -168,6 +168,30 @@ TEST_CASE("Execute sends tools/call and returns result",
     REQUIRE(j["directives"].empty());
 }
 
+TEST_CASE("gh#190: a tools/call result flagged isError reaches the engine as a failure",
+          "[external_client][gh190][2.14.0]") {
+    // MCP's own "ran, but declined" signal is result.isError. It was
+    // discarded, so a server that refused a call politely read as success
+    // and reset the repeated-failure count — the lever #190 asked for
+    // already exists in the protocol; the client just ignored it.
+    auto transport = std::make_unique<MockTransport>();
+    auto* mock = transport.get();
+    mock->responses.push_back(mock_init_response(1));
+    mock->responses.push_back(mock_tools_response(2, {"set_interest"}));
+    json declined = json::parse(mock_call_response(3, "no such interest"));
+    declined["result"]["isError"] = true;
+    mock->responses.push_back(declined.dump());
+    mock->responses.push_back(mock_call_response(4, "no such interest"));
+
+    ExternalMCPClient client("mock", std::move(transport));
+    client.connect();
+
+    auto flagged = json::parse(client.execute("set_interest", "{}"));
+    auto plain = json::parse(client.execute("set_interest", "{}"));
+    CHECK(flagged["result"] == "Error: no such interest");
+    CHECK(plain["result"] == "no such interest");  // an answer stays an answer
+}
+
 TEST_CASE("Execute when disconnected returns error",
           "[external_client]") {
     auto transport = std::make_unique<MockTransport>();

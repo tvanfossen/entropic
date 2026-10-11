@@ -9,5 +9,24 @@
         "description": "Number of recent tool results to keep intact (default: 2)"
       }
     }
+  },
+  "outputSchema": {
+    "title": "success",
+    "type": "object",
+    "required": [
+      "action",
+      "keep_recent"
+    ],
+    "properties": {
+      "action": {
+        "enum": [
+          "prune_context"
+        ]
+      },
+      "keep_recent": {
+        "type": "integer",
+        "description": "tool results kept intact"
+      }
+    }
   }
 }

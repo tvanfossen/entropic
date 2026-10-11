@@ -83,8 +83,11 @@ mcp:
   enable_filesystem: true
   enable_bash: true
   enable_git: true
-  enable_diagnostics: true
-  enable_web: true
+  # Placeholders (v2.14.0, gh#174): both servers answer every call with
+  # {"error":"not_implemented"}. Off so no model is offered a tool that
+  # cannot work; enabling one only adds those refusals to the menu.
+  enable_diagnostics: false
+  enable_web: false
   bash:
     # Wall-clock limit on ONE bash.execute call, in seconds (>= 1; 0 or a
     # negative value fails the config load). On expiry the command's whole

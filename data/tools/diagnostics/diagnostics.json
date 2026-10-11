@@ -1,6 +1,6 @@
 {
   "name": "diagnostics",
-  "description": "Get code errors and warnings from the language server.\n\nReturns diagnostics including:\n- Syntax errors\n- Type errors\n- Linting warnings\n- Import issues\n\nUse after editing files to verify correctness.",
+  "description": "PLACEHOLDER — not implemented. No language server is connected; every call returns the `not_implemented` error. Disabled by default (mcp.enable_diagnostics).",
   "inputSchema": {
     "type": "object",
     "properties": {
@@ -9,6 +9,26 @@
         "description": "Path to the file to check, or 'all' for all files"
       }
     },
-    "required": ["file_path"]
+    "required": [
+      "file_path"
+    ]
+  },
+  "outputSchema": {
+    "title": "error",
+    "type": "object",
+    "required": [
+      "error",
+      "message"
+    ],
+    "properties": {
+      "error": {
+        "enum": [
+          "not_implemented"
+        ]
+      },
+      "message": {
+        "type": "string"
+      }
+    }
   }
 }

@@ -6,7 +6,11 @@
     "properties": {
       "action": {
         "type": "string",
-        "enum": ["add", "update", "remove"],
+        "enum": [
+          "add",
+          "update",
+          "remove"
+        ],
         "description": "add, update (by index), or remove (by index)"
       },
       "content": {
@@ -19,10 +23,60 @@
       },
       "status": {
         "type": "string",
-        "enum": ["pending", "in_progress", "completed"],
+        "enum": [
+          "pending",
+          "in_progress",
+          "completed"
+        ],
         "description": "Task status (for add/update)"
       }
     },
-    "required": ["action"]
+    "required": [
+      "action"
+    ]
+  },
+  "outputSchema": {
+    "oneOf": [
+      {
+        "title": "success",
+        "type": "object",
+        "required": [
+          "action",
+          "todo_state"
+        ],
+        "properties": {
+          "action": {
+            "enum": [
+              "add",
+              "update",
+              "remove"
+            ]
+          },
+          "todo_state": {
+            "type": "string",
+            "description": "the whole list after the action, one `N. [status] content` line per item, or `(empty)`"
+          }
+        }
+      },
+      {
+        "title": "error",
+        "type": "object",
+        "required": [
+          "error",
+          "message"
+        ],
+        "properties": {
+          "error": {
+            "enum": [
+              "out_of_range",
+              "invalid_args"
+            ]
+          },
+          "message": {
+            "type": "string"
+          }
+        }
+      }
+    ]
   }
 }

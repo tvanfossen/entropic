@@ -27,5 +27,63 @@
     "required": [
       "task"
     ]
+  },
+  "outputSchema": {
+    "oneOf": [
+      {
+        "title": "dispatched",
+        "type": "object",
+        "required": [
+          "action",
+          "delegation_id",
+          "target",
+          "resume_by_target",
+          "task",
+          "max_turns"
+        ],
+        "properties": {
+          "action": {
+            "enum": [
+              "resume_delegation"
+            ]
+          },
+          "delegation_id": {
+            "type": "string",
+            "description": "empty when resuming by target"
+          },
+          "target": {
+            "type": "string"
+          },
+          "resume_by_target": {
+            "type": "boolean"
+          },
+          "task": {
+            "type": "string"
+          },
+          "max_turns": {
+            "type": "integer",
+            "description": "-1 = the tier's own limit"
+          }
+        }
+      },
+      {
+        "title": "error",
+        "type": "object",
+        "required": [
+          "error",
+          "message"
+        ],
+        "properties": {
+          "error": {
+            "enum": [
+              "invalid_args"
+            ]
+          },
+          "message": {
+            "type": "string"
+          }
+        }
+      }
+    ]
   }
 }

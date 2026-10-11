@@ -166,8 +166,8 @@ TEST_CASE("test_read_file_returns_json", "[filesystem]") {
 
     REQUIRE(result.contains("path"));
     REQUIRE(result["total"].get<int>() == 2);
-    REQUIRE(result["lines"][0].get<std::string>() == "hello");
-    REQUIRE(result["lines"][1].get<std::string>() == "world");
+    REQUIRE(result["lines"][0]["content"].get<std::string>() == "hello");
+    REQUIRE(result["lines"][1]["content"].get<std::string>() == "world");
 }
 
 TEST_CASE("test_read_file_not_found", "[filesystem]") {
@@ -397,7 +397,8 @@ TEST_CASE("test_edit_str_replace_no_match", "[filesystem]") {
     auto result = parse_result(envelope);
 
     REQUIRE(result.contains("error"));
-    REQUIRE(result["error"].get<std::string>() == "not_found");
+    // v2.14.0: "no_match" — the code edit_file.json always documented.
+    REQUIRE(result["error"].get<std::string>() == "no_match");
 }
 
 TEST_CASE("test_edit_str_replace_multiple_matches",
@@ -453,12 +454,14 @@ TEST_CASE("test_edit_insert_mode", "[filesystem]") {
 
     REQUIRE(result.contains("message"));
 
-    // Verify content — inserted before line 2
+    // v2.14.0 (gh#203): inserted AFTER line 2, as edit_file.json always
+    // said. The code inserted BEFORE, and this test had pinned that.
     std::ifstream in(tmp.path() / "insert.txt");
     std::string content((std::istreambuf_iterator<char>(in)),
                          std::istreambuf_iterator<char>());
-    REQUIRE(content.find("line1\ninserted\nline2") !=
-            std::string::npos);
+    REQUIRE(content == "line1\nline2\ninserted\nline3");
+    CHECK(result["mode"] == "insert");
+    CHECK(result["inserted_after"] == 2);
 }
 
 TEST_CASE("test_glob_finds_files", "[filesystem]") {
@@ -481,7 +484,7 @@ TEST_CASE("test_glob_finds_files", "[filesystem]") {
     json args;
     args["pattern"] = "*.txt";
     auto envelope = server.execute("glob", args.dump());
-    auto result = json::parse(raw_result(envelope));
+    auto result = json::parse(raw_result(envelope))["paths"];
 
     fs::current_path(prev_cwd);
 
@@ -507,7 +510,7 @@ TEST_CASE("test_glob_simple_pattern", "[filesystem]") {
     json args;
     args["pattern"] = "*.txt";
     auto envelope = server.execute("glob", args.dump());
-    auto result = json::parse(raw_result(envelope));
+    auto result = json::parse(raw_result(envelope))["paths"];
 
     fs::current_path(prev_cwd);
 
@@ -534,7 +537,7 @@ TEST_CASE("test_glob_brace_expansion_real", "[filesystem][2.1.4][issue-13]") {
     json args;
     args["pattern"] = "*.{txt,md}";
     auto envelope = server.execute("glob", args.dump());
-    auto result = json::parse(raw_result(envelope));
+    auto result = json::parse(raw_result(envelope))["paths"];
 
     fs::current_path(prev_cwd);
 
@@ -562,7 +565,7 @@ TEST_CASE("test_glob_brace_expansion_three_alternatives",
     json args;
     args["pattern"] = "*.{c,h,py}";
     auto envelope = server.execute("glob", args.dump());
-    auto result = json::parse(raw_result(envelope));
+    auto result = json::parse(raw_result(envelope))["paths"];
 
     fs::current_path(prev_cwd);
 
@@ -592,7 +595,7 @@ TEST_CASE("test_grep_brace_expansion_in_glob",
     args["pattern"] = "needle";
     args["glob"] = "*.{c,h}";
     auto envelope = server.execute("grep", args.dump());
-    auto result = json::parse(raw_result(envelope));
+    auto result = json::parse(raw_result(envelope))["matches"];
 
     fs::current_path(prev_cwd);
 
@@ -646,7 +649,7 @@ TEST_CASE("test_glob_respects_gitignore",
     json args;
     args["pattern"] = "*";
     auto envelope = server.execute("glob", args.dump());
-    auto result = json::parse(raw_result(envelope));
+    auto result = json::parse(raw_result(envelope))["paths"];
 
     REQUIRE(result.is_array());
     bool saw_build = false;
@@ -686,7 +689,7 @@ TEST_CASE("test_glob_respects_explorerignore_supplementary",
     json args;
     args["pattern"] = "*";
     auto envelope = server.execute("glob", args.dump());
-    auto result = json::parse(raw_result(envelope));
+    auto result = json::parse(raw_result(envelope))["paths"];
 
     REQUIRE(result.is_array());
     for (const auto& p : result) {
@@ -715,7 +718,7 @@ TEST_CASE("test_explorerignore_negation_re_includes_path",
     json args;
     args["pattern"] = "*.log";
     auto envelope = server.execute("glob", args.dump());
-    auto result = json::parse(raw_result(envelope));
+    auto result = json::parse(raw_result(envelope))["paths"];
 
     REQUIRE(result.is_array());
     REQUIRE(result.size() == 1);
@@ -746,8 +749,10 @@ TEST_CASE("test_glob_announces_a_truncated_walk",
      *        says so in the tool result. A silently short answer
      *        would be worse than the 87 s hang it replaces — the
      *        model would read it as a complete, empty result.
+     *        v2.14.0 (gh#203): said in declared fields, not a sentinel
+     *        element inside the result array.
      * @internal
-     * @version 2.13.0
+     * @version 2.14.0
      */
     TempDir tmp;
     write_wide_tree(tmp.path(), 40);
@@ -761,14 +766,10 @@ TEST_CASE("test_glob_announces_a_truncated_walk",
     auto result = json::parse(
         raw_result(server.execute("glob", args.dump())));
 
-    REQUIRE(result.is_array());
-    REQUIRE_FALSE(result.empty());
-    const auto& last = result.back();
-    REQUIRE(last.is_object());
-    CHECK(last.at("truncated").get<bool>());
-    auto note = last.at("note").get<std::string>();
-    CHECK(note.find("walk truncated at 5 entries") != std::string::npos);
-    CHECK(note.find("narrow the pattern") != std::string::npos);
+    CHECK(result.at("truncated").get<bool>());
+    CHECK(result.at("reason") == "walk");
+    CHECK_FALSE(result.contains("next_offset"));
+    for (const auto& p : result.at("paths")) { CHECK(p.is_string()); }
 }
 
 TEST_CASE("test_grep_announces_a_truncated_walk",
@@ -778,7 +779,7 @@ TEST_CASE("test_grep_announces_a_truncated_walk",
      *        it more, since it also opens and reads every file the
      *        glob filter admits.
      * @internal
-     * @version 2.13.0
+     * @version 2.14.0
      */
     TempDir tmp;
     write_wide_tree(tmp.path(), 40);
@@ -792,13 +793,9 @@ TEST_CASE("test_grep_announces_a_truncated_walk",
     auto result = json::parse(
         raw_result(server.execute("grep", args.dump())));
 
-    REQUIRE(result.is_array());
-    REQUIRE_FALSE(result.empty());
-    const auto& last = result.back();
-    REQUIRE(last.is_object());
-    REQUIRE(last.contains("truncated"));
-    auto note = last.at("note").get<std::string>();
-    CHECK(note.find("walk truncated at 4 entries") != std::string::npos);
+    CHECK(result.at("truncated").get<bool>());
+    CHECK(result.at("reason") == "walk");
+    for (const auto& m : result.at("matches")) { CHECK(m.contains("path")); }
 }
 
 TEST_CASE("test_glob_and_grep_are_silent_when_the_walk_completes",
@@ -806,9 +803,9 @@ TEST_CASE("test_glob_and_grep_are_silent_when_the_walk_completes",
     /**
      * @brief gh#161: the notice is a CEILING, not a decoration. With
      *        the shipped default (250k entries) a normal workspace
-     *        never sees it, and the result shape is unchanged.
+     *        never sees it.
      * @internal
-     * @version 2.13.0
+     * @version 2.14.0
      */
     TempDir tmp;
     write_wide_tree(tmp.path(), 10);
@@ -819,20 +816,16 @@ TEST_CASE("test_glob_and_grep_are_silent_when_the_walk_completes",
     glob_args["pattern"] = "*.txt";
     auto globbed = json::parse(
         raw_result(server.execute("glob", glob_args.dump())));
-    REQUIRE(globbed.size() == 10);
-    for (const auto& entry : globbed) {
-        CHECK(entry.is_string());
-    }
+    REQUIRE(globbed.at("paths").size() == 10);
+    CHECK_FALSE(globbed.at("truncated").get<bool>());
+    CHECK_FALSE(globbed.contains("reason"));
 
     json grep_args;
     grep_args["pattern"] = "needle";
     auto grepped = json::parse(
         raw_result(server.execute("grep", grep_args.dump())));
-    REQUIRE(grepped.size() == 10);
-    for (const auto& match : grepped) {
-        CHECK(match.contains("path"));
-        CHECK_FALSE(match.contains("truncated"));
-    }
+    REQUIRE(grepped.at("matches").size() == 10);
+    CHECK_FALSE(grepped.at("truncated").get<bool>());
 }
 
 TEST_CASE("test_read_file_refuses_ignored_path",
@@ -878,7 +871,7 @@ TEST_CASE("test_glob_skips_directories", "[filesystem]") {
     json args;
     args["pattern"] = "*.txt";
     auto envelope = server.execute("glob", args.dump());
-    auto result = json::parse(raw_result(envelope));
+    auto result = json::parse(raw_result(envelope))["paths"];
 
     fs::current_path(prev_cwd);
 
@@ -909,7 +902,7 @@ TEST_CASE("test_grep_finds_matches", "[filesystem]") {
     args["pattern"] = "hello";
     args["glob"] = "*.txt";
     auto envelope = server.execute("grep", args.dump());
-    auto result = json::parse(raw_result(envelope));
+    auto result = json::parse(raw_result(envelope))["matches"];
 
     fs::current_path(prev_cwd);
 
@@ -939,7 +932,7 @@ TEST_CASE("test_list_directory_flat", "[filesystem]") {
     json args;
     args["path"] = ".";
     auto envelope = server.execute("list_directory", args.dump());
-    auto result = json::parse(raw_result(envelope));
+    auto result = json::parse(raw_result(envelope))["entries"];
 
     REQUIRE(result.is_array());
     REQUIRE(result.size() == 3); // 2 files + 1 directory
@@ -970,7 +963,7 @@ TEST_CASE("test_list_directory_recursive", "[filesystem]") {
     args["path"] = ".";
     args["recursive"] = true;
     auto envelope = server.execute("list_directory", args.dump());
-    auto result = json::parse(raw_result(envelope));
+    auto result = json::parse(raw_result(envelope))["entries"];
 
     REQUIRE(result.is_array());
     REQUIRE(result.size() >= 3); // top.txt, sub/, sub/nested.txt
@@ -978,7 +971,7 @@ TEST_CASE("test_list_directory_recursive", "[filesystem]") {
     bool found_nested = false;
     for (const auto& entry : result) {
         auto name = entry["name"].get<std::string>();
-        if (name == "nested.txt") {
+        if (name == "sub/nested.txt") {  // v2.14.0: relative to the listed dir
             found_nested = true;
         }
     }
@@ -1001,7 +994,7 @@ SCENARIO("gh#116: list_directory with path omitted uses project root default",
             THEN("it does not throw and returns a listing of the project root") {
                 REQUIRE_NOTHROW(
                     envelope = server.execute("list_directory", args.dump()));
-                auto result = json::parse(raw_result(envelope));
+                auto result = json::parse(raw_result(envelope))["entries"];
                 REQUIRE(result.is_array());
                 bool found_file = false;
                 bool found_dir  = false;
@@ -1237,8 +1230,8 @@ TEST_CASE("gh#120: read_file lines are an ordered array not a keyed object",
     // RED before fix: lines is a json::object, not an array.
     REQUIRE(result["lines"].is_array());
     // Natural order: index 0 is the first physical line, index 9 is line 10.
-    CHECK(result["lines"][0].get<std::string>() == "line 1");
-    CHECK(result["lines"][9].get<std::string>() == "line 10");
+    CHECK(result["lines"][0]["content"].get<std::string>() == "line 1");
+    CHECK(result["lines"][9]["content"].get<std::string>() == "line 10");
 }
 
 // ── gh#126 (v2.10.0): glob path matching — relative path + ** pattern ────────
@@ -1263,7 +1256,7 @@ TEST_CASE("gh#126: glob ** pattern matches files at root and in subdirectories",
 
     json args;
     args["pattern"] = "**/*.cpp";
-    auto result = json::parse(raw_result(server.execute("glob", args.dump())));
+    auto result = json::parse(raw_result(server.execute("glob", args.dump())))["paths"];
 
     fs::current_path(prev_cwd);
 
@@ -1287,7 +1280,7 @@ TEST_CASE("gh#126: glob with directory prefix matches only files in that subdir"
 
     json args;
     args["pattern"] = "src/*.cpp";
-    auto result = json::parse(raw_result(server.execute("glob", args.dump())));
+    auto result = json::parse(raw_result(server.execute("glob", args.dump())))["paths"];
 
     fs::current_path(prev_cwd);
 

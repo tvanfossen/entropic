@@ -46,5 +46,78 @@
       "stages",
       "task"
     ]
+  },
+  "outputSchema": {
+    "oneOf": [
+      {
+        "title": "dispatched",
+        "type": "object",
+        "required": [
+          "action",
+          "stages",
+          "task",
+          "context"
+        ],
+        "properties": {
+          "action": {
+            "enum": [
+              "pipeline"
+            ]
+          },
+          "stages": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "task": {
+            "type": "string"
+          },
+          "context": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "required": [
+                "path",
+                "lines",
+                "note"
+              ],
+              "properties": {
+                "path": {
+                  "type": "string"
+                },
+                "lines": {
+                  "type": "string"
+                },
+                "note": {
+                  "type": "string"
+                }
+              }
+            },
+            "description": "the usable `context` references passed on (entries without a path are dropped)"
+          }
+        }
+      },
+      {
+        "title": "error",
+        "type": "object",
+        "required": [
+          "error",
+          "message"
+        ],
+        "properties": {
+          "error": {
+            "enum": [
+              "too_few_stages",
+              "unknown_stage",
+              "requires_context"
+            ]
+          },
+          "message": {
+            "type": "string"
+          }
+        }
+      }
+    ]
   }
 }

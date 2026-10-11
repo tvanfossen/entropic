@@ -472,32 +472,37 @@ bool ExternalMCPClient::query_tools() {
 
 /**
  * @brief Extract text content from tools/call JSON-RPC response.
+ *
+ * gh#190 (v2.14.0): a result flagged `isError: true` — MCP's signal that
+ * the tool ran and failed or declined — is prefixed "Error: ", so the
+ * engine's one classifier counts it as a failure. It used to be dropped,
+ * and a polite refusal read as success.
+ *
  * @param response_json Raw JSON-RPC response.
- * @return Extracted text, or error message.
+ * @return Extracted text ("Error: "-prefixed when isError), or an error
+ *         message for a JSON-RPC error or an unparseable response.
  * @utility
- * @version 1.8.7
+ * @version 2.14.0
  */
 std::string ExternalMCPClient::extract_tool_result(
     const std::string& response_json) {
-
+    std::string text;
     try {
         auto j = nlohmann::json::parse(response_json);
         if (j.contains("error")) {
-            return "Error: " + j["error"]["message"]
-                .get<std::string>();
+            return "Error: " + j["error"]["message"].get<std::string>();
         }
-
-        auto& content = j.at("result").at("content");
-        std::string text;
-        for (const auto& item : content) {
+        const auto& result = j.at("result");
+        for (const auto& item : result.at("content")) {
             if (item.value("type", "") == "text") {
                 text += item.at("text").get<std::string>();
             }
         }
-        return text;
+        if (result.value("isError", false)) { text = "Error: " + text; }
     } catch (const nlohmann::json::exception& e) {
-        return "Error parsing response: " + std::string(e.what());
+        text = "Error parsing response: " + std::string(e.what());
     }
+    return text;
 }
 
 /**

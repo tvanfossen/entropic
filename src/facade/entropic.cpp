@@ -1538,24 +1538,38 @@ static char* sp_get_docs(const char* section, void* ud) {
 
 /**
  * @brief State provider: search_delegations (gh#32, v2.1.6).
+ * @callback
  *
  * Substring-search past delegation result summaries via the SQLite
- * storage backend. Returns NULL if no storage is configured.
+ * storage backend. v2.14.0 (gh#203): returns the shape i_mcp_server.h
+ * declares — `{delegation_id, target_tier, summary, completed_at}` per
+ * record — instead of storage's raw rows (`id`, `result_summary`, ...).
  *
- * @callback
- * @version 2.1.6
+ * @param query Substring to match.
+ * @param max_results Maximum records.
+ * @param ud Engine handle.
+ * @return JSON array (caller frees), or NULL when no storage is configured.
+ * @version 2.14.0
  */
 static char* sp_search_delegations(
         const char* query, int max_results, void* ud) {
     auto* h = static_cast<entropic_engine*>(ud);
-    if (h == nullptr || !h->storage || query == nullptr) {
-        return nullptr;
-    }
     std::string out;
-    if (!h->storage->search_delegations(query, max_results, out)) {
+    if (h == nullptr || !h->storage || query == nullptr
+        || !h->storage->search_delegations(query, max_results, out)) {
         return nullptr;
     }
-    return strdup(out.c_str());
+    auto rows = nlohmann::json::parse(out, nullptr, false);
+    nlohmann::json records = nlohmann::json::array();
+    for (const auto& r : rows.is_array() ? rows : nlohmann::json::array()) {
+        nlohmann::json rec;
+        rec["delegation_id"] = r.value("id", "");
+        rec["target_tier"] = r.value("target_tier", "");
+        rec["summary"] = r.value("result_summary", "");
+        rec["completed_at"] = r.value("completed_at", "");
+        records.push_back(std::move(rec));
+    }
+    return strdup(records.dump().c_str());
 }
 
 /**

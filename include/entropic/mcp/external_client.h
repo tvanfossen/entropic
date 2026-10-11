@@ -58,6 +58,15 @@ public:
     bool connect();
 
     /**
+     * @brief Bound for bringing the server up: initialize + tools/list
+     *        (gh#175, v2.14.0). Applies to the first connect and to every
+     *        HealthMonitor reconnect. Default INIT_TIMEOUT_MS.
+     * @param ms Milliseconds; 0 is ignored (the default stays).
+     * @version 2.14.0
+     */
+    void set_init_timeout_ms(uint32_t ms);
+
+    /**
      * @brief Disconnect: close transport.
      * @version 1.8.7
      */
@@ -149,6 +158,8 @@ private:
 
     static constexpr uint32_t DEFAULT_TIMEOUT_MS = 30000; ///< Default tool call timeout
     static constexpr uint32_t INIT_TIMEOUT_MS = 10000;    ///< Initialize handshake timeout
+    /// @brief Bring-up bound in effect (gh#175); set_init_timeout_ms() sets it.
+    uint32_t init_timeout_ms_ = INIT_TIMEOUT_MS;
 
     /**
      * @brief Build a JSON-RPC 2.0 request envelope.

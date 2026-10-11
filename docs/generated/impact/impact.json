@@ -1,21 +1,5 @@
 [
   {
-    "req_id": "REQ-BRIDGE-001",
-    "req_name": "External bridge exposes the engine over a peer-authenticated unix socket",
-    "functions": [
-      {
-        "name": "start_external_bridge",
-        "file": "src/facade/entropic.cpp",
-        "version": "2.14.0"
-      },
-      {
-        "name": "bridge_project_dir",
-        "file": "src/facade/entropic_mcp.cpp",
-        "version": "2.14.0"
-      }
-    ]
-  },
-  {
     "req_id": "REQ-CFG-001",
     "req_name": "Layered configuration resolution with most-specific-layer-wins precedence",
     "functions": [
@@ -49,17 +33,116 @@
     ]
   },
   {
+    "req_id": "REQ-MCP-002",
+    "req_name": "Tool results always cross boundaries as a ServerResponse JSON envelope",
+    "functions": [
+      {
+        "name": "route_external_or_unknown",
+        "file": "src/mcp/server_manager.cpp",
+        "version": "2.14.0"
+      }
+    ]
+  },
+  {
+    "req_id": "REQ-MCP-005",
+    "req_name": "Configured plugins load loudly or fail loudly \u2014 never silently skipped",
+    "functions": [
+      {
+        "name": "load_plugins",
+        "file": "src/mcp/server_manager.cpp",
+        "version": "2.14.0"
+      }
+    ]
+  },
+  {
+    "req_id": "REQ-MCP-006",
+    "req_name": "Plugin instances get serialised calls and ordered teardown",
+    "functions": [
+      {
+        "name": "shutdown",
+        "file": "src/mcp/server_manager.cpp",
+        "version": "2.14.0"
+      }
+    ]
+  },
+  {
+    "req_id": "REQ-MCP-007",
+    "req_name": "Tool calls route by server prefix uniformly across all three server kinds",
+    "functions": [
+      {
+        "name": "query_tools",
+        "file": "src/mcp/external_client.cpp",
+        "version": "2.14.0"
+      },
+      {
+        "name": "append_external_tools",
+        "file": "src/mcp/server_manager.cpp",
+        "version": "2.14.0"
+      },
+      {
+        "name": "external_tools_without_readonly_hint",
+        "file": "src/mcp/server_manager.cpp",
+        "version": "2.14.0"
+      },
+      {
+        "name": "list_tools",
+        "file": "src/mcp/server_manager.cpp",
+        "version": "2.14.0"
+      },
+      {
+        "name": "server_names",
+        "file": "src/mcp/server_manager.cpp",
+        "version": "2.14.0"
+      },
+      {
+        "name": "route_external_or_unknown",
+        "file": "src/mcp/server_manager.cpp",
+        "version": "2.14.0"
+      },
+      {
+        "name": "connect_external_server",
+        "file": "src/mcp/server_manager.cpp",
+        "version": "2.14.0"
+      },
+      {
+        "name": "list_server_info",
+        "file": "src/mcp/server_manager.cpp",
+        "version": "2.14.0"
+      }
+    ]
+  },
+  {
     "req_id": "REQ-MCP-025",
     "req_name": "External servers are discovered safely, directive-stripped, and health-monitored",
     "functions": [
       {
-        "name": "expected_bridge_socket",
-        "file": "src/facade/entropic_mcp.cpp",
+        "name": "send_initialize",
+        "file": "src/mcp/external_client.cpp",
         "version": "2.14.0"
       },
       {
-        "name": "wire_external_server_policy",
-        "file": "src/facade/entropic_mcp.cpp",
+        "name": "query_tools",
+        "file": "src/mcp/external_client.cpp",
+        "version": "2.14.0"
+      },
+      {
+        "name": "set_init_timeout_ms",
+        "file": "src/mcp/external_client.cpp",
+        "version": "2.14.0"
+      },
+      {
+        "name": "shutdown",
+        "file": "src/mcp/server_manager.cpp",
+        "version": "2.14.0"
+      },
+      {
+        "name": "interrupt_external_tools",
+        "file": "src/mcp/server_manager.cpp",
+        "version": "2.14.0"
+      },
+      {
+        "name": "clear_external_tool_interrupts",
+        "file": "src/mcp/server_manager.cpp",
         "version": "2.14.0"
       },
       {
@@ -76,17 +159,32 @@
         "name": "set_own_bridge_socket",
         "file": "src/mcp/server_manager.cpp",
         "version": "2.14.0"
+      },
+      {
+        "name": "connect_and_register_external",
+        "file": "src/mcp/server_manager.cpp",
+        "version": "2.14.0"
+      },
+      {
+        "name": "connect_external_server",
+        "file": "src/mcp/server_manager.cpp",
+        "version": "2.14.0"
       }
     ]
   },
   {
-    "req_id": "REQ-MCP-027",
-    "req_name": "Named workspaces bind a session to its own tool root and servers",
+    "req_id": "REQ-MCP-026",
+    "req_name": "A JSON-RPC response is paired with the request that asked for it",
     "functions": [
       {
-        "name": "build_workspace",
-        "file": "src/facade/entropic_mcp.cpp",
-        "version": "2.14.0 [reviewed]"
+        "name": "send_initialize",
+        "file": "src/mcp/external_client.cpp",
+        "version": "2.14.0"
+      },
+      {
+        "name": "query_tools",
+        "file": "src/mcp/external_client.cpp",
+        "version": "2.14.0"
       }
     ]
   }

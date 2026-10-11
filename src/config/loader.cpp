@@ -724,6 +724,26 @@ static void parse_mcpjson_enablement(ryml::ConstNodeRef node,
 }
 
 /**
+ * @brief Refuse a server_timeout_seconds that cannot bound anything (gh#175).
+ *
+ * A bound that was never consulted was a false contract; one that now is must
+ * be a usable value, and a bad one is said loudly rather than clamped.
+ *
+ * @param config Parsed MCP config.
+ * @return Empty when valid, else the error.
+ * @dg_internal
+ * @version 2.14.0
+ */
+static std::string validate_server_timeout(const MCPConfig& config) {
+    std::string err;
+    if (config.server_timeout_seconds < 1) {
+        err = "mcp.server_timeout_seconds: must be a positive number of "
+              "seconds, got " + std::to_string(config.server_timeout_seconds);
+    }
+    return err;
+}
+
+/**
  * @brief Parse the MCP section's per-server sub-sections (v2.13.0).
  *
  * Split out of parse_mcp_config when `mcp.bash` joined `filesystem` and
@@ -763,7 +783,7 @@ static std::string parse_mcp_sections(
  *         propagates the filesystem section's error, which used to be
  *         dropped here, and the bash section's.
  * @dg_internal
- * @version 2.13.0 [reviewed]
+ * @version 2.14.0
  */
 static std::string parse_mcp_config(
     ryml::ConstNodeRef node,
@@ -787,7 +807,8 @@ static std::string parse_mcp_config(
             config.plugins.push_back(expand_home(std::filesystem::path(p)));
         }
     }
-    return parse_mcp_sections(node, config);
+    auto err = parse_mcp_sections(node, config);
+    return err.empty() ? validate_server_timeout(config) : err;
 }
 
 /**

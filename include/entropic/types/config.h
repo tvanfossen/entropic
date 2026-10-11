@@ -942,10 +942,19 @@ struct MCPConfig {
     FilesystemConfig filesystem;     ///< Filesystem server config
     BashConfig bash;                 ///< Bash server config (v2.13.0)
     ExternalMCPConfig external;      ///< External MCP server config (Entropic-as-server)
-    /// Parsed since v1.8.1 and read by NOTHING in the C++ engine — the bash
-    /// limit is `bash.timeout_seconds`, external tool calls use
-    /// `tool_call_timeout_ms`. Kept only so existing configs still load.
-    int server_timeout_seconds = 30;
+    /// @brief Seconds an external MCP server gets to come up: the initialize
+    /// handshake and its tools/list, on first connect and on every reconnect
+    /// (gh#175, v2.14.0). Must be >= 1.
+    ///
+    /// Parsed since v1.8.1 and read by nothing until v2.14.0, while a
+    /// hardcoded 10 s bounded bring-up instead. The default is 10 so that
+    /// wiring the key changes no deployment's behaviour — the old default of
+    /// 30 never did anything. It matters more from v2.14.0: configure now
+    /// connects external servers synchronously (gh#199), so this is how long a
+    /// hung server can hold configure. Unrelated to `bash.timeout_seconds`
+    /// (the bash tool's own limit).
+    /// @version 2.14.0
+    int server_timeout_seconds = 10;
     std::string working_dir;         ///< Server working directory (empty = CWD) (v2.0.4)
 
     /**

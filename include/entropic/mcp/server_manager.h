@@ -27,6 +27,7 @@
 #include <chrono>
 #include <filesystem>
 #include <map>
+#include <shared_mutex>
 #include <memory>
 #include <string>
 #include <vector>
@@ -566,8 +567,45 @@ private:
     std::map<std::string, std::unique_ptr<PluginServer>> plugin_servers_; ///< Name → loaded plugin
 
     /* ── v1.8.7: External server state ─────────────────── */
-    std::map<std::string, std::unique_ptr<ExternalMCPClient>> external_clients_; ///< Name → external client
-    std::map<std::string, ServerInfo> server_info_;                               ///< All server info
+    /// @brief Name → external client. SHARED ownership (gh#171, v2.14.0): a
+    /// routed call holds its own reference, so a disconnect landing mid-call
+    /// cannot destroy the client under it. Guarded by external_mutex_.
+    std::map<std::string, std::shared_ptr<ExternalMCPClient>> external_clients_;
+    std::map<std::string, ServerInfo> server_info_;  ///< All server info; guarded by external_mutex_
+
+    /**
+     * @brief Guards external_clients_ and server_info_ (gh#171, v2.14.0).
+     *
+     * The only registry maps that change after configure: runtime
+     * entropic_register_mcp_server / deregister, routine once one host serves
+     * many clients. A LEAF lock — held only to copy entries in or out, never
+     * across I/O, a tool call, or another lock — so it cannot enter a cycle
+     * with root_lock_ or the engine's generation lock (gh#158 lock order).
+     * servers_ and plugin_servers_ stay unlocked: they are written only during
+     * configuration, before any run exists.
+     */
+    /// Owned through a pointer for the same reason as root_lock_: a lock
+    /// cannot move and a ServerManager can.
+    std::unique_ptr<std::shared_mutex> external_mutex_ =
+        std::make_unique<std::shared_mutex>();
+
+    /**
+     * @brief Snapshot the external clients under a shared lock (gh#171).
+     * @return (name, client) pairs; callers use them with no lock held.
+     * @dg_internal
+     * @version 2.14.0
+     */
+    std::vector<std::pair<std::string, std::shared_ptr<ExternalMCPClient>>>
+    external_snapshot() const;
+
+    /**
+     * @brief Look up one external client under a shared lock (gh#171).
+     * @param name Server name.
+     * @return The client, or null when not registered.
+     * @dg_internal
+     * @version 2.14.0
+     */
+    std::shared_ptr<ExternalMCPClient> find_external(const std::string& name) const;
     std::unique_ptr<HealthMonitor> health_monitor_;                               ///< Health monitoring
     std::unique_ptr<MCPJsonDiscovery> mcp_json_discovery_;                        ///< .mcp.json discovery
     MCPConfig mcp_config_;                                                        ///< MCP configuration
@@ -643,7 +681,7 @@ private:
      * @utility
      * @version 1.8.7
      */
-    void connect_and_register_external(
+    std::shared_ptr<ExternalMCPClient> connect_and_register_external(
         const std::string& name,
         std::unique_ptr<ExternalMCPClient> client,
         const std::string& source,

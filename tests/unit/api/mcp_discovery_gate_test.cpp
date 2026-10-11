@@ -269,3 +269,17 @@ SCENARIO("v2.14.0: the pre-connect hook decides what config left open",
         }
     }
 }
+
+SCENARIO("gh#175: a non-positive mcp.server_timeout_seconds is refused at configure",
+         "[api][mcp][gh175][2.14.0]") {
+    GIVEN("server_timeout_seconds set to 0") {
+        entropic_handle_t h = nullptr;
+        REQUIRE(entropic_create(&h) == ENTROPIC_OK);
+        const auto rc = entropic_configure(
+            h, R"({"log_level":"WARN","mcp":{"server_timeout_seconds":0}})");
+        THEN("configure fails loudly instead of bounding nothing") {
+            CHECK(rc != ENTROPIC_OK);
+        }
+        entropic_destroy(h);
+    }
+}

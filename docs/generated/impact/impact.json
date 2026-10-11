@@ -1,47 +1,70 @@
 [
   {
-    "req_id": "REQ-LOOP-006",
-    "req_name": "Interrupt and pause semantics across nested loops",
+    "req_id": "REQ-API-009",
+    "req_name": "Run entry-point family, result contract, and cross-thread interruptibility",
     "functions": [
       {
-        "name": "poll_stop",
-        "file": "src/mcp/servers/bash.cpp",
+        "name": "entropic_run_session_streaming",
+        "file": "src/facade/entropic.cpp",
+        "version": "2.14.0"
+      },
+      {
+        "name": "entropic_run_session_streaming_as",
+        "file": "src/facade/entropic.cpp",
         "version": "2.14.0"
       }
     ]
   },
   {
-    "req_id": "REQ-MCP-023",
-    "req_name": "Bash and git servers gate on operator approval, not command pattern matching; bash enforces a timeout on the whole process group",
+    "req_id": "REQ-BRIDGE-001",
+    "req_name": "External bridge exposes the engine over a peer-authenticated unix socket",
     "functions": [
       {
-        "name": "poll_stop",
-        "file": "src/mcp/servers/bash.cpp",
+        "name": "start_external_bridge",
+        "file": "src/facade/entropic.cpp",
+        "version": "2.14.0"
+      }
+    ]
+  },
+  {
+    "req_id": "REQ-IDEN-001",
+    "req_name": "Tier resolution contract and per-tier loop overrides",
+    "functions": [
+      {
+        "name": "entropic_run_session_streaming_as",
+        "file": "src/facade/entropic.cpp",
+        "version": "2.14.0"
+      }
+    ]
+  },
+  {
+    "req_id": "REQ-LOOP-001",
+    "req_name": "Agent state machine with observable, dual-channel transitions",
+    "functions": [
+      {
+        "name": "run_streaming",
+        "file": "src/core/engine.cpp",
         "version": "2.14.0"
       },
       {
-        "name": "collect_until_exit",
-        "file": "src/mcp/servers/bash.cpp",
+        "name": "run_streaming",
+        "file": "src/core/engine.cpp",
+        "version": "2.14.0"
+      }
+    ]
+  },
+  {
+    "req_id": "REQ-LOOP-008",
+    "req_name": "Family-aware streaming reasoning filter with UTF-8 alignment",
+    "functions": [
+      {
+        "name": "run_streaming",
+        "file": "src/core/engine.cpp",
         "version": "2.14.0"
       },
       {
-        "name": "run_shell",
-        "file": "src/mcp/servers/bash.cpp",
-        "version": "2.14.0"
-      },
-      {
-        "name": "cancelled_error",
-        "file": "src/mcp/servers/bash.cpp",
-        "version": "2.14.0"
-      },
-      {
-        "name": "shell_result",
-        "file": "src/mcp/servers/bash.cpp",
-        "version": "2.14.0"
-      },
-      {
-        "name": "execute",
-        "file": "src/mcp/servers/bash.cpp",
+        "name": "run_streaming",
+        "file": "src/core/engine.cpp",
         "version": "2.14.0"
       }
     ]

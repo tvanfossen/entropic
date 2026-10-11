@@ -1179,6 +1179,47 @@ ENTROPIC_EXPORT entropic_error_t entropic_run_session_streaming(
     int* cancel_flag);
 
 /**
+ * @brief Streaming turn on a named session, under a named tier (gh#205).
+ *
+ * The streaming counterpart of entropic_run_session_as(): the turn is locked
+ * to `tier_or_identity` with exactly its semantics (the tier's grammar and
+ * samplers apply to this turn; its system prompt is seeded only on an empty
+ * conversation). This is what lets ONE host serve several output contracts —
+ * before it, a streaming caller could not pick a tier at all, so a consumer
+ * needing two tiers ran two hosts.
+ *
+ * A set `cancel_flag` stops THIS turn only, never another session's (v2.14.0;
+ * the same now holds for entropic_run_session_streaming()).
+ *
+ * Additive: ENTROPIC_API_VERSION does not move.
+ *
+ * @param handle Engine handle.
+ * @param session_key Session to run under; NULL or "" = default session.
+ * @param tier_or_identity Tier (or identity) to lock this turn to.
+ * @param input Null-terminated user input.
+ * @param on_token Per-token callback.
+ * @param user_data Forwarded to on_token.
+ * @param cancel_flag Optional cancel flag (NULL for none).
+ * @return ENTROPIC_OK; ENTROPIC_ERROR_CANCELLED when cancelled;
+ *         ENTROPIC_ERROR_IDENTITY_NOT_FOUND for an unknown tier;
+ *         ENTROPIC_ERROR_ALREADY_RUNNING when this session has a turn in
+ *         flight; ENTROPIC_ERROR_INVALID_ARGUMENT for a NULL tier, input or
+ *         callback.
+ * @threadsafety NOT serialized. See entropic_run_session().
+ * @req REQ-API-009
+ * @req REQ-IDEN-001
+ * @version 2.14.0
+ */
+ENTROPIC_EXPORT entropic_error_t entropic_run_session_streaming_as(
+    entropic_handle_t handle,
+    const char* session_key,
+    const char* tier_or_identity,
+    const char* input,
+    void (*on_token)(const char* token, size_t len, void* user_data),
+    void* user_data,
+    int* cancel_flag);
+
+/**
  * @brief Read one session's conversation as a JSON array (gh#144).
  * @param handle Engine handle.
  * @param session_key Session to read; NULL or "" = default session.

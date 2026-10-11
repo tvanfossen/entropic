@@ -3981,22 +3981,62 @@ std::vector<Message> AgentEngine::run_turn(std::vector<Message> new_messages) {
     return result;
 }
 
+namespace {
+
+/// @brief What a streaming turn's chunk callback needs (v2.14.0).
+struct StreamChunkCtx {
+    StreamThinkFilter* filter;  ///< Consumer-facing filter
+    int* cancel;                ///< Consumer's cancel flag, nullable
+    AgentEngine* engine;        ///< Fallback interrupt target
+};
+
+/**
+ * @brief Chunk callback shared by both run_streaming overloads.
+ *
+ * gh#205 (v2.14.0): a set cancel flag stops THIS run only, through
+ * cancel_current_run(). Both overloads used to call AgentEngine::interrupt(),
+ * which is handle-wide by design (gh#158) — so on a host serving several
+ * clients, one client cancelling its stream killed every other client's turn.
+ * gh#158 moved the pause-prompt site and missed these two, which were also
+ * byte-identical copies of each other. The handle-wide interrupt remains the
+ * fallback only when no run scope is installed on this thread.
+ *
+ * @param t Chunk text.
+ * @param l Chunk length.
+ * @param ud StreamChunkCtx.
+ * @callback
+ * @version 2.14.0
+ */
+void on_stream_chunk(const char* t, size_t l, void* ud) {
+    auto* c = static_cast<StreamChunkCtx*>(ud);
+    if (c->cancel != nullptr && *c->cancel != 0) {
+        if (!entropic::cancel_current_run()) { c->engine->interrupt(); }
+        return;
+    }
+    c->filter->on_token(t, l);
+}
+
+}  // namespace
+
 /**
  * @brief Run a streaming conversation turn (stateful).
  * @param input User input.
  * @param on_token Consumer callback (filtered, UTF-8 aligned).
  * @param user_data Consumer context.
  * @param cancel_flag Polled per-token, nullable.
+ * @param tier Tier or identity to lock this turn to; "" routes
+ *             as usual (gh#205, v2.14.0).
  * @return 0=OK, 1=cancelled, 2=error.
  * @req REQ-LOOP-001
  * @req REQ-LOOP-008
- * @version 2.0.2
+ * @version 2.14.0
  */
 int AgentEngine::run_streaming(
     const std::string& input,
     TokenCallback on_token,
     void* user_data,
-    int* cancel_flag)
+    int* cancel_flag,
+    const std::string& tier)
 {
     if (session_logger_) {
         session_logger_->log_user_input(input);
@@ -4009,26 +4049,14 @@ int AgentEngine::run_streaming(
             session_logger_);
     }
 
-    struct Ctx {
-        StreamThinkFilter* filter;
-        int* cancel;
-        AgentEngine* engine;
-    };
-    Ctx sctx{&filter, cancel_flag, this};
-
+    StreamChunkCtx sctx{&filter, cancel_flag, this};
     EngineCallbacks cbs{};
-    cbs.on_stream_chunk = [](const char* t, size_t l, void* ud) {
-        auto* c = static_cast<Ctx*>(ud);
-        if (c->cancel && *c->cancel) {
-            c->engine->interrupt();
-            return;
-        }
-        c->filter->on_token(t, l);
-    };
+    cbs.on_stream_chunk = on_stream_chunk;
     cbs.user_data = &sctx;
     set_callbacks(cbs);
 
-    auto result = run_turn(input);
+    // gh#205: a tier (or identity) locks this turn exactly as run_turn_as does.
+    auto result = tier.empty() ? run_turn(input) : run_turn_as(tier, input);
     filter.flush();
 
     if (session_logger_) {
@@ -4070,7 +4098,7 @@ static std::string concat_user_echo(
  * @return 0=OK, 1=cancelled, 2=error.
  * @req REQ-LOOP-001
  * @req REQ-LOOP-008
- * @version 2.1.8
+ * @version 2.14.0
  */
 int AgentEngine::run_streaming(
     std::vector<Message> new_messages,
@@ -4089,22 +4117,9 @@ int AgentEngine::run_streaming(
             session_logger_);
     }
 
-    struct Ctx {
-        StreamThinkFilter* filter;
-        int* cancel;
-        AgentEngine* engine;
-    };
-    Ctx sctx{&filter, cancel_flag, this};
-
+    StreamChunkCtx sctx{&filter, cancel_flag, this};
     EngineCallbacks cbs{};
-    cbs.on_stream_chunk = [](const char* t, size_t l, void* ud) {
-        auto* c = static_cast<Ctx*>(ud);
-        if (c->cancel && *c->cancel) {
-            c->engine->interrupt();
-            return;
-        }
-        c->filter->on_token(t, l);
-    };
+    cbs.on_stream_chunk = on_stream_chunk;
     cbs.user_data = &sctx;
     set_callbacks(cbs);
 

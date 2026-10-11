@@ -600,14 +600,18 @@ public:
      * @param input User input string.
      * @param on_token Consumer token callback (receives filtered UTF-8).
      * @param user_data Consumer callback context.
-     * @param cancel_flag Polled per-token, nullable.
+     * @param cancel_flag Polled per-token, nullable. A set flag stops THIS
+     *        run only (v2.14.0, gh#205), never other sessions' runs.
+     * @param tier Tier or identity to lock this turn to, with the semantics
+     *        of run_turn_as(); "" (the default) routes as usual.
      * @return 0 on success, 1 if cancelled, 2 on error.
-     * @version 2.0.2
+     * @version 2.14.0
      */
     int run_streaming(const std::string& input,
                       TokenCallback on_token,
                       void* user_data,
-                      int* cancel_flag);
+                      int* cancel_flag,
+                      const std::string& tier = "");
 
     /**
      * @brief Streaming conversation turn from a pre-built message list (gh#37).

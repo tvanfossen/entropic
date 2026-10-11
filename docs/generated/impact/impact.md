@@ -2,7 +2,10 @@
 
 | REQ | Name | Functions Changed |
 |-----|------|-------------------|
-| REQ-LOOP-006 | Interrupt and pause semantics across nested loops | poll_stop |
-| REQ-MCP-023 | Bash and git servers gate on operator approval, not command pattern matching; bash enforces a timeout on the whole process group | poll_stop, collect_until_exit, run_shell, cancelled_error, shell_result, execute |
+| REQ-API-009 | Run entry-point family, result contract, and cross-thread interruptibility | entropic_run_session_streaming, entropic_run_session_streaming_as |
+| REQ-BRIDGE-001 | External bridge exposes the engine over a peer-authenticated unix socket | start_external_bridge |
+| REQ-IDEN-001 | Tier resolution contract and per-tier loop overrides | entropic_run_session_streaming_as |
+| REQ-LOOP-001 | Agent state machine with observable, dual-channel transitions | run_streaming, run_streaming |
+| REQ-LOOP-008 | Family-aware streaming reasoning filter with UTF-8 alignment | run_streaming, run_streaming |
 
-**Total: 2 requirement(s) affected, 7 function(s) changed**
+**Total: 5 requirement(s) affected, 8 function(s) changed**

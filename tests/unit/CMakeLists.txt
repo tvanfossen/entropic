@@ -561,6 +561,8 @@ add_executable(entropic-api-tests
     # v2.14.0 (gh#199, gh#200): external MCP servers connect only when an
     # operator enabled them; YAML external_servers finally connect.
     api/mcp_discovery_gate_test.cpp
+    # gh#205 (v2.14.0): streaming under a named tier — argument contract.
+    api/run_session_streaming_as_test.cpp
     # gh#158 (v2.13.0): the built-in servers' own state — read tracker and
     # working directory — shared by concurrent sessions on the default set.
     api/builtin_server_sharing_test.cpp

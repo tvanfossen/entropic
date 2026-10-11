@@ -11,6 +11,8 @@
 #include <catch2/catch_test_macros.hpp>
 #include <nlohmann/json.hpp>
 
+#include <chrono>
+
 using namespace entropic;
 
 // ── Test fixtures ────────────────────────────────────────
@@ -346,4 +348,33 @@ TEST_CASE("gh#160: only an explicit readOnlyHint counts as read-only",
 
     // Unparseable input yields no false accusations.
     CHECK(ServerManager::tools_without_readonly_hint("not json", {}).empty());
+}
+
+SCENARIO("gh#175: mcp.server_timeout_seconds bounds an external server's bring-up",
+         "[server_manager][external][gh175][2.14.0]") {
+    // Parsed since v1.8.1, read by nothing: the initialize handshake was
+    // bounded by a hardcoded 10 s whatever an operator wrote. Since v2.14.0
+    // configure connects external servers synchronously (gh#199), so this
+    // bound is how long a hung server can hold configure.
+    GIVEN("a stdio 'server' that never answers, and a 1-second bound") {
+        PermissionsConfig perms;
+        ServerManager mgr(perms, "/tmp");
+        MCPConfig cfg;
+        cfg.server_timeout_seconds = 1;
+        mgr.set_mcp_config(cfg);
+
+        WHEN("it is connected") {
+            const auto t0 = std::chrono::steady_clock::now();
+            auto tools = mgr.connect_external_server(
+                "mute", "/bin/sh", {"-c", "sleep 30"});
+            const auto secs = std::chrono::duration<double>(
+                std::chrono::steady_clock::now() - t0).count();
+            THEN("it gives up after about the configured bound, not 10 s") {
+                INFO("connect took " << secs << " s");
+                CHECK(tools.empty());
+                CHECK(secs < 4.0);
+            }
+        }
+        mgr.shutdown();
+    }
 }

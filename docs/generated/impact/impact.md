@@ -2,11 +2,7 @@
 
 | REQ | Name | Functions Changed |
 |-----|------|-------------------|
-| REQ-BRIDGE-001 | External bridge exposes the engine over a peer-authenticated unix socket | start_external_bridge, bridge_project_dir |
-| REQ-CFG-001 | Layered configuration resolution with most-specific-layer-wins precedence | load_layered |
-| REQ-CFG-002 | Whole-block replace semantics for models and routing across layers | load_layered |
-| REQ-CFG-007 | Usable configuration with no user config present | load_layered |
-| REQ-MCP-025 | External servers are discovered safely, directive-stripped, and health-monitored | expected_bridge_socket, wire_external_server_policy, initialize_external_servers, set_discovered_server_approver, set_own_bridge_socket |
-| REQ-MCP-027 | Named workspaces bind a session to its own tool root and servers | build_workspace |
+| REQ-LOOP-006 | Interrupt and pause semantics across nested loops | poll_stop |
+| REQ-MCP-023 | Bash and git servers gate on operator approval, not command pattern matching; bash enforces a timeout on the whole process group | poll_stop, collect_until_exit, run_shell, cancelled_error, shell_result, execute |
 
-**Total: 6 requirement(s) affected, 11 function(s) changed**
+**Total: 2 requirement(s) affected, 7 function(s) changed**

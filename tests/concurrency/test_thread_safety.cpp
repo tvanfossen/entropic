@@ -19,6 +19,7 @@
 #include <entropic/core/compaction.h>
 #include <entropic/core/engine.h>
 #include <entropic/mcp/external_client.h>
+#include <entropic/mcp/server_manager.h>
 #include <entropic/mcp/transport.h>
 #include "mock_inference.h"
 #include <catch2/catch_test_macros.hpp>
@@ -973,5 +974,49 @@ SCENARIO("gh#158: an unkeyed context read during a starting run cannot abort",
                 CHECK(reads.load() > 0);
             }
         }
+    }
+}
+
+// ── gh#171 (v2.14.0): external registry under runtime connect/disconnect ──
+
+SCENARIO("gh#171: an external server can come and go while runs route calls",
+         "[concurrency][mcp][gh171][2.14.0]") {
+    // ServerManager's external registry had no lock. Two runs only READ it,
+    // which is safe; the hazard is entropic_register_mcp_server /
+    // deregister landing MID-TURN — routine once one host serves many
+    // clients (v2.14.0). TSan is the judge: on the unlocked map it reports
+    // the race between the router's find and the churn's insert/erase.
+    GIVEN("a manager with one steady external server") {
+        entropic::PermissionsConfig perms;
+        entropic::ServerManager mgr(perms, "/tmp");
+        REQUIRE_FALSE(mgr.connect_external_server(
+            "steady", MOCK_MCP_SERVER_PATH).empty());
+
+        WHEN("one thread routes and lists while another connects and "
+             "disconnects a second server") {
+            std::atomic<bool> stop{false};
+            std::atomic<int> answered{0};
+            std::thread router([&] {
+                while (!stop.load()) {
+                    auto r = mgr.execute("steady.echo", R"({"text":"x"})");
+                    if (r.find("x") != std::string::npos) { ++answered; }
+                    (void)mgr.list_tools();
+                    (void)mgr.server_names();
+                }
+            });
+            for (int i = 0; i < 8; ++i) {
+                (void)mgr.connect_external_server("churn", MOCK_MCP_SERVER_PATH);
+                mgr.disconnect_external_server("churn");
+            }
+            stop = true;
+            router.join();
+
+            THEN("the steady server kept answering throughout") {
+                CHECK(answered.load() > 0);
+                auto r = mgr.execute("steady.echo", R"({"text":"after"})");
+                CHECK(r.find("after") != std::string::npos);
+            }
+        }
+        mgr.shutdown();
     }
 }

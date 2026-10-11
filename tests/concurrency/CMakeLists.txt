@@ -26,5 +26,11 @@ target_link_libraries(entropic-concurrency-tests PRIVATE
     Catch2::Catch2WithMain
 )
 
+# gh#171 (v2.14.0): a real external MCP child to connect/disconnect while
+# other threads route through the same ServerManager.
+target_compile_definitions(entropic-concurrency-tests PRIVATE
+    MOCK_MCP_SERVER_PATH="$<TARGET_FILE:mock-mcp-server>")
+add_dependencies(entropic-concurrency-tests mock-mcp-server)
+
 include(Catch)
 catch_discover_tests(entropic-concurrency-tests)

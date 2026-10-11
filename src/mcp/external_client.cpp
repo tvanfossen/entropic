@@ -403,7 +403,7 @@ bool ExternalMCPClient::validate_init_response(
  *         response, or an error object.
  * @req REQ-MCP-025
  * @req REQ-MCP-026
- * @version 2.13.0
+ * @version 2.14.0
  */
 bool ExternalMCPClient::send_initialize() {
     nlohmann::json params;
@@ -416,7 +416,7 @@ bool ExternalMCPClient::send_initialize() {
     auto request = build_request_id(
         "initialize", params.dump(), request_id);
     auto response = transport_->send_request(
-        request, INIT_TIMEOUT_MS);
+        request, init_timeout_ms_);
 
     if (response.empty() || !response_matches(response, request_id)) {
         return false;
@@ -435,13 +435,13 @@ bool ExternalMCPClient::send_initialize() {
  * @req REQ-MCP-025
  * @req REQ-MCP-007
  * @req REQ-MCP-026
- * @version 2.13.0
+ * @version 2.14.0
  */
 bool ExternalMCPClient::query_tools() {
     int request_id = 0;
     auto request = build_request_id("tools/list", "{}", request_id);
     auto response = transport_->send_request(
-        request, INIT_TIMEOUT_MS);
+        request, init_timeout_ms_);
 
     if (response.empty() || !response_matches(response, request_id)) {
         return false;
@@ -530,6 +530,16 @@ std::string ExternalMCPClient::build_response(
         resp["is_error"] = true;
     }
     return resp.dump();
+}
+
+/**
+ * @brief Set the bring-up bound (gh#175).
+ * @param ms Milliseconds; 0 keeps the current bound.
+ * @req REQ-MCP-025
+ * @version 2.14.0
+ */
+void ExternalMCPClient::set_init_timeout_ms(uint32_t ms) {
+    if (ms > 0) { init_timeout_ms_ = ms; }
 }
 
 } // namespace entropic

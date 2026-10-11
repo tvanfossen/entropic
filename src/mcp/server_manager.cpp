@@ -109,7 +109,7 @@ void ServerManager::init_builtins(
  *         collision, ENTROPIC_ERROR_PLUGIN_VERSION_MISMATCH for a
  *         version mismatch.
  * @req REQ-MCP-005
- * @version 2.10.1
+ * @version 2.14.0
  */
 entropic_error_t ServerManager::load_plugins(const MCPConfig& mcp) {
     auto first_error = ENTROPIC_OK;
@@ -125,7 +125,7 @@ entropic_error_t ServerManager::load_plugins(const MCPConfig& mcp) {
         }
 
         auto name = plugin->name();
-        if (servers_.count(name) > 0 || external_clients_.count(name) > 0 ||
+        if (servers_.count(name) > 0 || find_external(name) ||
             plugin_servers_.count(name) > 0) {
             logger->error("Plugin '{}' from {} collides with an already "
                           "registered server of the same name — refusing to "
@@ -232,10 +232,10 @@ void ServerManager::append_plugin_tools(nlohmann::json& all) const {
  * @param[in,out] all Destination array (external tools arrive
  *                pre-prefixed from the client's own cache).
  * @req REQ-MCP-007
- * @version 2.10.1
+ * @version 2.14.0
  */
 void ServerManager::append_external_tools(nlohmann::json& all) const {
-    for (const auto& [name, client] : external_clients_) {
+    for (const auto& [name, client] : external_snapshot()) {
         if (!client->is_connected()) {
             continue;
         }
@@ -368,13 +368,13 @@ std::vector<std::string> ServerManager::tools_without_readonly_hint(
  * @param allowed Allow-list to restrict the check to (empty = all).
  * @return Fully-qualified names of the offending tools.
  * @req REQ-MCP-007
- * @version 2.13.0
+ * @version 2.14.0
  */
 std::vector<std::string>
 ServerManager::external_tools_without_readonly_hint(
         const std::vector<std::string>& allowed) const {
     std::vector<std::string> unsafe;
-    for (const auto& [name, client] : external_clients_) {
+    for (const auto& [name, client] : external_snapshot()) {
         if (!client->is_connected()) { continue; }
         auto found = tools_without_readonly_hint(
             client->list_tools(), allowed);
@@ -394,7 +394,7 @@ ServerManager::external_tools_without_readonly_hint(
  *         and every connected external client; "[]" when nothing is
  *         registered.
  * @req REQ-MCP-007
- * @version 2.10.1
+ * @version 2.14.0
  */
 std::string ServerManager::list_tools() const {
     auto all = nlohmann::json::array();
@@ -409,7 +409,7 @@ std::string ServerManager::list_tools() const {
 
     logger->info("Tool list: {} tools from {} server(s) + {} plugin(s) + "
                  "{} external", all.size(), servers_.size(),
-                 plugin_servers_.size(), external_clients_.size());
+                 plugin_servers_.size(), external_snapshot().size());
     return all.dump();
 }
 
@@ -524,7 +524,7 @@ std::size_t ServerManager::release_session(const std::string& key) {
  *         servers, then dlopen plugins, then external clients
  *         (connected or not); empty when none are registered.
  * @req REQ-MCP-007
- * @version 2.10.1
+ * @version 2.14.0
  */
 std::vector<std::string> ServerManager::server_names() const {
     std::vector<std::string> names;
@@ -534,7 +534,7 @@ std::vector<std::string> ServerManager::server_names() const {
     for (const auto& [name, _] : plugin_servers_) {  // gh#133 (v2.10.1)
         names.push_back(name);
     }
-    for (const auto& [name, _] : external_clients_) {
+    for (const auto& [name, _] : external_snapshot()) {
         names.push_back(name);
     }
     return names;
@@ -675,7 +675,7 @@ std::string ServerManager::route_tool_call(
  *         "Error: Unknown server '<prefix>'" with empty directives.
  * @req REQ-MCP-007
  * @req REQ-MCP-002
- * @version 2.10.1
+ * @version 2.14.0
  */
 std::string ServerManager::route_external_or_unknown(
     const std::string& prefix,
@@ -683,10 +683,11 @@ std::string ServerManager::route_external_or_unknown(
     const std::string& local_name,
     const std::string& args_json) {
 
-    auto ext_it = external_clients_.find(prefix);
-    if (ext_it != external_clients_.end()) {
-        return route_external_call(
-            ext_it->second.get(), tool_name, local_name, args_json);
+    // gh#171: our own reference keeps the client alive for the whole call,
+    // even if a disconnect removes it from the registry meanwhile.
+    if (auto client = find_external(prefix)) {
+        return route_external_call(client.get(), tool_name, local_name,
+                                   args_json);
     }
 
     logger->warn("Unknown server: {}", prefix);
@@ -886,7 +887,7 @@ void ServerManager::add_permission(
  *
  * @req REQ-MCP-006
  * @req REQ-MCP-025
- * @version 2.10.1
+ * @version 2.14.0
  */
 void ServerManager::shutdown() {
     // Stop health monitor first
@@ -894,11 +895,17 @@ void ServerManager::shutdown() {
         health_monitor_->stop();
     }
 
-    // Disconnect external clients
-    for (auto& [name, client] : external_clients_) {
+    // Disconnect external clients — taken out under the lock, disconnected
+    // after it (gh#171: never I/O while holding external_mutex_).
+    std::map<std::string, std::shared_ptr<ExternalMCPClient>> clients;
+    {
+        std::unique_lock<std::shared_mutex> lock(*external_mutex_);
+        clients.swap(external_clients_);
+        server_info_.clear();
+    }
+    for (auto& [name, client] : clients) {
         client->disconnect();
     }
-    external_clients_.clear();
 
     // gh#133 (v2.10.1): destroy plugin instances and dlclose their libraries
     // before the in-process servers, so nothing can call into an unmapped .so.
@@ -908,7 +915,6 @@ void ServerManager::shutdown() {
     // Destroy in-process servers
     logger->info("Shutting down {} MCP servers", servers_.size());
     servers_.clear();
-    server_info_.clear();
 }
 
 /**
@@ -999,10 +1005,10 @@ void ServerManager::set_mcp_config(const MCPConfig& config) {
  * of Ctrl+C instead of running to completion. (P1-10, 2.0.6-rc16)
  *
  * @req REQ-MCP-025
- * @version 2.0.6-rc16
+ * @version 2.14.0
  */
 void ServerManager::interrupt_external_tools() {
-    for (auto& [_, client] : external_clients_) {
+    for (auto& [_, client] : external_snapshot()) {
         if (client) { client->interrupt(); }
     }
 }
@@ -1018,10 +1024,10 @@ void ServerManager::interrupt_external_tools() {
  * all of them.
  *
  * @req REQ-MCP-025
- * @version 2.12.1
+ * @version 2.14.0
  */
 void ServerManager::clear_external_tool_interrupts() {
-    for (auto& [_, client] : external_clients_) {
+    for (auto& [_, client] : external_snapshot()) {
         if (client) { client->clear_interrupt(); }
     }
 }
@@ -1174,10 +1180,13 @@ void ServerManager::set_own_bridge_socket(const std::filesystem::path& socket) {
  * @param source Source identifier ("config", "mcp_json", "runtime").
  * @param url SSE URL (may be empty).
  * @param command Stdio command (may be empty).
+ * @return The registered client, or null when the name was registered
+ *         concurrently (the new connection is then disconnected).
  * @req REQ-MCP-025
- * @version 1.8.7
+ * @version 2.14.0
  */
-void ServerManager::connect_and_register_external(
+std::shared_ptr<ExternalMCPClient>
+ServerManager::connect_and_register_external(
     const std::string& name,
     std::unique_ptr<ExternalMCPClient> client,
     const std::string& source,
@@ -1201,8 +1210,22 @@ void ServerManager::connect_and_register_external(
         logger->error("Failed to connect external server '{}'", name);
     }
 
-    server_info_[name] = info;
-    external_clients_[name] = std::move(client);
+    // gh#171: the connect above ran with no lock; registration re-checks the
+    // name under it, because another thread may have registered it meanwhile.
+    std::shared_ptr<ExternalMCPClient> shared = std::move(client);
+    bool inserted = false;
+    {
+        std::unique_lock<std::shared_mutex> lock(*external_mutex_);
+        inserted = external_clients_.emplace(name, shared).second;
+        if (inserted) { server_info_[name] = info; }
+    }
+    if (!inserted) {
+        logger->warn("External server '{}' was registered concurrently — "
+                     "refusing the second connection", name);
+        shared->disconnect();
+        shared.reset();
+    }
+    return shared;
 }
 
 /**
@@ -1257,24 +1280,23 @@ std::unique_ptr<Transport> ServerManager::make_transport(
  *         could not be parsed.
  * @req REQ-MCP-025
  * @req REQ-MCP-007
- * @version 2.1.4
+ * @version 2.14.0
  */
 std::vector<std::string> ServerManager::connect_external_server(
     const ExternalServerConfig& spec) {
 
-    if (servers_.count(spec.name) > 0 ||
-        external_clients_.count(spec.name) > 0) {
+    if (servers_.count(spec.name) > 0 || find_external(spec.name)) {
         logger->warn("Server '{}' already registered", spec.name);
         return {};
     }
 
-    auto client = std::make_unique<ExternalMCPClient>(
-        spec.name, make_transport(spec));
+    auto client = create_external_client(spec);  // gh#175: one factory
 
-    connect_and_register_external(spec.name, std::move(client),
-                                  "runtime", spec.url, spec.command);
-
-    auto& registered = external_clients_[spec.name];
+    // gh#171: the registered client comes back from registration rather than
+    // being re-read with operator[], which INSERTED, unlocked, on a miss.
+    auto registered = connect_and_register_external(
+        spec.name, std::move(client), "runtime", spec.url, spec.command);
+    if (!registered) { return {}; }
     if (health_monitor_) {
         health_monitor_->watch(spec.name, registered.get());
     }
@@ -1318,24 +1340,31 @@ std::vector<std::string> ServerManager::connect_external_server(
  * @brief Disconnect and remove an external server.
  * @param name Server name.
  * @dg_internal
- * @version 1.8.7
+ * @version 2.14.0
  */
 void ServerManager::disconnect_external_server(
     const std::string& name) {
 
-    auto it = external_clients_.find(name);
-    if (it == external_clients_.end()) {
+    std::shared_ptr<ExternalMCPClient> client;
+    {
+        std::unique_lock<std::shared_mutex> lock(*external_mutex_);
+        auto it = external_clients_.find(name);
+        if (it != external_clients_.end()) {
+            client = std::move(it->second);
+            external_clients_.erase(it);
+            server_info_.erase(name);
+        }
+    }
+    if (!client) {
         logger->warn("External server '{}' not found", name);
         return;
     }
-
     if (health_monitor_) {
         health_monitor_->unwatch(name);
     }
-
-    it->second->disconnect();
-    external_clients_.erase(it);
-    server_info_.erase(name);
+    // gh#171: a call already routed to this client still holds its own
+    // reference; the client is destroyed when the last one drops.
+    client->disconnect();
 
     logger->info("External server '{}' disconnected", name);
 }
@@ -1348,11 +1377,15 @@ void ServerManager::disconnect_external_server(
  *         in_process/connected/builtin; plugins report plugin/plugin
  *         plus the .so path so `entropic inspect` can tell them apart.
  * @req REQ-MCP-007
- * @version 2.10.1
+ * @version 2.14.0
  */
 std::map<std::string, ServerInfo>
 ServerManager::list_server_info() const {
-    auto result = server_info_;
+    std::map<std::string, ServerInfo> result;
+    {
+        std::shared_lock<std::shared_mutex> lock(*external_mutex_);
+        result = server_info_;
+    }
 
     // Add in-process servers
     for (const auto& [name, _] : servers_) {
@@ -1409,7 +1442,7 @@ void ServerManager::process_health_events() {
  * @param entry Config entry.
  * @return Client instance.
  * @utility
- * @version 2.1.4
+ * @version 2.14.0
  */
 std::unique_ptr<ExternalMCPClient>
 ServerManager::create_external_client(
@@ -1423,8 +1456,7 @@ ServerManager::create_external_client(
         entry.env.begin(), entry.env.end());
     spec.url = entry.url;
     spec.transport = entry.url.empty() ? "stdio" : "sse";
-    return std::make_unique<ExternalMCPClient>(
-        name, make_transport(spec));
+    return create_external_client(spec);
 }
 
 /**
@@ -1435,13 +1467,18 @@ ServerManager::create_external_client(
  * @param config Discovery config.
  * @return Client instance.
  * @utility
- * @version 2.13.0
+ * @version 2.14.0
  */
 std::unique_ptr<ExternalMCPClient>
 ServerManager::create_external_client(
     const ExternalServerConfig& config) {
-    return std::make_unique<ExternalMCPClient>(
+    auto client = std::make_unique<ExternalMCPClient>(
         config.name, make_transport(config));
+    // gh#175: mcp.server_timeout_seconds bounds bring-up. Every client is
+    // built here — declared, discovered and runtime — so none can miss it.
+    client->set_init_timeout_ms(
+        static_cast<uint32_t>(mcp_config_.server_timeout_seconds) * 1000u);
+    return client;
 }
 
 /**
@@ -1470,6 +1507,32 @@ std::string ServerManager::disconnected_error(
     resp["directives"] = nlohmann::json::array();
     resp["is_error"] = true;
     return resp.dump();
+}
+
+/**
+ * @brief Snapshot the external clients under a shared lock (gh#171).
+ * @return (name, client) pairs, used by the caller with no lock held.
+ * @dg_internal
+ * @version 2.14.0
+ */
+std::vector<std::pair<std::string, std::shared_ptr<ExternalMCPClient>>>
+ServerManager::external_snapshot() const {
+    std::shared_lock<std::shared_mutex> lock(*external_mutex_);
+    return {external_clients_.begin(), external_clients_.end()};
+}
+
+/**
+ * @brief Look up one external client under a shared lock (gh#171).
+ * @param name Server name.
+ * @return The client, or null when not registered.
+ * @dg_internal
+ * @version 2.14.0
+ */
+std::shared_ptr<ExternalMCPClient>
+ServerManager::find_external(const std::string& name) const {
+    std::shared_lock<std::shared_mutex> lock(*external_mutex_);
+    auto it = external_clients_.find(name);
+    return it == external_clients_.end() ? nullptr : it->second;
 }
 
 } // namespace entropic

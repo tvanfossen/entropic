@@ -6,8 +6,10 @@
  */
 
 #include <entropic/mcp/servers/bash.h>
+#include <entropic/types/run_scope.h>
 #include <catch2/catch_test_macros.hpp>
 #include <nlohmann/json.hpp>
+#include <atomic>
 #include <cerrno>
 #include <chrono>
 #include <filesystem>
@@ -371,4 +373,40 @@ TEST_CASE("bash: a command inside its limit still reports its own exit code "
     const auto out = j.value("output", "");
     CHECK(out.find("out") != std::string::npos);
     CHECK(out.find("err") != std::string::npos);
+}
+
+SCENARIO("gh#172: interrupting a session stops its running bash command",
+         "[bash][cancel][gh172][2.14.0]") {
+    // gh#158 shipped "interrupt stops this session's run", and the external
+    // transports and the decode loop poll the run's cancel token. The bash
+    // tool did not: an interrupted session waited out its shell command,
+    // bounded only by mcp.bash.timeout_seconds.
+    GIVEN("a 20-second command running inside a run scope") {
+        auto server = make_bash_server();   // 10 s tool timeout
+        std::atomic<bool> token{false};
+        std::string result;
+        double secs = 0.0;
+        std::thread run([&] {
+            entropic::RunCancelScope scope(&token);
+            nlohmann::json args;
+            args["command"] = "sleep 20";
+            const auto t0 = std::chrono::steady_clock::now();
+            result = parse_result(server.execute("execute", args.dump()));
+            secs = std::chrono::duration<double>(
+                std::chrono::steady_clock::now() - t0).count();
+        });
+
+        WHEN("the run is cancelled 300 ms in") {
+            std::this_thread::sleep_for(std::chrono::milliseconds(300));
+            token = true;
+            run.join();
+            THEN("the command stops at once, not at the tool timeout") {
+                INFO("returned after " << secs << " s: " << result);
+                CHECK(secs < 2.0);
+            }
+            AND_THEN("the model is told it was cancelled, not that it failed") {
+                CHECK(result.find("\"error\":\"cancelled\"") != std::string::npos);
+            }
+        }
+    }
 }

@@ -36,10 +36,23 @@
  * entropic_alloc(). Strings returned as const char* are owned by
  * the handle and valid until the next call on that handle.
  *
+ * @par Serving many MCP clients (v2.14.0, gh#204)
+ * With `mcp.external.enabled` and `mcp.external.http_port: N`, configure
+ * also serves the external MCP bridge over Streamable HTTP at
+ * `http://127.0.0.1:N/mcp` (loopback only; reach it remotely with
+ * `ssh -L N:127.0.0.1:N host`). Clients authenticate with
+ * `Authorization: Bearer <token>`, where the token is the contents of
+ * `$HOME/.entropic/serve/N.token`: 64 hex characters, regenerated on every
+ * start, mode 0600 in a 0700 directory, removed by entropic_destroy().
+ * Requests carrying an `Origin` header or a foreign `Host` are refused. If
+ * the port cannot be served, configure fails with ENTROPIC_ERROR_IO.
+ * `entropic serve --config FILE --port N` is the headless host built on
+ * this. See docs/security.md.
+ *
  * @req REQ-API-014
  * @req REQ-ABI-001
  * @req REQ-ABI-002
- * @version 1.9.10
+ * @version 2.14.0
  */
 
 #pragma once

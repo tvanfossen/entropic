@@ -581,6 +581,8 @@ add_executable(entropic-api-tests
     api/tool_namespace_test.cpp
     # v2.1.7 (gh#34): mcp-bridge CLI relay round-trip tests.
     mcp/mcp_bridge_relay_test.cpp
+    # gh#204 (v2.14.0): `entropic serve` end to end, over HTTP.
+    api/serve_cli_test.cpp
 )
 
 # v2.1.1 (#3): serialize_messages_utf8_test.cpp #includes the private

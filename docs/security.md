@@ -36,3 +36,20 @@ The following are **out of scope**:
 - Model behavior (bias, hallucination, unsafe outputs) — these are properties
   of the loaded model, not the engine
 - Issues requiring physical access to the host machine
+
+## Network serving (v2.14.0)
+
+`mcp.external.http_port` (and `entropic serve --port N`) serves the external
+MCP bridge at `http://127.0.0.1:N/mcp`. The security bar:
+
+| Property | How |
+|---|---|
+| Never leaves the host | Binds `127.0.0.1` only; no TLS, no bind-address option. Remote access: `ssh -L N:127.0.0.1:N host`, which supplies authentication and encryption. |
+| Bearer token | 256 bits from `getrandom()`, regenerated every start, written atomically to `~/.entropic/serve/N.token` (mode 0600). Removed on clean shutdown. |
+| Token directory checked, not assumed | `~/.entropic/serve` must be 0700, owned by the engine's uid, and not a symlink, or the listener refuses to start. |
+| Comparison and secrecy | Constant-time comparison; the token is never logged or echoed. |
+| Browser / DNS rebinding | Any request with an `Origin` header is refused (403), as is a `Host` other than `127.0.0.1:N` / `localhost:N`. |
+| Abuse limits | Body and header size caps, read/write timeouts; five failed authentications in a minute block all requests for 30 s, each failure logged without the token. |
+
+Anyone who can read your home directory as your uid can read the token —
+the same trust boundary as the bridge's unix socket.

@@ -81,8 +81,20 @@
         },
         "external_servers": {
           "type": "object",
-          "description": "Named external MCP servers.",
+          "description": "Named external MCP servers the operator declares. Declared = enabled: connected at configure on the default server set, without consulting the pre-connect hook.",
           "additionalProperties": { "$ref": "#/$defs/external_mcp_server" }
+        },
+        "enabled_mcpjson_servers": {
+          "type": "array", "items": { "type": "string" },
+          "description": "Discovered .mcp.json servers pre-approved by name (v2.14.0). Inherited by every workspace."
+        },
+        "disabled_mcpjson_servers": {
+          "type": "array", "items": { "type": "string" },
+          "description": "Discovered .mcp.json servers always refused, even under enable_all_project_mcp_servers (v2.14.0)."
+        },
+        "enable_all_project_mcp_servers": {
+          "type": "boolean", "default": false,
+          "description": "Pre-approve every discovered .mcp.json server not explicitly disabled (v2.14.0). Without this or a name in enabled_mcpjson_servers, a discovered server connects only if an ENTROPIC_HOOK_PRE_MCP_SERVER_CONNECT hook approves it; with no hook registered it is not connected."
         }
       }
     },
@@ -185,9 +197,11 @@
       "properties": {
         "command": { "type": "string", "description": "Executable path." },
         "args": { "type": "array", "items": { "type": "string" }, "description": "Command-line arguments." },
-        "env": { "type": "object", "additionalProperties": { "type": "string" }, "description": "Environment variables." }
+        "env": { "type": "object", "additionalProperties": { "type": "string" }, "description": "Environment variables." },
+        "url": { "type": "string", "description": "SSE endpoint, for a server reached over the network instead of spawned." }
       },
-      "required": ["command"]
+      "description": "Needs `command` (stdio) or `url` (SSE); an entry with neither is a config error.",
+      "anyOf": [ { "required": ["command"] }, { "required": ["url"] } ]
     }
   }
 }

@@ -7390,15 +7390,35 @@
 
     never inject delegate, stop_processing, phase_change, or any other
 
-    engine-level directive (CWE-94). Servers come from YAML config and from
+    engine-level directive (CWE-94). Servers come from `mcp.external_servers`
+
+    (declared by the operator, so connected without asking — parsed and
+
+    connected on every server set since v2.14.0; dead before) and from
 
     `.mcp.json` discovery (project file first, then `~/.entropic/.mcp.json`,
 
-    first match per name wins), where discovery skips names that would shadow an
+    first match per name wins). A discovered server connects ONLY when enabled
 
-    already-registered server, skips the engine''s own socket via a deterministic
+    (v2.14.0, gh#199): refused if named in `mcp.disabled_mcpjson_servers`;
 
-    project-derived socket path, skips malformed entries and stdio entries with
+    connected if named in `mcp.enabled_mcpjson_servers` or
+
+    `mcp.enable_all_project_mcp_servers` is set; otherwise the
+
+    ENTROPIC_HOOK_PRE_MCP_SERVER_CONNECT pre-hook decides, and with no hook
+
+    registered it is NOT connected. Every set, default and workspace, inherits
+
+    that policy. Any entry, declared or discovered, that would connect back to
+
+    this handle''s own bridge socket is refused — resolved the way `entropic
+
+    mcp-bridge` itself resolves `--socket`/`--project-dir`/cwd, against the path
+
+    the bridge actually binds (gh#200). Discovery skips names that would shadow an
+
+    already-registered server, skips malformed entries and stdio entries with
 
     no command instead of aborting the whole file, and filters a blocklist of
 

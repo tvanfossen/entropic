@@ -407,6 +407,8 @@ add_executable(entropic-mcp-tests
     mcp/permission_manager_test.cpp
     mcp/tool_executor_test.cpp
     mcp/server_manager_test.cpp
+    # v2.14.0 (gh#199, gh#200): external-server enablement + self-bridge.
+    mcp/discovery_policy_test.cpp
     # gh#158 (v2.13.0): the root lock's owner / shared / exclusive rules
     mcp/tool_root_lock_test.cpp
     mcp/tool_calling_loop_test.cpp
@@ -556,6 +558,9 @@ add_executable(entropic-api-tests
     # v2.13.0: outside-root file access asks the host's path approver by
     # default, with explicit allow/deny lists; workspaces stay confined.
     api/path_approval_test.cpp
+    # v2.14.0 (gh#199, gh#200): external MCP servers connect only when an
+    # operator enabled them; YAML external_servers finally connect.
+    api/mcp_discovery_gate_test.cpp
     # gh#158 (v2.13.0): the built-in servers' own state — read tracker and
     # working directory — shared by concurrent sessions on the default set.
     api/builtin_server_sharing_test.cpp

@@ -91,6 +91,34 @@ typedef enum {
      */
     ENTROPIC_HOOK_ON_COMPLETE = 22,
 
+    /**
+     * @brief A discovered `.mcp.json` server is about to be launched (v2.14.0).
+     *
+     * Fires once per discovered entry that config has neither disabled nor
+     * pre-approved (`mcp.disabled_mcpjson_servers`,
+     * `mcp.enabled_mcpjson_servers`, `mcp.enable_all_project_mcp_servers`).
+     * Return 0 to connect it, non-zero to refuse.
+     *
+     * **Fail-closed, unlike every other pre-hook:** when NO handler is
+     * registered at this point the server is NOT connected. For other pre-hooks
+     * "nobody objected" means proceed; here it would mean a repository's
+     * `.mcp.json` launches processes on the host by default (gh#199), so
+     * silence is a refusal. Servers declared in `mcp.external_servers` never
+     * reach this hook — the operator declared them.
+     *
+     * context_json:
+     * @code{.json}
+     * {"name": "probe", "transport": "stdio", "command": "/bin/sh",
+     *  "args": ["-c", "..."], "url": "", "root": "/path/the/server/runs/in"}
+     * @endcode
+     *
+     * modified_json is ignored: this hook approves or refuses, it does not
+     * rewrite what gets launched.
+     *
+     * @version 2.14.0
+     */
+    ENTROPIC_HOOK_PRE_MCP_SERVER_CONNECT = 23,
+
     ENTROPIC_HOOK_COUNT_                ///< Sentinel — not a valid hook point
 } entropic_hook_point_t;
 

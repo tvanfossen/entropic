@@ -85,6 +85,23 @@ ENTROPIC_EXPORT entropic_error_t entropic_create(entropic_handle_t* handle);
  * paths, and prepares the engine for operation. Does NOT load models
  * (that happens on first generate or explicit activate).
  *
+ * @par External MCP servers (v2.14.0)
+ * Every configure entry point — this, entropic_configure_from_file() and
+ * entropic_configure_dir() — connects the handle's external MCP servers
+ * before returning: every entry in `mcp.external_servers` (the operator
+ * declared it), plus each server discovered in `<mcp.working_dir>/.mcp.json`
+ * or `~/.entropic/.mcp.json` that is ENABLED. A discovered server is refused
+ * when named in `mcp.disabled_mcpjson_servers`, connected when named in
+ * `mcp.enabled_mcpjson_servers` or `mcp.enable_all_project_mcp_servers` is
+ * true, and otherwise connected only if an
+ * ENTROPIC_HOOK_PRE_MCP_SERVER_CONNECT hook approves it — with no such hook
+ * registered it is NOT connected. Register that hook between
+ * entropic_create() and configure for it to see the default set's servers;
+ * workspaces (entropic_workspace_create()) apply the same policy to their own
+ * root. Any entry that would connect back to this handle's own bridge socket
+ * is refused. Before v2.14.0 `mcp.external_servers` was never connected and
+ * discovery ran only for workspaces, unconditionally.
+ *
  * JSON is used at the C API boundary because it's universal — any language
  * can produce it. Config FILES are YAML (parsed by ryml inside
  * librentropic-config.so). Use entropic_configure_from_file() to load
@@ -101,7 +118,7 @@ ENTROPIC_EXPORT entropic_error_t entropic_create(entropic_handle_t* handle);
  * @req REQ-API-004
  * @req REQ-API-005
  * @req REQ-ABI-001
- * @version 1.8.0
+ * @version 2.14.0
  */
 ENTROPIC_EXPORT entropic_error_t entropic_configure(
     entropic_handle_t handle,

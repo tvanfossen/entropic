@@ -174,6 +174,7 @@ class EntropicHookPoint(enum.IntEnum):
     ON_LOOP_START = 20
     ON_LOOP_END = 21
     ON_COMPLETE = 22
+    PRE_MCP_SERVER_CONNECT = 23
 
 class EntDecision(enum.IntEnum):
     """Mirrors ``ent_decision_t`` from the C header."""

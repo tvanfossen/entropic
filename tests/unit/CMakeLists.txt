@@ -414,6 +414,9 @@ add_executable(entropic-mcp-tests
     mcp/tool_calling_loop_test.cpp
     # Per-server behavioral tests
     mcp/servers/filesystem_test.cpp
+    # gh#203 (v2.14.0): outputSchema contract tests.
+    mcp/servers/filesystem_contract_test.cpp
+    mcp/servers/tool_contract_gate_test.cpp
     mcp/servers/ignore_matcher_test.cpp
     mcp/servers/bash_test.cpp
     mcp/servers/git_test.cpp
@@ -583,6 +586,8 @@ add_executable(entropic-api-tests
     mcp/mcp_bridge_relay_test.cpp
     # gh#204 (v2.14.0): `entropic serve` end to end, over HTTP.
     api/serve_cli_test.cpp
+    # gh#203 (v2.14.0): followup shape through the real storage provider.
+    api/followup_provider_test.cpp
 )
 
 # v2.1.1 (#3): serialize_messages_utf8_test.cpp #includes the private

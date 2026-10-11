@@ -1,6 +1,6 @@
 {
   "name": "edit_file",
-  "description": "Edit a file using one of two modes.\n\n**Requirements:** You must read the file first.\n\n**When NOT to use:**\n- Don't use with old_string containing entire file content - use the write tool instead\n- Don't use for major rewrites (>50% of file) - use the write tool instead\n- If \"no_match\" error on large old_string, switch to the write tool\n\n## STR_REPLACE Mode\nProvide `old_string` + `new_string` for exact string replacement.\n\n```json\n{\"path\": \"file.py\", \"old_string\": \"def hello():\", \"new_string\": \"def greet():\"}\n```\n\n- `old_string` must match EXACTLY including whitespace\n- If multiple matches, add more context or set `replace_all: true`\n\n## INSERT Mode\nProvide `insert_line` + `new_string` to insert at a line number.\n\n```json\n{\"path\": \"file.py\", \"insert_line\": 5, \"new_string\": \"    # New comment\"}\n```\n\n- `insert_line: 0` = insert at beginning of file\n- `insert_line: N` = insert AFTER line N\n\n## Response Format\n\n**STR_REPLACE success:**\n```json\n{\n  \"success\": true,\n  \"path\": \"file.py\",\n  \"mode\": \"str_replace\",\n  \"changes\": [{\"line\": 45, \"before\": \"def hello():\", \"after\": \"def greet():\"}]\n}\n```\n\n**INSERT success:**\n```json\n{\n  \"success\": true,\n  \"path\": \"file.py\",\n  \"mode\": \"insert\",\n  \"changes\": [{\"line\": 5, \"inserted\": \"from pieces import Piece\"}]\n}\n```\n\n**Error:**\n```json\n{\"error\": \"no_match\", \"message\": \"String not found\", \"debug\": \"...\", \"tip\": \"...\"}\n```\n\n## Common Errors\n| Error | Fix |\n|-------|-----|\n| `read_required` | Read the file first |\n| `file_changed` | File modified externally, re-read it |\n| `no_match` | Check debug info, try insert mode |\n| `multiple_matches` | Add more context to old_string |",
+  "description": "Edit a file in place, in one of two modes. You must read the file first.\n\n## STR_REPLACE mode\nGive `old_string` + `new_string`. `old_string` must match EXACTLY, whitespace included. If it occurs more than once, add context or set `replace_all: true`.\n```json\n{\"path\": \"file.py\", \"old_string\": \"def hello():\", \"new_string\": \"def greet():\"}\n```\n\n## INSERT mode\nGive `insert_line` + `new_string`. `insert_line: 0` inserts at the beginning of the file; `insert_line: N` inserts AFTER line N (N may be the last line). `new_string` may span several lines.\n```json\n{\"path\": \"file.py\", \"insert_line\": 5, \"new_string\": \"    # New comment\"}\n```\n\n**When NOT to use:** replacing most of a file — use write_file. If `no_match` persists on a large `old_string`, use INSERT mode or write_file.\n\nErrors: `read_before_write` (read it first), `no_match` (old_string absent), `multiple_matches` (old_string ambiguous), `out_of_range` (insert_line outside 0..line count), `invalid_args` (neither or both modes given).",
   "inputSchema": {
     "type": "object",
     "properties": {
@@ -18,13 +18,97 @@
       },
       "insert_line": {
         "type": "integer",
-        "description": "INSERT mode: line number to insert AFTER (0 = beginning)"
+        "minimum": 0,
+        "description": "INSERT mode: insert AFTER this line (0 = beginning of file)"
       },
       "replace_all": {
         "type": "boolean",
         "description": "STR_REPLACE mode: replace all occurrences (default: false)"
       }
     },
-    "required": ["path", "new_string"]
+    "required": [
+      "path",
+      "new_string"
+    ]
+  },
+  "outputSchema": {
+    "oneOf": [
+      {
+        "title": "str_replace",
+        "type": "object",
+        "required": [
+          "path",
+          "mode",
+          "replacements",
+          "message"
+        ],
+        "properties": {
+          "path": {
+            "type": "string"
+          },
+          "mode": {
+            "enum": [
+              "str_replace"
+            ]
+          },
+          "replacements": {
+            "type": "integer",
+            "description": "occurrences replaced"
+          },
+          "message": {
+            "type": "string"
+          }
+        }
+      },
+      {
+        "title": "insert",
+        "type": "object",
+        "required": [
+          "path",
+          "mode",
+          "inserted_after",
+          "message"
+        ],
+        "properties": {
+          "path": {
+            "type": "string"
+          },
+          "mode": {
+            "enum": [
+              "insert"
+            ]
+          },
+          "inserted_after": {
+            "type": "integer",
+            "description": "the line the text now follows (0 = start of file)"
+          },
+          "message": {
+            "type": "string"
+          }
+        }
+      },
+      {
+        "title": "error",
+        "type": "object",
+        "required": [
+          "error",
+          "message"
+        ],
+        "properties": {
+          "error": {
+            "enum": [
+              "read_before_write",
+              "no_match",
+              "multiple_matches",
+              "out_of_range",
+              "invalid_args"
+            ]
+          },
+          "message": {
+            "type": "string"
+          }
+        }
+      }
+    ]
   }
 }

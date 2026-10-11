@@ -1,14 +1,102 @@
 {
   "name": "read_file",
-  "description": "Read a file's contents. Returns JSON with line numbers as keys.\n\nYou MUST read a file before editing or overwriting.\n\n**Response format:**\n```json\n{\"path\": \"...\", \"total\": N, \"lines\": {\"1\": \"line content\", \"2\": \"...\", ...}}\n```\n\n**Error format:**\n```json\n{\"error\": \"not_found\", \"message\": \"File not found: path\"}\n```\n\nUse line numbers with the edit tool's insert mode when string matching fails.",
+  "description": "Read a text file. Every line comes back with its 1-based number — cite `path:line` from the `line` field, never count lines yourself.\n\nYou MUST read a file before editing or overwriting it.\n\nLong files are paged to the read budget (config `filesystem.max_read_bytes`).",
   "inputSchema": {
     "type": "object",
     "properties": {
       "path": {
         "type": "string",
-        "description": "Path to the file"
+        "description": "Path to the file (relative to the project root, or absolute)"
+      },
+      "offset": {
+        "type": "integer",
+        "minimum": 1,
+        "description": "First line to return, 1-based (default 1)"
+      },
+      "limit": {
+        "type": "integer",
+        "minimum": 1,
+        "description": "Maximum lines to return (default: as many as fit the read budget)"
       }
     },
-    "required": ["path"]
+    "required": [
+      "path"
+    ]
+  },
+  "outputSchema": {
+    "oneOf": [
+      {
+        "title": "success",
+        "type": "object",
+        "required": [
+          "path",
+          "total",
+          "offset",
+          "lines",
+          "truncated"
+        ],
+        "properties": {
+          "path": {
+            "type": "string",
+            "description": "root-relative when inside the project"
+          },
+          "total": {
+            "type": "integer",
+            "description": "lines in the whole file"
+          },
+          "offset": {
+            "type": "integer"
+          },
+          "lines": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "required": [
+                "line",
+                "content"
+              ],
+              "properties": {
+                "line": {
+                  "type": "integer"
+                },
+                "content": {
+                  "type": "string"
+                }
+              }
+            }
+          },
+          "truncated": {
+            "type": "boolean",
+            "description": "true = more lines follow"
+          },
+          "next_offset": {
+            "type": "integer",
+            "description": "the `offset` to continue from"
+          }
+        }
+      },
+      {
+        "title": "error",
+        "type": "object",
+        "required": [
+          "error",
+          "message"
+        ],
+        "properties": {
+          "error": {
+            "enum": [
+              "not_found",
+              "is_directory",
+              "ignored",
+              "size_exceeded",
+              "invalid_args"
+            ]
+          },
+          "message": {
+            "type": "string"
+          }
+        }
+      }
+    ]
   }
 }

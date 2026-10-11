@@ -18,10 +18,69 @@
       },
       "suggested_files": {
         "type": "array",
-        "items": {"type": "string"},
+        "items": {
+          "type": "string"
+        },
         "description": "File paths the lead should inspect to fill the gap. Only meaningful when coverage_gap=true. (#10, v2.1.4)"
       }
     },
-    "required": ["summary"]
+    "required": [
+      "summary"
+    ]
+  },
+  "outputSchema": {
+    "oneOf": [
+      {
+        "title": "success",
+        "type": "object",
+        "required": [
+          "action",
+          "summary",
+          "coverage_gap",
+          "gap_description",
+          "suggested_files"
+        ],
+        "properties": {
+          "action": {
+            "enum": [
+              "complete"
+            ]
+          },
+          "summary": {
+            "type": "string"
+          },
+          "coverage_gap": {
+            "type": "boolean"
+          },
+          "gap_description": {
+            "type": "string"
+          },
+          "suggested_files": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          }
+        }
+      },
+      {
+        "title": "error",
+        "type": "object",
+        "required": [
+          "error",
+          "message"
+        ],
+        "properties": {
+          "error": {
+            "enum": [
+              "missing_gap_description"
+            ]
+          },
+          "message": {
+            "type": "string"
+          }
+        }
+      }
+    ]
   }
 }

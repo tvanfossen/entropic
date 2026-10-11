@@ -12,5 +12,61 @@
     },
     "required": [],
     "additionalProperties": false
+  },
+  "outputSchema": {
+    "oneOf": [
+      {
+        "title": "success",
+        "type": "object",
+        "required": [
+          "messages"
+        ],
+        "properties": {
+          "messages": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "required": [
+                "role",
+                "content_preview",
+                "token_count_est"
+              ],
+              "properties": {
+                "role": {
+                  "type": "string"
+                },
+                "content_preview": {
+                  "type": "string",
+                  "description": "the first 200 bytes, followed by `...` when longer"
+                },
+                "token_count_est": {
+                  "type": "integer",
+                  "description": "content bytes / 4"
+                }
+              }
+            },
+            "description": "oldest first"
+          }
+        }
+      },
+      {
+        "title": "error",
+        "type": "object",
+        "required": [
+          "error",
+          "message"
+        ],
+        "properties": {
+          "error": {
+            "enum": [
+              "provider_unavailable"
+            ]
+          },
+          "message": {
+            "type": "string"
+          }
+        }
+      }
+    ]
   }
 }

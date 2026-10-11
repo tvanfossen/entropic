@@ -7,7 +7,7 @@
  * implements execute(). Tools are registered with a ToolRegistry inside
  * an MCPServerBase.
  *
- * @version 1.9.4
+ * @version 2.14.0
  */
 
 #pragma once
@@ -22,12 +22,19 @@ struct ServerResponse; // forward declaration (server_base.h)
 
 /**
  * @brief Parsed tool definition from JSON schema file.
- * @version 1.8.5
+ *
+ * v2.14.0 (gh#203): `output_schema` is the tool's declared response
+ * contract — MCP's `outputSchema`. For a bundled tool it is required, and
+ * the description's "Response format" section is GENERATED from it, so the
+ * shape a model is told and the shape a handler emits have one source.
+ *
+ * @version 2.14.0
  */
 struct ToolDefinition {
     std::string name;            ///< Tool name (e.g., "read_file")
     std::string description;     ///< Human-readable description
     std::string input_schema;    ///< JSON Schema for arguments (raw JSON string)
+    std::string output_schema;   ///< JSON Schema for the result ("" = undeclared). v2.14.0
 };
 
 /**
@@ -116,5 +123,34 @@ ToolDefinition load_tool_definition(
     const std::string& tool_name,
     const std::string& server_prefix,
     const std::string& data_dir);
+
+/**
+ * @brief Render an outputSchema as the compact "Response format" text a
+ *        model reads (gh#203).
+ *
+ * Every shape, key, optional marker (`"key"?`), enumerated error code and
+ * field description in the schema appears in the text; nothing else does.
+ *
+ * @param output_schema_json JSON Schema (raw string).
+ * @return The rendered section (leading blank line included), or "" for an
+ *         empty or unparseable schema.
+ * @utility
+ * @version 2.14.0
+ */
+std::string render_response_format(const std::string& output_schema_json);
+
+/**
+ * @brief A declared tool error: `{"error": code, "message": message}`.
+ *
+ * v2.14.0 (gh#203): the one shape every bundled tool refusal takes, with a
+ * code its outputSchema enumerates.
+ *
+ * @param code Error code.
+ * @param message Human-readable message.
+ * @return Serialized JSON object.
+ * @utility
+ * @version 2.14.0
+ */
+std::string tool_error_json(const std::string& code, const std::string& message);
 
 } // namespace entropic

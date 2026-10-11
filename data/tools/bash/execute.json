@@ -13,6 +13,87 @@
         "description": "Working directory (optional)"
       }
     },
-    "required": ["command"]
+    "required": [
+      "command"
+    ]
+  },
+  "outputSchema": {
+    "oneOf": [
+      {
+        "title": "success",
+        "type": "object",
+        "required": [
+          "exit_code",
+          "output"
+        ],
+        "properties": {
+          "exit_code": {
+            "type": "integer",
+            "description": "the shell's exit status (non-zero = the command failed; read `output`)"
+          },
+          "output": {
+            "type": "string",
+            "description": "combined stdout and stderr"
+          }
+        }
+      },
+      {
+        "title": "timeout",
+        "type": "object",
+        "required": [
+          "error",
+          "message",
+          "timeout_seconds",
+          "elapsed_ms",
+          "output"
+        ],
+        "properties": {
+          "error": {
+            "enum": [
+              "timeout"
+            ]
+          },
+          "message": {
+            "type": "string"
+          },
+          "timeout_seconds": {
+            "type": "integer"
+          },
+          "elapsed_ms": {
+            "type": "integer"
+          },
+          "output": {
+            "type": "string",
+            "description": "output printed before the kill"
+          }
+        }
+      },
+      {
+        "title": "cancelled",
+        "type": "object",
+        "required": [
+          "error",
+          "message",
+          "elapsed_ms",
+          "output"
+        ],
+        "properties": {
+          "error": {
+            "enum": [
+              "cancelled"
+            ]
+          },
+          "message": {
+            "type": "string"
+          },
+          "elapsed_ms": {
+            "type": "integer"
+          },
+          "output": {
+            "type": "string"
+          }
+        }
+      }
+    ]
   }
 }

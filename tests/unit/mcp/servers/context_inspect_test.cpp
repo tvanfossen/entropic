@@ -82,7 +82,7 @@ TEST_CASE("context_inspect returns all messages when max_messages omitted",
 
     auto r = get_result(
         server.execute("context_inspect", R"({})"));
-    auto j = json::parse(r);
+    auto j = json::parse(r).at("messages");  // v2.14.0: {messages: [...]}
     REQUIRE(j.is_array());
     REQUIRE(j.size() == 5);
     REQUIRE(j[0]["role"] == "system");
@@ -96,7 +96,7 @@ TEST_CASE("context_inspect respects max_messages limit",
 
     auto r = get_result(
         server.execute("context_inspect", R"({"max_messages":2})"));
-    auto j = json::parse(r);
+    auto j = json::parse(r).at("messages");  // v2.14.0: {messages: [...]}
     REQUIRE(j.is_array());
     REQUIRE(j.size() == 2);
     REQUIRE(j[0]["role"] == "user");
@@ -111,7 +111,7 @@ TEST_CASE("context_inspect entries have required fields",
 
     auto r = get_result(
         server.execute("context_inspect", R"({"max_messages":1})"));
-    auto j = json::parse(r);
+    auto j = json::parse(r).at("messages");  // v2.14.0: {messages: [...]}
     REQUIRE(j.is_array());
     REQUIRE(j.size() == 1);
     REQUIRE(j[0].contains("role"));
@@ -137,7 +137,7 @@ TEST_CASE("context_inspect without provider returns error",
     // No set_state_provider call
     auto r = get_result(
         server.execute("context_inspect", R"({})"));
-    REQUIRE(r.find("Error") != std::string::npos);
+    REQUIRE(json::parse(r).at("error") == "provider_unavailable");  // v2.14.0
 }
 
 // ── gh#143: argument-free / non-object arguments ────────────────

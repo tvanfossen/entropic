@@ -151,34 +151,66 @@ std::string format_todo_list(const std::vector<TodoItem>& items) {
 }
 
 /**
+ * @brief Why an update/remove cannot apply, or "" when it can.
+ * @param items The list.
+ * @param action "update" or "remove".
+ * @param idx Requested index.
+ * @return "" or the declared `out_of_range` error.
+ * @dg_internal
+ * @version 2.14.0
+ */
+std::string todo_index_error(const std::vector<TodoItem>& items,
+                             const std::string& action, long idx) {
+    std::string err;
+    if (0 > idx || idx >= static_cast<long>(items.size())) {
+        logger->warn("[todo] {} #{}: out of range (list has {})",
+                     action, idx, items.size());
+        err = tool_error_json("out_of_range", "index " + std::to_string(idx)
+            + " is not in the list, which has " + std::to_string(items.size())
+            + " item(s) (indices start at 0)");
+    }
+    return err;
+}
+
+/**
  * @brief Apply an add/update/remove action to one session's list.
+ *
+ * v2.14.0 (gh#203): an update or remove naming an index the list does not
+ * have is an `out_of_range` error (it used to change nothing and report
+ * success); an unknown action is `invalid_args` (it used to be treated as
+ * remove); `add` honours `status`, which its schema always offered.
+ *
  * @param items The calling session's list.
  * @param action One of "add" / "update" / "remove".
  * @param args Parsed tool arguments.
+ * @return "" when applied, else a declared error.
  * @dg_internal
- * @version 2.13.0
+ * @version 2.14.0
  */
-void apply_todo_action(std::vector<TodoItem>& items,
-                       const std::string& action,
-                       const nlohmann::json& args) {
+std::string apply_todo_action(std::vector<TodoItem>& items,
+                              const std::string& action,
+                              const nlohmann::json& args) {
+    std::string err;
+    const long idx = args.value<long>("index", -1);
     if (action == "add") {
         std::string content = args.at("content").get<std::string>();
-        items.push_back({content, "pending"});
+        items.push_back({content, args.value("status", std::string("pending"))});
         logger->info("[todo] add: {}", content);
-    } else if (action == "update") {
-        auto idx = args.at("index").get<size_t>();
-        if (idx < items.size()) {
-            items[idx].status = args.value("status", items[idx].status);
-            items[idx].content = args.value("content", items[idx].content);
-            logger->info("[todo] update #{}: {}", idx, items[idx].status);
-        }
-    } else if (action == "remove") {
-        auto idx = args.at("index").get<size_t>();
-        if (idx < items.size()) {
+    } else if (action != "update" && action != "remove") {
+        err = tool_error_json("invalid_args", "unknown action '" + action
+                         + "' (add, update or remove)");
+    } else if (err = todo_index_error(items, action, idx); err.empty()) {
+        auto& item = items[static_cast<size_t>(idx)];
+        if (action == "update") {
+            item.status = args.value("status", item.status);
+            item.content = args.value("content", item.content);
+            logger->info("[todo] update #{}: {}", idx, item.status);
+        } else {
             logger->info("[todo] remove #{}", idx);
-            items.erase(items.begin() + static_cast<ptrdiff_t>(idx));
+            items.erase(items.begin() + idx);
         }
     }
+    return err;
 }
 
 }  // namespace
@@ -192,26 +224,29 @@ void apply_todo_action(std::vector<TodoItem>& items,
  * call returns is the list its own action produced.
  *
  * @param args_json JSON with "action" plus the action's own fields.
- * @return A ServerResponse whose result is the re-rendered todo list
- *         and whose directives are context_anchor + notify_presenter.
+ * @return On success, the re-rendered list with context_anchor +
+ *         notify_presenter directives; on an out-of-range index, the
+ *         declared `out_of_range` error with NO directives (v2.14.0).
  * @req REQ-MCP-024
  * @req REQ-LOOP-009
- * @version 2.13.0 [reviewed]
+ * @version 2.14.0
  */
 ServerResponse TodoTool::execute(const std::string& args_json) {
     auto args = nlohmann::json::parse(args_json);
     std::string action = args.at("action").get<std::string>();
 
     const auto session = current_run_session();
+    std::string err;
     std::string rendered = lists_.with(session, [&](auto& items) {
-        apply_todo_action(items, action, args);
+        err = apply_todo_action(items, action, args);
         return format_todo_list(items);
     });
     logger->info("[todo] session='{}' action={}", session, action);
+    if (!err.empty()) { return {err, {}}; }
 
     nlohmann::json result;
-    result["todo_state"] = rendered;
     result["action"] = action;
+    result["todo_state"] = rendered;
 
     Directive anchor_d;
     anchor_d.type = ENTROPIC_DIRECTIVE_CONTEXT_ANCHOR;
@@ -328,11 +363,11 @@ static size_t carry_context(const nlohmann::json& args,
  * @return A ServerResponse whose result echoes the delegation and whose
  *         directives are delegate + stop_processing — the pair that
  *         hands the turn to the child loop; or, when the target tier
- *         declares `requires_context` and none was supplied, an error
- *         string with NO directives (gh#162).
+ *         declares `requires_context` and none was supplied, the declared
+ *         `requires_context` error with NO directives (gh#162).
  * @req REQ-MCP-024
  * @req REQ-DELEG-006
- * @version 2.13.0
+ * @version 2.14.0
  */
 ServerResponse DelegateTool::execute(const std::string& args_json) {
     auto args = nlohmann::json::parse(args_json);
@@ -356,10 +391,10 @@ ServerResponse DelegateTool::execute(const std::string& args_json) {
                      require_context_tiers_.end(), target)
            != require_context_tiers_.end()) {
         logger->warn("[delegate] refused: tier '{}' requires context", target);
-        return {"Error: tier \"" + target + "\" requires context. Re-issue "
-                "entropic.delegate with a `context` array naming at least one "
-                "file path (optionally lines/note) the delegate should read.",
-                {}};
+        return {tool_error_json("requires_context", "tier \"" + target
+                + "\" requires context. Re-issue entropic.delegate with a "
+                "`context` array naming at least one file path (optionally "
+                "lines/note) the delegate should read."), {}};
     }
 
     logger->info("[delegate] target='{}' task='{}' max_turns={} context={}",
@@ -461,16 +496,18 @@ PipelineTool::PipelineTool(
  *
  * Extracted from `PipelineTool::execute` to keep it under the knots
  * ABC + returns gates when the context check joined the stage check.
+ * v2.14.0: each refusal is a declared error — `too_few_stages`,
+ * `unknown_stage` or `requires_context`.
  *
  * @param stages Requested stage tiers.
  * @param tier_names Configured tiers.
  * @param require_context_tiers Tiers that refuse a contextless run.
  * @param refs Number of context references supplied.
- * @return Error text for the model, or "" when the pipeline is valid.
+ * @return Declared error JSON, or "" when the pipeline is valid.
  * @utility
  * @req REQ-MCP-024
  * @req REQ-DELEG-006
- * @version 2.13.0
+ * @version 2.14.0
  */
 static std::string pipeline_rejection(
     const std::vector<std::string>& stages,
@@ -480,15 +517,15 @@ static std::string pipeline_rejection(
     std::string err;
     if (stages.size() < 2) {
         logger->warn("[pipeline] rejected: fewer than 2 stages");
-        err = "Error: pipeline requires at least 2 stages";
+        err = tool_error_json("too_few_stages", "pipeline requires at least 2 stages");
     }
     for (const auto& s : stages) {
         if (!err.empty()) { break; }
         if (std::find(tier_names.begin(), tier_names.end(), s)
             == tier_names.end()) {
             logger->warn("[pipeline] invalid stage: '{}'", s);
-            err = "Error: unknown stage \"" + s + "\". Valid stages: "
-                  + nlohmann::json(tier_names).dump();
+            err = tool_error_json("unknown_stage", "unknown stage \"" + s
+                + "\". Valid stages: " + nlohmann::json(tier_names).dump());
         } else if (refs == 0
                    && std::find(require_context_tiers.begin(),
                                 require_context_tiers.end(), s)
@@ -497,9 +534,10 @@ static std::string pipeline_rejection(
             // requires context refuses the whole pipeline — before any
             // stage runs, not after the first has burned its turns.
             logger->warn("[pipeline] refused: stage '{}' requires context", s);
-            err = "Error: stage \"" + s + "\" requires context. Re-issue "
-                  "entropic.pipeline with a `context` array naming at least "
-                  "one file path the stages should read.";
+            err = tool_error_json("requires_context", "stage \"" + s
+                + "\" requires context. Re-issue entropic.pipeline with a "
+                "`context` array naming at least one file path the stages "
+                "should read.");
         }
     }
     return err;
@@ -672,14 +710,34 @@ public:
 };
 
 /**
- * @brief Build inline definition for phase_change tool.
+ * @brief The inline phase_change definition, contract included.
+ *
+ * v2.14.0 (gh#203): carries an outputSchema like every bundled
+ * descriptor, and its Response format is rendered from it.
+ *
+ * @return The definition.
  * @dg_internal
- * @version 1.8.5
+ * @version 2.14.0
+ */
+static ToolDefinition phase_change_definition() {
+    ToolDefinition def;
+    def.name = "phase_change";
+    def.description = "Switch inference phase";
+    def.input_schema =
+        R"({"type":"object","properties":{"phase":{"type":"string"}},"required":["phase"]})";
+    def.output_schema =
+        R"({"type":"object","required":["action","phase"],"properties":{"action":{"enum":["phase_change"]},"phase":{"type":"string","description":"the phase requested"}}})";
+    def.description += render_response_format(def.output_schema);
+    return def;
+}
+
+/**
+ * @brief Build the phase_change tool from its inline definition.
+ * @dg_internal
+ * @version 2.14.0
  */
 PhaseChangeTool::PhaseChangeTool()
-    : ToolBase({"phase_change",
-                "Switch inference phase",
-                R"({"type":"object","properties":{"phase":{"type":"string"}},"required":["phase"]})"}) {}
+    : ToolBase(phase_change_definition()) {}
 
 /**
  * @brief Parse phase and emit directive.
@@ -940,15 +998,16 @@ static nlohmann::json build_snapshot(
  *                  history_limit (default 20).
  * @return A ServerResponse with an empty directives array whose result
  *         is the snapshot JSON; when no state provider is configured,
- *         the "engine state provider not configured" error instead of a
- *         null callback dereference.
+ *         the declared `provider_unavailable` error (v2.14.0) instead of
+ *         a null callback dereference.
  * @req REQ-MCP-024
- * @version 1.9.12
+ * @version 2.14.0
  */
 ServerResponse DiagnoseTool::execute(const std::string& args_json) {
     if (provider_ == nullptr) {
         logger->error("[diagnose] no state provider set");
-        return {"Error: engine state provider not configured", {}};
+        return {tool_error_json("provider_unavailable",
+                           "engine state provider not configured"), {}};
     }
 
     auto args = nlohmann::json::parse(args_json);
@@ -1122,33 +1181,34 @@ static std::string list_available_keys(const nlohmann::json& j) {
 }
 
 /**
- * @brief Filter a JSON value by key (object key or array name).
+ * @brief Select one entry of a provider's JSON by key (object key or
+ *        array element `name`).
  * @param json_str Raw JSON string.
  * @param key Key to extract.
- * @param label Label for error messages.
- * @return Filtered JSON string or error.
+ * @param label Label for the error message.
+ * @param[out] data The selected entry.
+ * @return "" when found, else the declared `not_found` error listing
+ *         what is available.
  * @dg_internal
- * @version 1.9.12
+ * @version 2.14.0
  */
 static std::string filter_json_by_key(
     const std::string& json_str,
     const std::string& key,
-    const std::string& label) {
+    const std::string& label,
+    nlohmann::json& data) {
     auto j = nlohmann::json::parse(json_str);
-
     if (j.is_object() && j.contains(key)) {
-        return j[key].dump();
-    }
-    if (j.is_array()) {
+        data = j[key];
+    } else if (j.is_array()) {
         for (const auto& item : j) {
-            if (item.value("name", "") == key) {
-                return item.dump();
-            }
+            if (item.value("name", "") == key) { data = item; }
         }
     }
-    return "Error: " + label + " '" + key
-        + "' not found. Available: "
-        + list_available_keys(j);
+    return data.is_null()
+        ? tool_error_json("not_found", label + " '" + key
+              + "' not found. Available: " + list_available_keys(j))
+        : std::string{};
 }
 
 /**
@@ -1157,107 +1217,90 @@ static std::string filter_json_by_key(
  * @param ud Provider user_data.
  * @param key Filter key (empty = full).
  * @param label Error message label.
- * @return JSON string or error.
+ * @param[out] data The whole value, or the selected entry.
+ * @return "" on success, else the declared `not_found` error.
  * @dg_internal
- * @version 1.9.12
+ * @version 2.14.0
  */
 static std::string inspect_filterable(
     char* (*fn)(void*), void* ud,
-    const std::string& key, const std::string& label) {
+    const std::string& key, const std::string& label,
+    nlohmann::json& data) {
     auto raw = call_provider(fn, ud);
+    std::string err;
     if (key.empty()) {
-        return raw;
+        data = nlohmann::json::parse(raw);
+    } else {
+        err = filter_json_by_key(raw, key, label, data);
     }
-    return filter_json_by_key(raw, key, label);
+    return err;
 }
 
 /**
  * @brief Dispatch inspect for simple (non-filterable) targets.
  * @param p State provider.
  * @param target Target name.
- * @param key Optional key.
- * @param result Output result string.
+ * @param key Optional key (history: entry count; docs: section).
+ * @param[out] data Target data — JSON for state/metrics/history, the
+ *             documentation text for docs.
  * @return true if target was handled.
  * @dg_internal
- * @version 1.9.12
+ * @version 2.14.0
  */
 static bool dispatch_simple_target(
     const entropic_state_provider_t& p,
     const std::string& target,
     const std::string& key,
-    std::string& result) {
-
+    nlohmann::json& data) {
+    bool handled = true;
     if (target == "state") {
-        result = call_provider(p.get_state, p.user_data);
+        data = nlohmann::json::parse(call_provider(p.get_state, p.user_data));
     } else if (target == "metrics") {
-        result = call_provider(p.get_metrics, p.user_data);
+        data = nlohmann::json::parse(call_provider(p.get_metrics, p.user_data));
     } else if (target == "history") {
         int limit = key.empty() ? 10 : std::atoi(key.c_str());
-        result = call_history_provider(
-            p.get_history, limit, p.user_data);
+        data = nlohmann::json::parse(
+            call_history_provider(p.get_history, limit, p.user_data));
     } else if (target == "docs") {
         const char* sec = key.empty() ? nullptr : key.c_str();
-        result = call_docs_provider(p.get_docs, sec, p.user_data);
+        data = call_docs_provider(p.get_docs, sec, p.user_data);
     } else {
-        return false;
+        handled = false;
     }
-    return true;
+    return handled;
 }
 
-/**
- * @brief Try filterable targets (config/identity/tool).
- * @param p State provider.
- * @param target Target name.
- * @param key Filter key.
- * @param result Output.
- * @return true if target was handled.
- * @dg_internal
- * @version 1.9.12
- */
-static bool dispatch_filterable_target(
-    const entropic_state_provider_t& p,
-    const std::string& target,
-    const std::string& key,
-    std::string& result) {
-    if (target == "config") {
-        result = inspect_filterable(
-            p.get_config, p.user_data, key, "config section");
-    } else if (target == "identity") {
-        result = inspect_filterable(
-            p.get_identities, p.user_data, key, "identity");
-    } else if (target == "tool") {
-        result = inspect_filterable(
-            p.get_tools, p.user_data, key, "tool");
-    } else {
-        return false;
-    }
-    return true;
-}
+
 
 /**
  * @brief Dispatch an inspect query to the appropriate provider.
  * @param p State provider callbacks.
  * @param target Query target.
  * @param key Optional filter key.
- * @return Result string.
+ * @param[out] data The target's data.
+ * @return "" on success, else a declared error (`unknown_target`,
+ *         `not_found`).
  * @dg_internal
- * @version 1.9.12
+ * @version 2.14.0
  */
 static std::string dispatch_inspect(
     const entropic_state_provider_t& p,
     const std::string& target,
-    const std::string& key) {
-
-    std::string result;
-    if (dispatch_filterable_target(p, target, key, result)) {
-        return result;
+    const std::string& key,
+    nlohmann::json& data) {
+    std::string err;
+    if (target == "config") {
+        err = inspect_filterable(p.get_config, p.user_data, key, "config section", data);
+    } else if (target == "identity") {
+        err = inspect_filterable(p.get_identities, p.user_data, key, "identity", data);
+    } else if (target == "tool") {
+        err = inspect_filterable(p.get_tools, p.user_data, key, "tool", data);
+    } else if (!dispatch_simple_target(p, target, key, data)) {
+        err = tool_error_json("unknown_target", "unknown target '" + target
+            + "'. Supported: config, identity, tool, state, metrics, "
+              "history, docs");
     }
-    if (dispatch_simple_target(p, target, key, result)) {
-        return result;
-    }
-    return "Error: unknown target '" + target
-        + "'. Supported: config, identity, tool, state, "
-          "metrics, history, docs";
+    return err;
 }
 
 /**
@@ -1271,51 +1314,47 @@ static std::string dispatch_inspect(
  * @brief Execute targeted inspection query.
  *
  * When called with no target (or empty target), returns the full
- * runtime state dump so the model can self-orient without knowing
- * which specific target to query.
+ * runtime state so the model can self-orient without knowing which
+ * specific target to query.
  *
- * gh#33 bug 3 (v2.1.6): guard non-throwing parse against discarded /
- * non-object results so a malformed or no-arg call falls through to
- * the full-state dump rather than crashing the engine with
- * `nlohmann::json::type_error.306`.
+ * gh#33 bug 3 (v2.1.6): a malformed or no-arg call falls through to the
+ * full-state dump rather than throwing type_error.306.
+ *
+ * v2.14.0 (gh#203): one declared envelope, `{target, key?, data}` — the
+ * result used to be whatever the provider returned (an object, an array,
+ * or for docs bare markdown), and failures were bare "Error:" text.
  *
  * @param args_json JSON with optional "target" and "key".
- * @return A ServerResponse with an empty directives array whose result
- *         is the full state dump for an absent/empty target, the
- *         target's data otherwise, an unknown-target error listing the
- *         supported targets, or the provider-not-configured error when
- *         no state provider is wired.
+ * @return The envelope, or a declared error: `unknown_target`,
+ *         `not_found`, `provider_unavailable`.
  * @req REQ-MCP-024
- * @version 2.1.6
+ * @version 2.14.0
  */
 ServerResponse InspectTool::execute(const std::string& args_json) {
     if (provider_ == nullptr) {
         logger->error("[inspect] no state provider set");
-        return {"Error: engine state provider not configured", {}};
+        return {tool_error_json("provider_unavailable",
+                           "engine state provider not configured"), {}};
     }
-
     auto args = nlohmann::json::parse(args_json, nullptr, false);
-    // gh#33 (v2.1.6): non-throwing parse returns a discarded value on
-    // invalid/empty/null input; calling .value() on it throws
-    // type_error.306 and crashes the engine. Coerce to an empty object
-    // so a no-arg `entropic.inspect()` call falls through to the
-    // full-state dump path.
     if (args.is_discarded() || !args.is_object()) {
         args = nlohmann::json::object();
     }
     std::string target = args.value("target", "");
     std::string key = args.value("key", "");
-
     if (target.empty()) {
         logger->info("[inspect] full state dump (no target)");
-        auto state = call_provider(provider_->get_state,
-                                   provider_->user_data);
-        return {state, {}};
+        target = "state";
+        key.clear();
     }
-
     logger->info("[inspect] target='{}' key='{}'", target, key);
-    auto result = dispatch_inspect(*provider_, target, key);
-    return {result, {}};
+    nlohmann::json data;
+    auto err = dispatch_inspect(*provider_, target, key, data);
+    nlohmann::json result;
+    result["target"] = target;
+    result["data"] = data;
+    if (!key.empty()) { result["key"] = key; }
+    return {err.empty() ? result.dump() : err, {}};
 }
 
 /**
@@ -1325,37 +1364,33 @@ ServerResponse InspectTool::execute(const std::string& args_json) {
  * caller-supplied max_messages limit (0 = all messages).
  *
  * @param args_json JSON with optional "max_messages" (0 = all).
- * @return A ServerResponse with an empty directives array whose result
- *         is the JSON array of message entries; the
- *         provider-not-configured error when no state provider is
- *         wired.
+ * @return `{"messages": [...]}` (v2.14.0: an envelope, was a bare
+ *         array); the declared `provider_unavailable` error when no
+ *         state provider is wired.
  * @req REQ-MCP-024
- * @version 2.12.0
+ * @version 2.14.0
  */
 ServerResponse ContextInspectTool::execute(
     const std::string& args_json) {
     if (provider_ == nullptr) {
         logger->error("[context_inspect] no state provider set");
-        return {"Error: engine state provider not configured", {}};
+        return {tool_error_json("provider_unavailable",
+                           "engine state provider not configured"), {}};
     }
 
     auto args = nlohmann::json::parse(args_json, nullptr, false);
-    // gh#143 (v2.12.0): the gh#33 coercion at InspectTool::execute was
-    // never applied to this sibling, so an argument-free
-    // `entropic.context_inspect()` threw type_error.306 here even after
-    // gh#33 was closed. Note it is the `!is_object()` half that does the
-    // work: a non-throwing parse of the four characters `null` returns a
-    // NULL value, not a discarded one, so the is_discarded() half alone
-    // would not have caught it.
+    // gh#143 (v2.12.0): coerce a non-object (including `null`) to {} so an
+    // argument-free call takes the defaults instead of throwing.
     if (args.is_discarded() || !args.is_object()) {
         args = nlohmann::json::object();
     }
     int max_messages = args.value("max_messages", 0);
 
     logger->info("[context_inspect] max_messages={}", max_messages);
-    auto result = call_history_provider(
-        provider_->get_history, max_messages, provider_->user_data);
-    return {result, {}};
+    nlohmann::json result;
+    result["messages"] = nlohmann::json::parse(call_history_provider(
+        provider_->get_history, max_messages, provider_->user_data));
+    return {result.dump(), {}};
 }
 
 // ── FollowupTool (gh#32, v2.1.6) ────────────────────────────────
@@ -1415,44 +1450,64 @@ private:
 };
 
 /**
+ * @brief Wrap the provider's records in the declared `{"results": [...]}`.
+ *
+ * v2.14.0 (gh#203): followup.json always promised this envelope; the tool
+ * passed the provider's output through verbatim — a bare array. Records
+ * are reduced to the four fields i_mcp_server.h declares.
+ *
+ * @param raw Provider JSON array, or nullptr.
+ * @return `{"results": [{delegation_id, target_tier, summary,
+ *         completed_at}]}`.
+ * @dg_internal
+ * @version 2.14.0
+ */
+static std::string followup_results(const char* raw) {
+    auto rows = nlohmann::json::parse(raw == nullptr ? "[]" : raw, nullptr, false);
+    nlohmann::json results = nlohmann::json::array();
+    for (const auto& r : rows.is_array() ? rows : nlohmann::json::array()) {
+        nlohmann::json rec;
+        rec["delegation_id"] = r.value("delegation_id", "");
+        rec["target_tier"] = r.value("target_tier", "");
+        rec["summary"] = r.value("summary", "");
+        rec["completed_at"] = r.value("completed_at", "");
+        results.push_back(std::move(rec));
+    }
+    nlohmann::json out;
+    out["results"] = std::move(results);
+    return out.dump();
+}
+
+/**
  * @brief Execute a followup query against prior delegations.
  * @param args_json JSON with "query" and optional "max_results"
  *                  (default 3).
  * @return A ServerResponse with NO directives whose result is the
- *         search results JSON, or one of the typed errors: invalid args
- *         for non-object/malformed JSON, a required-query error for an
- *         empty query, or storage-not-available when no search provider
- *         is wired.
+ *         declared `{"results": [...]}`, or a declared error (v2.14.0:
+ *         codes, where the message used to BE the code): `invalid_args`
+ *         for a non-object or empty query, `storage_unavailable` when no
+ *         search provider is wired.
  * @req REQ-MCP-024
- * @version 2.1.6
+ * @version 2.14.0
  */
 ServerResponse FollowupTool::execute(const std::string& args_json) {
     auto args = nlohmann::json::parse(args_json, nullptr, false);
     std::string body;
-    if (args.is_discarded() || !args.is_object()) {
-        body = R"({"error":"invalid args: object with 'query' required"})";
+    if (args.is_discarded() || !args.is_object()
+        || args.value("query", "").empty()) {
+        body = tool_error_json("invalid_args", "'query' is required and must be non-empty");
+    } else if (provider_ == nullptr || provider_->search_delegations == nullptr) {
+        logger->warn("[followup] no search_delegations provider configured");
+        body = tool_error_json("storage_unavailable", "delegation storage not available");
     } else {
         std::string query = args.value("query", "");
         int max_results = args.value("max_results", 3);
-        if (query.empty()) {
-            body = R"({"error":"'query' is required and must be non-empty"})";
-        } else if (provider_ == nullptr
-                   || provider_->search_delegations == nullptr) {
-            logger->warn("[followup] no search_delegations provider "
-                         "configured");
-            body = R"({"error":"delegation storage not available"})";
-        } else {
-            logger->info("[followup] query='{}' max_results={}",
-                         query, max_results);
-            char* raw = provider_->search_delegations(
-                query.c_str(), max_results, provider_->user_data);
-            if (raw == nullptr) {
-                body = R"({"results":[]})";
-            } else {
-                body = raw;
-                std::free(raw);
-            }
-        }
+        char* raw = provider_->search_delegations(
+            query.c_str(), max_results, provider_->user_data);
+        body = followup_results(raw);
+        std::free(raw);
+        logger->info("[followup] query='{}' max_results={} -> {}",
+                     query, max_results, body);
     }
     return {body, {}};
 }
@@ -1509,16 +1564,16 @@ public:
  * @param args_json JSON {delegation_id?, target?, task, max_turns?}.
  * @return On valid arguments, a ServerResponse with delegate +
  *         stop_processing directives. On non-object args, a missing
- *         task, or neither delegation_id nor target (gh#162), a typed
- *         error with NO directives — validation precedes any directive
+ *         task, or neither delegation_id nor target (gh#162), the declared
+ *         `invalid_args` error with NO directives — validation precedes any directive
  *         emission.
  * @req REQ-MCP-024
- * @version 2.13.0
+ * @version 2.14.0
  */
 ServerResponse ResumeDelegationTool::execute(const std::string& args_json) {
     auto args = nlohmann::json::parse(args_json, nullptr, false);
     if (args.is_discarded() || !args.is_object()) {
-        return {R"({"error":"invalid args: object required"})", {}};
+        return {tool_error_json("invalid_args", "an arguments object is required"), {}};
     }
     std::string delegation_id = args.value("delegation_id", "");
     std::string target = args.value("target", "");
@@ -1527,8 +1582,8 @@ ServerResponse ResumeDelegationTool::execute(const std::string& args_json) {
     // gh#162: an id OR a tier. Reaching this tool used to cost a followup
     // round trip on a slow local model before any work started.
     if (task.empty() || (delegation_id.empty() && target.empty())) {
-        return {R"({"error":"'task' and one of 'delegation_id' or )"
-                R"('target' are required"})",
+        return {tool_error_json("invalid_args",
+                           "'task' and one of 'delegation_id' or 'target' are required"),
                 {}};
     }
     bool by_target = delegation_id.empty();

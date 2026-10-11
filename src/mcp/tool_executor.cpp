@@ -377,27 +377,63 @@ static std::string check_type(
 }
 
 /**
- * @brief Check one property's enum and type constraints.
+ * @brief Check a numeric value against `minimum` / `maximum` (v2.14.0).
+ *
+ * Bounds were declared by bundled schemas (followup.max_results) and by
+ * v2.14.0's paging arguments, but never enforced — an undocumented
+ * acceptance of out-of-range values.
+ *
  * @param key Property name.
  * @param prop Property schema.
  * @param val Argument value.
- * @return An empty string when the value satisfies both the enum (if
- *         declared) and the type (if declared); otherwise the enum
- *         error, which is checked first, else the type error.
+ * @return "" when in range or not numeric; else a message naming the
+ *         property, the value and the bound.
  * @req REQ-MCP-013
- * @version 2.0.6
+ * @version 2.14.0
+ */
+static std::string check_range(
+    const std::string& key,
+    const nlohmann::json& prop,
+    const nlohmann::json& val)
+{
+    std::string err;
+    if (val.is_number() && prop.contains("minimum")
+        && val.get<double>() < prop["minimum"].get<double>()) {
+        err = "Value for '" + key + "' is " + val.dump()
+            + ", below the minimum " + prop["minimum"].dump();
+    } else if (val.is_number() && prop.contains("maximum")
+               && val.get<double>() > prop["maximum"].get<double>()) {
+        err = "Value for '" + key + "' is " + val.dump()
+            + ", above the maximum " + prop["maximum"].dump();
+    }
+    return err;
+}
+
+/**
+ * @brief Check one property's enum, type and range constraints.
+ * @param key Property name.
+ * @param prop Property schema.
+ * @param val Argument value.
+ * @return An empty string when the value satisfies the enum (if
+ *         declared), the type (if declared) and the numeric range (if
+ *         declared, v2.14.0); otherwise the first failing check's error,
+ *         in that order.
+ * @req REQ-MCP-013
+ * @version 2.14.0
  */
 static std::string check_property_constraints(
     const std::string& key,
     const nlohmann::json& prop,
     const nlohmann::json& val)
 {
+    std::string err;
     if (prop.contains("enum")) {
-        auto err = check_enum(key, prop["enum"], val);
-        if (!err.empty()) { return err; }
+        err = check_enum(key, prop["enum"], val);
     }
-    if (!prop.contains("type")) { return ""; }
-    return check_type(key, prop["type"].get<std::string>(), val);
+    if (err.empty() && prop.contains("type")) {
+        err = check_type(key, prop["type"].get<std::string>(), val);
+    }
+    return err.empty() ? check_range(key, prop, val) : err;
 }
 
 /**
@@ -547,7 +583,7 @@ std::pair<Message, std::string> ToolExecutor::execute_tool(
  * @param ms Elapsed milliseconds.
  * @param iteration Loop iteration.
  * @req REQ-MCP-020
- * @version 2.3.7
+ * @version 2.14.0
  */
 void ToolExecutor::record_tool_history(const ToolCall& call,
                                        const std::string& args_json,
@@ -557,7 +593,7 @@ void ToolExecutor::record_tool_history(const ToolCall& call,
     rec.sequence = ++history_seq_;
     rec.tool_name = call.name;
     rec.params_summary = summarize_params(args_json);
-    rec.status = (result_text.rfind("error", 0) == 0)
+    rec.status = mcp::looks_like_tool_error(result_text)  // gh#190: one classifier
         ? "error" : "success";
     rec.result_summary = truncate_result(result_text, 200);
     rec.elapsed_ms = static_cast<double>(ms);
@@ -598,7 +634,7 @@ std::string ToolExecutor::tool_call_key(const ToolCall& call) {
  * @param call Tool call.
  * @param result Raw ServerResponse envelope (or bare text).
  * @req REQ-MCP-015
- * @version 2.13.0
+ * @version 2.14.0
  */
 void ToolExecutor::record_tool_call(
     LoopContext& ctx,
@@ -617,7 +653,10 @@ void ToolExecutor::record_tool_call(
     // text would poison a transient failure for the rest of the turn,
     // which v1.8.5 rightly avoided; counting bounds the repeat without
     // taking the retry away. check_repeated_failure reads this.
-    if (text.find("Error:") == 0 || text.find("error:") == 0) {
+    // gh#190 (v2.14.0): ONE error classifier for every site. This used to
+    // match only an "Error:" prefix, so a structured {"error": ...} result
+    // read as success — it cleared the failure count and was cached.
+    if (mcp::looks_like_tool_error(text)) {
         ctx.failed_tool_calls[key]++;
         return;
     }

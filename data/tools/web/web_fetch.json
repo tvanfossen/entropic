@@ -1,6 +1,6 @@
 {
   "name": "web_fetch",
-  "description": "Fetch a web page and return its content as plain text.\n\nUse this to read documentation, articles, or other web content. HTML is stripped to produce readable text. Content is truncated to stay within context limits.",
+  "description": "PLACEHOLDER — not implemented. No HTTP client is wired; every call returns the `not_implemented` error. Disabled by default (mcp.enable_web).",
   "inputSchema": {
     "type": "object",
     "properties": {
@@ -14,6 +14,26 @@
         "default": 20000
       }
     },
-    "required": ["url"]
+    "required": [
+      "url"
+    ]
+  },
+  "outputSchema": {
+    "title": "error",
+    "type": "object",
+    "required": [
+      "error",
+      "message"
+    ],
+    "properties": {
+      "error": {
+        "enum": [
+          "not_implemented"
+        ]
+      },
+      "message": {
+        "type": "string"
+      }
+    }
   }
 }

@@ -820,8 +820,12 @@ struct FilesystemConfig {
     /// @version 2.13.0
     std::vector<std::filesystem::path> outside_root_deny;
 
-    std::optional<int> max_read_bytes; ///< Max file read size (nullopt = derive from context)
-    float max_read_context_pct = 0.25f; ///< Max context % for single file read
+    /// @brief Byte budget of ONE read_file window (nullopt = derive from
+    ///        context). v2.14.0 (gh#201): a longer file is paged, not
+    ///        refused; only a single line larger than the budget is
+    ///        `size_exceeded`.
+    std::optional<int> max_read_bytes;
+    float max_read_context_pct = 0.25f; ///< Context share for one read_file window (when max_read_bytes is unset)
 
     /// @brief Hard cap on directory entries visited by ONE glob or grep
     ///        walk; <= 0 disables the cap (gh#161).
@@ -951,8 +955,8 @@ struct MCPConfig {
     bool enable_filesystem = true;   ///< Enable filesystem server
     bool enable_bash = true;         ///< Enable bash server
     bool enable_git = true;          ///< Enable git server
-    bool enable_diagnostics = true;  ///< Enable diagnostics server
-    bool enable_web = true;          ///< Enable web server
+    bool enable_diagnostics = false; ///< Diagnostics server — placeholder, off by default (v2.14.0, gh#174)
+    bool enable_web = false;         ///< Web server — placeholder, off by default (v2.14.0, gh#174)
     FilesystemConfig filesystem;     ///< Filesystem server config
     BashConfig bash;                 ///< Bash server config (v2.13.0)
     ExternalMCPConfig external;      ///< External MCP server config (Entropic-as-server)

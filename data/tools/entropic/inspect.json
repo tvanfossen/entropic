@@ -6,7 +6,15 @@
     "properties": {
       "target": {
         "type": "string",
-        "enum": ["config", "identity", "tool", "state", "metrics", "history", "docs"],
+        "enum": [
+          "config",
+          "identity",
+          "tool",
+          "state",
+          "metrics",
+          "history",
+          "docs"
+        ],
         "description": "What to inspect. Omit for full state dump."
       },
       "key": {
@@ -16,5 +24,58 @@
     },
     "required": [],
     "additionalProperties": false
+  },
+  "outputSchema": {
+    "oneOf": [
+      {
+        "title": "success",
+        "type": "object",
+        "required": [
+          "target",
+          "data"
+        ],
+        "properties": {
+          "target": {
+            "enum": [
+              "config",
+              "identity",
+              "tool",
+              "state",
+              "metrics",
+              "history",
+              "docs"
+            ],
+            "description": "what was inspected (`state` when no target was given)"
+          },
+          "key": {
+            "type": "string",
+            "description": "present when a key was given"
+          },
+          "data": {
+            "description": "the target's data: JSON for every target except `docs`, which is documentation text"
+          }
+        }
+      },
+      {
+        "title": "error",
+        "type": "object",
+        "required": [
+          "error",
+          "message"
+        ],
+        "properties": {
+          "error": {
+            "enum": [
+              "unknown_target",
+              "not_found",
+              "provider_unavailable"
+            ]
+          },
+          "message": {
+            "type": "string"
+          }
+        }
+      }
+    ]
   }
 }

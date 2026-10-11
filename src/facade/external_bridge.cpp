@@ -798,14 +798,23 @@ class TurnTicket {
 public:
     /**
      * @brief Take a ticket and wait for this session's turn.
+     *
+     * v2.14.0: logs how long admission took. Per-session lanes are only
+     * observable this way — two sessions admitted with no wait while both
+     * were in flight is the engagement evidence the multi-client test
+     * reads; a bridge-wide queue shows the second waiting out the first.
+     *
      * @param b Bridge owning the queue.
      * @param session_key Session the turn runs under (v2.14.0).
      * @dg_internal
-     * @version 2.12.0
+     * @version 2.14.0
      */
     TurnTicket(ExternalBridge* b, std::string session_key)
         : bridge_(b), session_(std::move(session_key)),
-          held_(b->begin_turn_wait(kTurnWaitTimeoutMs, &waited_ms_, session_)) {}
+          held_(b->begin_turn_wait(kTurnWaitTimeoutMs, &waited_ms_, session_)) {
+        logger->info("[turn] session '{}' {} after {} ms", session_,
+                     held_ ? "admitted" : "gave up", waited_ms_);
+    }
 
     /**
      * @brief Hand the turn on, if this ticket held it.

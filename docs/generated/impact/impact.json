@@ -1,59 +1,17 @@
 [
   {
-    "req_id": "REQ-ABI-002",
-    "req_name": "C++ exceptions never cross any .so boundary",
+    "req_id": "REQ-API-012",
+    "req_name": "Final-answer selection from a serialized conversation",
     "functions": [
       {
-        "name": "entropic_workspace_create",
-        "file": "src/facade/entropic_mcp.cpp",
+        "name": "handle_ask_plain",
+        "file": "src/facade/external_bridge.cpp",
         "version": "2.14.0"
       },
       {
-        "name": "entropic_session_bind_workspace",
-        "file": "src/facade/entropic_mcp.cpp",
-        "version": "2.14.0"
-      },
-      {
-        "name": "entropic_workspace_set_app_context",
-        "file": "src/facade/entropic_mcp.cpp",
-        "version": "2.14.0"
-      }
-    ]
-  },
-  {
-    "req_id": "REQ-API-005",
-    "req_name": "Uniform precondition guard on every exported entry point",
-    "functions": [
-      {
-        "name": "entropic_set_path_approval_callback",
-        "file": "src/facade/entropic_mcp.cpp",
-        "version": "2.13.0"
-      },
-      {
-        "name": "entropic_workspace_create",
-        "file": "src/facade/entropic_mcp.cpp",
-        "version": "2.14.0"
-      },
-      {
-        "name": "entropic_session_bind_workspace",
-        "file": "src/facade/entropic_mcp.cpp",
-        "version": "2.14.0"
-      },
-      {
-        "name": "entropic_workspace_set_app_context",
-        "file": "src/facade/entropic_mcp.cpp",
-        "version": "2.14.0"
-      }
-    ]
-  },
-  {
-    "req_id": "REQ-API-010",
-    "req_name": "Observer and callback slots survive configure and fire uniformly",
-    "functions": [
-      {
-        "name": "entropic_set_path_approval_callback",
-        "file": "src/facade/entropic_mcp.cpp",
-        "version": "2.13.0"
+        "name": "handle_ask",
+        "file": "src/facade/external_bridge.cpp",
+        "version": "2.10.2"
       }
     ]
   },
@@ -62,167 +20,98 @@
     "req_name": "External bridge exposes the engine over a peer-authenticated unix socket",
     "functions": [
       {
-        "name": "bridge_project_dir",
-        "file": "src/facade/entropic_mcp.cpp",
-        "version": "2.14.0"
-      }
-    ]
-  },
-  {
-    "req_id": "REQ-CFG-001",
-    "req_name": "Layered configuration resolution with most-specific-layer-wins precedence",
-    "functions": [
-      {
-        "name": "validate_workspace_app_context",
-        "file": "src/config/loader.cpp",
+        "name": "handle_ask_plain",
+        "file": "src/facade/external_bridge.cpp",
         "version": "2.14.0"
       },
       {
-        "name": "load_layered",
-        "file": "src/config/loader.cpp",
-        "version": "2.14.0"
-      }
-    ]
-  },
-  {
-    "req_id": "REQ-CFG-002",
-    "req_name": "Whole-block replace semantics for models and routing across layers",
-    "functions": [
+        "name": "handle_ask",
+        "file": "src/facade/external_bridge.cpp",
+        "version": "2.10.2"
+      },
       {
-        "name": "load_layered",
-        "file": "src/config/loader.cpp",
-        "version": "2.14.0"
-      }
-    ]
-  },
-  {
-    "req_id": "REQ-CFG-007",
-    "req_name": "Usable configuration with no user config present",
-    "functions": [
+        "name": "cancel_inflight_async_tasks",
+        "file": "src/facade/external_bridge.cpp",
+        "version": "2.1.0"
+      },
       {
-        "name": "load_layered",
-        "file": "src/config/loader.cpp",
-        "version": "2.14.0"
-      }
-    ]
-  },
-  {
-    "req_id": "REQ-IDEN-001",
-    "req_name": "Tier resolution contract and per-tier loop overrides",
-    "functions": [
-      {
-        "name": "seed_system_prompt_for_tier",
-        "file": "src/core/engine.cpp",
+        "name": "handle_clear",
+        "file": "src/facade/external_bridge.cpp",
         "version": "2.14.0"
       },
       {
-        "name": "tri_resolve_tier",
-        "file": "src/core/engine.cpp",
+        "name": "ask_in_turn",
+        "file": "src/facade/external_bridge.cpp",
         "version": "2.14.0"
-      }
-    ]
-  },
-  {
-    "req_id": "REQ-LOOP-001",
-    "req_name": "Agent state machine with observable, dual-channel transitions",
-    "functions": [
+      },
       {
-        "name": "run_turn",
-        "file": "src/core/engine.cpp",
+        "name": "dispatch_ask",
+        "file": "src/facade/external_bridge.cpp",
         "version": "2.12.0-rc1"
       },
       {
-        "name": "run_streaming",
-        "file": "src/core/engine.cpp",
-        "version": "2.14.0"
-      }
-    ]
-  },
-  {
-    "req_id": "REQ-LOOP-008",
-    "req_name": "Family-aware streaming reasoning filter with UTF-8 alignment",
-    "functions": [
-      {
-        "name": "run_streaming",
-        "file": "src/core/engine.cpp",
-        "version": "2.14.0"
-      }
-    ]
-  },
-  {
-    "req_id": "REQ-MCP-021",
-    "req_name": "Filesystem tools are root-confined, read-before-write gated, and size-bounded",
-    "functions": [
-      {
-        "name": "wire_outside_root_approver",
-        "file": "src/facade/entropic_mcp.cpp",
-        "version": "2.13.0"
-      },
-      {
-        "name": "entropic_set_path_approval_callback",
-        "file": "src/facade/entropic_mcp.cpp",
-        "version": "2.13.0"
-      }
-    ]
-  },
-  {
-    "req_id": "REQ-MCP-025",
-    "req_name": "External servers are discovered safely, directive-stripped, and health-monitored",
-    "functions": [
-      {
-        "name": "expected_bridge_socket",
-        "file": "src/facade/entropic_mcp.cpp",
-        "version": "2.14.0"
-      }
-    ]
-  },
-  {
-    "req_id": "REQ-MCP-027",
-    "req_name": "Named workspaces bind a session to its own tool root and servers",
-    "functions": [
-      {
-        "name": "set_workspace_prompts",
-        "file": "src/core/engine.cpp",
+        "name": "dispatch_tool",
+        "file": "src/facade/external_bridge.cpp",
         "version": "2.14.0"
       },
       {
-        "name": "clear_workspace_prompts",
-        "file": "src/core/engine.cpp",
+        "name": "begin_turn_wait",
+        "file": "src/facade/external_bridge.cpp",
+        "version": "2.12.0"
+      },
+      {
+        "name": "end_turn_wait",
+        "file": "src/facade/external_bridge.cpp",
+        "version": "2.12.0"
+      },
+      {
+        "name": "socket_path_safe",
+        "file": "src/facade/external_bridge.cpp",
+        "version": "2.1.7"
+      },
+      {
+        "name": "bind_and_listen",
+        "file": "src/facade/external_bridge.cpp",
         "version": "2.14.0"
       },
       {
-        "name": "bind_session_workspace",
-        "file": "src/core/engine.cpp",
+        "name": "create_listen_socket",
+        "file": "src/facade/external_bridge.cpp",
         "version": "2.14.0"
       },
       {
-        "name": "session_system_prompt",
-        "file": "src/core/engine.cpp",
+        "name": "peer_uid_matches",
+        "file": "src/facade/external_bridge.cpp",
+        "version": "2.1.7"
+      },
+      {
+        "name": "start",
+        "file": "src/facade/external_bridge.cpp",
         "version": "2.14.0"
       },
       {
-        "name": "apply_workspace_app_context",
-        "file": "src/facade/entropic_mcp.cpp",
+        "name": "stop",
+        "file": "src/facade/external_bridge.cpp",
         "version": "2.14.0"
       },
       {
-        "name": "build_workspace",
-        "file": "src/facade/entropic_mcp.cpp",
-        "version": "2.14.0 [reviewed]"
+        "name": "run_async_ask",
+        "file": "src/facade/external_bridge.cpp",
+        "version": "2.12.0"
       },
       {
-        "name": "entropic_workspace_create",
-        "file": "src/facade/entropic_mcp.cpp",
+        "name": "async_worker",
+        "file": "src/facade/external_bridge.cpp",
         "version": "2.14.0"
       },
       {
-        "name": "entropic_session_bind_workspace",
-        "file": "src/facade/entropic_mcp.cpp",
-        "version": "2.14.0"
+        "name": "unsubscribe",
+        "file": "src/facade/external_bridge.cpp",
+        "version": "2.0.6-rc16"
       },
       {
-        "name": "entropic_workspace_set_app_context",
-        "file": "src/facade/entropic_mcp.cpp",
+        "name": "broadcast_notification",
+        "file": "src/facade/external_bridge.cpp",
         "version": "2.14.0"
       }
     ]

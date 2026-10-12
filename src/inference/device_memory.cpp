@@ -15,8 +15,13 @@
 
 #include <sys/resource.h>
 
+#include <atomic>
+
 namespace {
 auto logger = entropic::log::get("inference.device_memory");
+
+/// @brief Device free-VRAM queries this process has made (gh#198).
+std::atomic<uint64_t> s_query_count{0};
 }  // namespace
 
 namespace entropic {
@@ -31,9 +36,10 @@ namespace entropic {
  *
  * @return Free VRAM bytes, or 0 when unknown.
  * @req REQ-INFER-019
- * @version 2.11.0
+ * @version 2.14.0
  */
 uint64_t query_device_free_vram_bytes() {
+    s_query_count.fetch_add(1, std::memory_order_relaxed);
     ggml_backend_dev_t device =
         ggml_backend_dev_by_type(GGML_BACKEND_DEVICE_TYPE_GPU);
     if (device == nullptr) {
@@ -67,6 +73,16 @@ uint64_t host_memlock_limit_bytes() {
         return kMemlockUnlimited;
     }
     return static_cast<uint64_t>(rl.rlim_cur);
+}
+
+/**
+ * @brief How many device free-VRAM queries this process has made (gh#198).
+ * @return The count.
+ * @req REQ-INFER-019
+ * @version 2.14.0
+ */
+uint64_t device_memory_query_count() {
+    return s_query_count.load(std::memory_order_relaxed);
 }
 
 }  // namespace entropic

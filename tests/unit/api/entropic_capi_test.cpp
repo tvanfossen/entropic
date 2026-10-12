@@ -3660,10 +3660,12 @@ TEST_CASE("ExternalBridge run_async_ask progress notif carries task_id token",
     REQUIRE(socketpair(AF_UNIX, SOCK_STREAM, 0, sock.data()) == 0);
     bridge.subscribe(sock[0]);
 
-    bridge.run_async_ask("ignored", "task-v2310-tok", -1);
+    // v2.14.0: completions go to the task's OWNER only, so the subscribed
+    // peer is the owner. The shape asserted below did not change.
+    bridge.run_async_ask("ignored", "task-v2310-tok", sock[0]);
     std::this_thread::sleep_for(250ms);
 
-    // Read the broadcast notification.
+    // Read the owner's notification.
     auto line = read_one_line_blocking(sock[1]);
     auto notif = bridge_json::parse(line, nullptr, false);
     REQUIRE_FALSE(notif.is_discarded());

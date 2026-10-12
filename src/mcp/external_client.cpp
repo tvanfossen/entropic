@@ -403,7 +403,7 @@ bool ExternalMCPClient::validate_init_response(
  *         response, or an error object.
  * @req REQ-MCP-025
  * @req REQ-MCP-026
- * @version 2.13.0
+ * @version 2.14.0
  */
 bool ExternalMCPClient::send_initialize() {
     nlohmann::json params;
@@ -416,7 +416,7 @@ bool ExternalMCPClient::send_initialize() {
     auto request = build_request_id(
         "initialize", params.dump(), request_id);
     auto response = transport_->send_request(
-        request, INIT_TIMEOUT_MS);
+        request, init_timeout_ms_);
 
     if (response.empty() || !response_matches(response, request_id)) {
         return false;
@@ -435,13 +435,13 @@ bool ExternalMCPClient::send_initialize() {
  * @req REQ-MCP-025
  * @req REQ-MCP-007
  * @req REQ-MCP-026
- * @version 2.13.0
+ * @version 2.14.0
  */
 bool ExternalMCPClient::query_tools() {
     int request_id = 0;
     auto request = build_request_id("tools/list", "{}", request_id);
     auto response = transport_->send_request(
-        request, INIT_TIMEOUT_MS);
+        request, init_timeout_ms_);
 
     if (response.empty() || !response_matches(response, request_id)) {
         return false;
@@ -472,32 +472,37 @@ bool ExternalMCPClient::query_tools() {
 
 /**
  * @brief Extract text content from tools/call JSON-RPC response.
+ *
+ * gh#190 (v2.14.0): a result flagged `isError: true` — MCP's signal that
+ * the tool ran and failed or declined — is prefixed "Error: ", so the
+ * engine's one classifier counts it as a failure. It used to be dropped,
+ * and a polite refusal read as success.
+ *
  * @param response_json Raw JSON-RPC response.
- * @return Extracted text, or error message.
+ * @return Extracted text ("Error: "-prefixed when isError), or an error
+ *         message for a JSON-RPC error or an unparseable response.
  * @utility
- * @version 1.8.7
+ * @version 2.14.0
  */
 std::string ExternalMCPClient::extract_tool_result(
     const std::string& response_json) {
-
+    std::string text;
     try {
         auto j = nlohmann::json::parse(response_json);
         if (j.contains("error")) {
-            return "Error: " + j["error"]["message"]
-                .get<std::string>();
+            return "Error: " + j["error"]["message"].get<std::string>();
         }
-
-        auto& content = j.at("result").at("content");
-        std::string text;
-        for (const auto& item : content) {
+        const auto& result = j.at("result");
+        for (const auto& item : result.at("content")) {
             if (item.value("type", "") == "text") {
                 text += item.at("text").get<std::string>();
             }
         }
-        return text;
+        if (result.value("isError", false)) { text = "Error: " + text; }
     } catch (const nlohmann::json::exception& e) {
-        return "Error parsing response: " + std::string(e.what());
+        text = "Error parsing response: " + std::string(e.what());
     }
+    return text;
 }
 
 /**
@@ -530,6 +535,16 @@ std::string ExternalMCPClient::build_response(
         resp["is_error"] = true;
     }
     return resp.dump();
+}
+
+/**
+ * @brief Set the bring-up bound (gh#175).
+ * @param ms Milliseconds; 0 keeps the current bound.
+ * @req REQ-MCP-025
+ * @version 2.14.0
+ */
+void ExternalMCPClient::set_init_timeout_ms(uint32_t ms) {
+    if (ms > 0) { init_timeout_ms_ = ms; }
 }
 
 } // namespace entropic

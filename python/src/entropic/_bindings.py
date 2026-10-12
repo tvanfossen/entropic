@@ -174,6 +174,7 @@ class EntropicHookPoint(enum.IntEnum):
     ON_LOOP_START = 20
     ON_LOOP_END = 21
     ON_COMPLETE = 22
+    PRE_MCP_SERVER_CONNECT = 23
 
 class EntDecision(enum.IntEnum):
     """Mirrors ``ent_decision_t`` from the C header."""
@@ -263,6 +264,7 @@ CRITIQUE_START_CB = ctypes.CFUNCTYPE(None, ctypes.c_void_p)
 CRITIQUE_END_CB = ctypes.CFUNCTYPE(None, ctypes.c_void_p)
 QUEUE_OBSERVER_CB = ctypes.CFUNCTYPE(None, ctypes.c_char_p, ctypes.c_size_t, ctypes.c_void_p)
 ENTROPIC_RUN_SESSION_STREAMING_ARG3_CB = ctypes.CFUNCTYPE(None, ctypes.c_char_p, ctypes.c_size_t, ctypes.c_void_p)
+ENTROPIC_RUN_SESSION_STREAMING_AS_ARG4_CB = ctypes.CFUNCTYPE(None, ctypes.c_char_p, ctypes.c_size_t, ctypes.c_void_p)
 
 # gh#22 backward-compat aliases for the CFUNCTYPE typedefs.
 HOOK_CALLBACK_CB = HOOK_CB
@@ -304,6 +306,7 @@ entropic_context_get = _bind("entropic_context_get", ctypes.c_int, entropic_hand
 entropic_run_session = _bind("entropic_run_session", ctypes.c_int, entropic_handle_t, ctypes.c_char_p, ctypes.c_char_p, ctypes.POINTER(ctypes.c_char_p))
 entropic_run_session_as = _bind("entropic_run_session_as", ctypes.c_int, entropic_handle_t, ctypes.c_char_p, ctypes.c_char_p, ctypes.c_char_p, ctypes.POINTER(ctypes.c_char_p))
 entropic_run_session_streaming = _bind("entropic_run_session_streaming", ctypes.c_int, entropic_handle_t, ctypes.c_char_p, ctypes.c_char_p, ENTROPIC_RUN_SESSION_STREAMING_ARG3_CB, ctypes.c_void_p, ctypes.POINTER(ctypes.c_int))
+entropic_run_session_streaming_as = _bind("entropic_run_session_streaming_as", ctypes.c_int, entropic_handle_t, ctypes.c_char_p, ctypes.c_char_p, ctypes.c_char_p, ENTROPIC_RUN_SESSION_STREAMING_AS_ARG4_CB, ctypes.c_void_p, ctypes.POINTER(ctypes.c_int))
 entropic_session_context_get = _bind("entropic_session_context_get", ctypes.c_int, entropic_handle_t, ctypes.c_char_p, ctypes.POINTER(ctypes.c_char_p))
 entropic_session_context_set = _bind("entropic_session_context_set", ctypes.c_int, entropic_handle_t, ctypes.c_char_p, ctypes.c_char_p)
 entropic_session_context_count = _bind("entropic_session_context_count", ctypes.c_int, entropic_handle_t, ctypes.c_char_p, ctypes.POINTER(ctypes.c_size_t))
@@ -312,6 +315,7 @@ entropic_session_drop = _bind("entropic_session_drop", ctypes.c_int, entropic_ha
 entropic_session_list = _bind("entropic_session_list", ctypes.c_int, entropic_handle_t, ctypes.POINTER(ctypes.c_char_p))
 entropic_workspace_create = _bind("entropic_workspace_create", ctypes.c_int, entropic_handle_t, ctypes.c_char_p, ctypes.c_char_p)
 entropic_session_bind_workspace = _bind("entropic_session_bind_workspace", ctypes.c_int, entropic_handle_t, ctypes.c_char_p, ctypes.c_char_p)
+entropic_workspace_set_app_context = _bind("entropic_workspace_set_app_context", ctypes.c_int, entropic_handle_t, ctypes.c_char_p, ctypes.c_char_p)
 entropic_context_count = _bind("entropic_context_count", ctypes.c_int, entropic_handle_t, ctypes.POINTER(ctypes.c_size_t))
 entropic_context_usage = _bind("entropic_context_usage", ctypes.c_int, entropic_handle_t, ctypes.POINTER(ctypes.c_size_t), ctypes.POINTER(ctypes.c_size_t))
 entropic_state_save = _bind("entropic_state_save", ctypes.c_int, entropic_handle_t, ctypes.c_char_p, ctypes.c_char_p)

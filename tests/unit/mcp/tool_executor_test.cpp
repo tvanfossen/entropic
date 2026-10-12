@@ -95,6 +95,32 @@ private:
 };
 
 /**
+ * @brief gh#190 (v2.14.0): a read_file-like tool that ALWAYS fails with a
+ *        structured JSON error, and (like read_file) opts out of
+ *        duplicate detection.
+ * @internal
+ * @version 2.14.0
+ */
+class JsonErrorTool : public ToolBase {
+public:
+    JsonErrorTool() : ToolBase(ToolDefinition{
+        "read", "Fails structurally",
+        R"({"type":"object","properties":{"path":{"type":"string"}}})"}) {}
+    ServerResponse execute(const std::string& /*args_json*/) override {
+        return ServerResponse{R"({"error":"not_found","message":"File not found: x"})", {}};
+    }
+};
+
+/** @brief Server for JsonErrorTool; skips duplicate checks like filesystem. @internal @version 2.14.0 */
+class JsonErrorServer : public MCPServerBase {
+public:
+    JsonErrorServer() : MCPServerBase("jerr") { register_tool(&tool_); }
+    bool skip_duplicate_check(const std::string&) const override { return true; }
+private:
+    JsonErrorTool tool_;
+};
+
+/**
  * @brief Tool with enum constraint for schema validation testing.
  * @version 2.0.6
  */
@@ -107,7 +133,7 @@ public:
     EnumTool() : ToolBase(ToolDefinition{
         "pick",
         "Pick a color",
-        R"({"type":"object","properties":{"color":{"type":"string","enum":["red","blue","green"]}},"required":["color"]})"
+        R"({"type":"object","properties":{"color":{"type":"string","enum":["red","blue","green"]},"count":{"type":"integer","minimum":1,"maximum":5}},"required":["color"]})"
     }) {}
 
     /**
@@ -444,6 +470,80 @@ SCENARIO("Schema validation rejects invalid enum value",
                 CHECK(results[0].content.find("Invalid value")
                       == std::string::npos);
             }
+        }
+    }
+}
+
+SCENARIO("gh#190: a structured JSON error counts as a failure everywhere",
+         "[tool_executor][gh190][2.14.0]")
+{
+    // record_tool_call counted only text starting "Error:", and
+    // record_tool_history only text starting "error". A tool answering
+    // {"error":...} read as a SUCCESS to both: it cleared the failure
+    // count and was logged as success — so a read_file not_found repeated
+    // forever was caught by nothing (read_file skips duplicate checks).
+    GIVEN("a tool that always returns {\"error\":\"not_found\"}") {
+        PermissionsConfig perms;
+        ServerManager mgr(perms, "/tmp/test");
+        mgr.register_server(std::make_unique<JsonErrorServer>());
+        mgr.initialize();
+        LoopConfig lc;
+        lc.auto_approve_tools = true;
+        EngineCallbacks cbs{};
+        ToolExecutor executor(mgr, lc, cbs, {});
+        LoopContext ctx;
+        ToolCall call;
+        call.id = "tc";
+        call.name = "jerr.read";
+        call.arguments["path"] = "x";
+        call.arguments_json = R"({"path":"x"})";
+
+        WHEN("the identical call is repeated") {
+            std::string last;
+            for (int i = 0; i < lc.max_identical_failures + 1; ++i) {
+                last = executor.process_tool_calls(ctx, {call})[0].content;
+            }
+            THEN("the repeated-failure guard stops it") {
+                INFO(last);
+                CHECK(last.find("[repeated-failure]") != std::string::npos);
+            }
+            AND_THEN("the history records each attempt as an error") {
+                auto recs = executor.tool_history().all();
+                REQUIRE_FALSE(recs.empty());
+                CHECK(recs.front().status == "error");
+            }
+        }
+    }
+}
+
+SCENARIO("v2.14.0: schema validation enforces declared minimum and maximum",
+         "[tool_executor][schema][gh203][2.14.0]")
+{
+    // Bounds were declared (followup.max_results, v2.14.0 paging args) but
+    // silently accepted out of range — RED before check_range existed.
+    GIVEN("a tool whose optional count is bounded 1..5") {
+        auto mgr = make_enum_manager();
+        LoopConfig lc;
+        EngineCallbacks cbs{};
+        ToolExecutor executor(mgr, lc, cbs, {});
+        auto call_with = [&](int count) {
+            LoopContext ctx;
+            ToolCall call;
+            call.id = "tc-range-" + std::to_string(count);
+            call.name = "enum.pick";
+            call.arguments["color"] = "red";
+            call.arguments["count"] = std::to_string(count);
+            call.arguments_json = R"({"color":"red","count":)"
+                + std::to_string(count) + "}";
+            return executor.process_tool_calls(ctx, {call})[0].content;
+        };
+        THEN("below the minimum and above the maximum are refused, naming the bound") {
+            CHECK(call_with(0).find("below the minimum 1") != std::string::npos);
+            CHECK(call_with(6).find("above the maximum 5") != std::string::npos);
+        }
+        THEN("the bounds themselves are accepted") {
+            CHECK(call_with(1).find("minimum") == std::string::npos);
+            CHECK(call_with(5).find("maximum") == std::string::npos);
         }
     }
 }

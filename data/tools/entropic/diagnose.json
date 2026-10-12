@@ -16,5 +16,105 @@
       }
     },
     "additionalProperties": false
+  },
+  "outputSchema": {
+    "oneOf": [
+      {
+        "title": "snapshot",
+        "type": "object",
+        "required": [
+          "snapshot_timestamp_ms",
+          "engine",
+          "config",
+          "identities",
+          "tools",
+          "history",
+          "metrics",
+          "docs"
+        ],
+        "properties": {
+          "snapshot_timestamp_ms": {
+            "type": "integer"
+          },
+          "engine": {
+            "type": "object",
+            "additionalProperties": true,
+            "description": "the same object as inspect target `state`"
+          },
+          "config": {
+            "type": "object",
+            "additionalProperties": true,
+            "description": "the active configuration, by section"
+          },
+          "identities": {
+            "type": [
+              "object",
+              "array"
+            ],
+            "description": "loaded identities"
+          },
+          "tools": {
+            "type": [
+              "object",
+              "array"
+            ],
+            "description": "registered tools"
+          },
+          "history": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "required": [
+                "role",
+                "content_preview",
+                "token_count_est"
+              ],
+              "properties": {
+                "role": {
+                  "type": "string"
+                },
+                "content_preview": {
+                  "type": "string"
+                },
+                "token_count_est": {
+                  "type": "integer"
+                }
+              }
+            },
+            "description": "the most recent context messages; previews over 200 bytes end in `...`"
+          },
+          "metrics": {
+            "type": "object",
+            "additionalProperties": true,
+            "description": "engine counters"
+          },
+          "docs": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "bundled documentation when include_docs is true, else null"
+          }
+        }
+      },
+      {
+        "title": "error",
+        "type": "object",
+        "required": [
+          "error",
+          "message"
+        ],
+        "properties": {
+          "error": {
+            "enum": [
+              "provider_unavailable"
+            ]
+          },
+          "message": {
+            "type": "string"
+          }
+        }
+      }
+    ]
   }
 }

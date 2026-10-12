@@ -29,6 +29,8 @@
 #include <entropic/inference/orchestrator.h>
 #include <entropic/types/config.h>
 
+#include "device_memory.h"
+
 #include <cstdlib>
 #include <filesystem>
 #include <fstream>
@@ -204,5 +206,82 @@ SCENARIO("gh#157: the first use loads exactly once, through the gate",
         }
 
         orch.shutdown();
+    }
+}
+
+namespace {
+
+/// @brief Unset ENTROPIC_VRAM_BUDGET_BYTES for one scope, restoring it after.
+///
+/// The variable short-circuits the device probe entirely, so a test about
+/// whether the DEVICE is asked must run with it absent.
+class NoBudgetEnv {
+public:
+    NoBudgetEnv() {
+        const char* v = std::getenv("ENTROPIC_VRAM_BUDGET_BYTES");
+        if (v != nullptr) { saved_ = v; had_ = true; }
+        unsetenv("ENTROPIC_VRAM_BUDGET_BYTES");
+    }
+    ~NoBudgetEnv() {
+        if (had_) { setenv("ENTROPIC_VRAM_BUDGET_BYTES", saved_.c_str(), 1); }
+    }
+    NoBudgetEnv(const NoBudgetEnv&) = delete;
+    NoBudgetEnv& operator=(const NoBudgetEnv&) = delete;
+
+private:
+    std::string saved_;
+    bool had_ = false;
+};
+
+}  // namespace
+
+SCENARIO("gh#198: a deferred handle does not touch the device until it loads",
+         "[residency][orchestrator][gh198][2.14.0]") {
+    // The query is what creates the CUDA primary context: 138 MiB per idle
+    // host on a GTX 1080 Ti, measured by a consumer running four of them.
+    // `defer_load` deferred the weights and still paid this at configure.
+    GIVEN("no budget override and a tier pointed at a non-model file") {
+        NoBudgetEnv env;
+        const auto path = write_not_a_model();
+
+        WHEN("a deferred orchestrator initialises") {
+            auto config = one_tier(path, true);
+            ModelOrchestrator orch;
+            const auto before = entropic::device_memory_query_count();
+            REQUIRE(orch.initialize(config));
+
+            THEN("the device was never asked") {
+                CHECK(entropic::device_memory_query_count() == before);
+            }
+            AND_WHEN("something asks for the tier") {
+                // Admission runs, then the load fails on the non-model file.
+                // That failure is incidental; what matters is that the budget
+                // WAS measured — deferring it must not mean skipping it, or
+                // the admission gate silently stops enforcing anything.
+                const auto at_first_ask = entropic::device_memory_query_count();
+                (void)orch.ensure_model("lead");
+                THEN("admission measures the device exactly once") {
+                    CHECK(entropic::device_memory_query_count()
+                          == at_first_ask + 1);
+                }
+                AND_WHEN("it is asked again") {
+                    const auto at_second = entropic::device_memory_query_count();
+                    (void)orch.ensure_model("lead");
+                    THEN("the budget is not re-measured") {
+                        CHECK(entropic::device_memory_query_count() == at_second);
+                    }
+                }
+            }
+        }
+
+        WHEN("an eager orchestrator initialises") {
+            auto config = one_tier(path, false);
+            ModelOrchestrator orch;
+            const auto before = entropic::device_memory_query_count();
+            (void)orch.initialize(config);   // fails on the non-model file
+            THEN("it measures at init, as it always has") {
+                CHECK(entropic::device_memory_query_count() == before + 1);
+            }
+        }
     }
 }

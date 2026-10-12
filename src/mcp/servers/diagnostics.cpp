@@ -56,16 +56,18 @@ public:
     }
 
     /**
-     * @brief Return placeholder — LSP not yet connected.
+     * @brief Return the declared not_implemented error (gh#174/#203).
      * @param args_json Unused.
-     * @return ServerResponse with stub message.
+     * @return ServerResponse with `{"error":"not_implemented",...}`.
      * @dg_internal
-     * @version 1.8.5
+     * @version 2.14.0
      */
     ServerResponse execute(const std::string& args_json) override {
         (void)args_json;
-        logger->info("[diagnostics] stub invoked");
-        return {"LSP diagnostics not yet connected (v1.8.7)", {}};
+        logger->warn("[diagnostics] placeholder invoked — no language server is wired");
+        return {tool_error_json("not_implemented", "diagnostics is not implemented: no language "
+                                            "server is connected (mcp.enable_diagnostics)."),
+                {}};
     }
 };
 
@@ -102,16 +104,18 @@ public:
     }
 
     /**
-     * @brief Return placeholder — LSP not yet connected.
+     * @brief Return the declared not_implemented error (gh#174/#203).
      * @param args_json Unused.
-     * @return ServerResponse with stub message.
+     * @return ServerResponse with `{"error":"not_implemented",...}`.
      * @dg_internal
-     * @version 1.8.5
+     * @version 2.14.0
      */
     ServerResponse execute(const std::string& args_json) override {
         (void)args_json;
-        logger->info("[check_errors] stub invoked");
-        return {"LSP check_errors not yet connected (v1.8.7)", {}};
+        logger->warn("[check_errors] placeholder invoked — no language server is wired");
+        return {tool_error_json("not_implemented", "check_errors is not implemented: no language "
+                                            "server is connected (mcp.enable_diagnostics)."),
+                {}};
     }
 };
 

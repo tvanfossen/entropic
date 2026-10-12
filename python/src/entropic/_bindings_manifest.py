@@ -18,6 +18,7 @@ EXPORTS = frozenset(
         "DELEGATION_COMPLETE_CB",
         "DELEGATION_START_CB",
         "ENTROPIC_RUN_SESSION_STREAMING_ARG3_CB",
+        "ENTROPIC_RUN_SESSION_STREAMING_AS_ARG4_CB",
         "EntDecision",
         "EntDelegationRequest",
         "EntDelegationResult",
@@ -113,6 +114,7 @@ EXPORTS = frozenset(
         "entropic_run_session",
         "entropic_run_session_as",
         "entropic_run_session_streaming",
+        "entropic_run_session_streaming_as",
         "entropic_run_streaming",
         "entropic_seconds_since_last_activity",
         "entropic_serialize_mcp_keys",
@@ -148,5 +150,6 @@ EXPORTS = frozenset(
         "entropic_validation_set_identity",
         "entropic_version",
         "entropic_workspace_create",
+        "entropic_workspace_set_app_context",
     }
 )

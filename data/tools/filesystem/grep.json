@@ -1,6 +1,6 @@
 {
   "name": "grep",
-  "description": "Search file contents for a regex pattern within the project directory.\n\nReturns matching lines with file paths and line numbers.\nResults are capped at 100 matches, and the directory walk itself is capped (config `filesystem.max_walk_entries`). If the walk is cut short, the LAST array element is an object \u2014 `{\"truncated\": true, \"note\": \"walk truncated at N entries \u2014 narrow the pattern\"}` \u2014 instead of a match: the answer is partial, so narrow the glob and retry. Skips binary files.\n\n**Response format:**\n```json\n{\"matches\": [{\"path\": \"src/main.py\", \"line\": 42, \"content\": \"def main():\"}], \"total\": 1, \"truncated\": false}\n```",
+  "description": "Search file contents for a regex (ECMAScript syntax), line by line. Each match carries its path and 1-based line number — cite those directly.\n\nSearches the project root, or one file or directory given as `path`; `glob` restricts which files are searched. Binary files (a NUL byte in the first 8 KiB) and files excluded by .gitignore/.explorerignore are skipped.",
   "inputSchema": {
     "type": "object",
     "properties": {
@@ -10,9 +10,98 @@
       },
       "glob": {
         "type": "string",
-        "description": "Optional file pattern to restrict search (e.g. '**/*.py')"
+        "description": "Only search files whose root-relative path matches this glob (e.g. '**/*.py'; default: all files)"
+      },
+      "path": {
+        "type": "string",
+        "description": "File or directory to search (default: the project root)"
+      },
+      "limit": {
+        "type": "integer",
+        "minimum": 1,
+        "maximum": 1000,
+        "description": "Maximum matches to return (default 100, max 1000)"
+      },
+      "offset": {
+        "type": "integer",
+        "minimum": 0,
+        "description": "Number of matches to skip, from a previous next_offset (default 0)"
       }
     },
-    "required": ["pattern"]
+    "required": [
+      "pattern"
+    ]
+  },
+  "outputSchema": {
+    "oneOf": [
+      {
+        "title": "success",
+        "type": "object",
+        "required": [
+          "matches",
+          "truncated"
+        ],
+        "properties": {
+          "matches": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "required": [
+                "path",
+                "line",
+                "content"
+              ],
+              "properties": {
+                "path": {
+                  "type": "string"
+                },
+                "line": {
+                  "type": "integer"
+                },
+                "content": {
+                  "type": "string"
+                }
+              }
+            },
+            "description": "in walk order; `path` is relative to the project root"
+          },
+          "truncated": {
+            "type": "boolean",
+            "description": "true = partial answer"
+          },
+          "reason": {
+            "enum": [
+              "limit",
+              "walk"
+            ],
+            "description": "`limit`: more exist, continue at next_offset; `walk`: walk cap hit, narrow the search"
+          },
+          "next_offset": {
+            "type": "integer",
+            "description": "the `offset` for the next page"
+          }
+        }
+      },
+      {
+        "title": "error",
+        "type": "object",
+        "required": [
+          "error",
+          "message"
+        ],
+        "properties": {
+          "error": {
+            "enum": [
+              "invalid_regex",
+              "not_found",
+              "invalid_args"
+            ]
+          },
+          "message": {
+            "type": "string"
+          }
+        }
+      }
+    ]
   }
 }

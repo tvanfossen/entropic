@@ -14,12 +14,16 @@
 #include <entropic/entropic.h>
 #include <entropic/config/loader.h>
 #include <entropic/mcp/mcp_json_discovery.h>
+#include <entropic/prompts/manager.h>
 #include <entropic/types/logging.h>
 
 #include "json_serializers.h"
 
 #include <cstring>
 #include <filesystem>
+#include <fstream>
+#include <iterator>
+#include <optional>
 #include <memory>
 #include <string>
 #include <vector>
@@ -137,6 +141,112 @@ void entropic::wire_outside_root_approver(entropic_handle_t h) {
     if (h != nullptr && h->server_manager) {
         h->server_manager->set_outside_root_approver(outside_root_thunk, h);
     }
+}
+
+/**
+ * @brief Ask the handle's PRE_MCP_SERVER_CONNECT hooks about one server.
+ *
+ * Fail-closed (gh#199): with no handler registered the answer is "no" —
+ * the inverse of every other pre-hook, and the reason this point exists.
+ *
+ * @param context_json Server description (see hooks.h).
+ * @param ud The engine handle.
+ * @return true to connect.
+ * @dg_internal
+ * @version 2.14.0
+ */
+static bool discovered_server_thunk(const std::string& context_json, void* ud) {
+    auto* h = static_cast<entropic_handle_t>(ud);
+    constexpr auto kPoint = ENTROPIC_HOOK_PRE_MCP_SERVER_CONNECT;
+    bool approved = false;
+    if (h->hook_registry.hook_count(kPoint) > 0) {
+        char* ignored = nullptr;
+        const int rc = h->hook_registry.fire_pre(kPoint, context_json.c_str(),
+                                                 &ignored);
+        free(ignored);
+        approved = rc == 0;
+    }
+    return approved;
+}
+
+/**
+ * @brief The project dir the external bridge derives its socket from.
+ * @param h Engine handle with config loaded.
+ * @return `config_dir`, else the process cwd.
+ * @req REQ-BRIDGE-001
+ * @version 2.14.0
+ */
+std::filesystem::path entropic::bridge_project_dir(entropic_handle_t h) {
+    return h->config.config_dir.empty() ? std::filesystem::current_path()
+                                        : h->config.config_dir;
+}
+
+/**
+ * @brief The socket this handle's bridge binds, or empty (gh#200).
+ * @param h Engine handle with config loaded.
+ * @return Socket path, or empty when the bridge is disabled.
+ * @req REQ-MCP-025
+ * @version 2.14.0
+ */
+std::filesystem::path entropic::expected_bridge_socket(entropic_handle_t h) {
+    const auto& ext = h->config.mcp.external;
+    std::filesystem::path sock;
+    if (ext.enabled) {
+        sock = ext.socket_path.has_value()
+            ? *ext.socket_path : compute_socket_path(bridge_project_dir(h));
+    }
+    return sock;
+}
+
+/**
+ * @brief Give a workspace's sessions prompts built on its own app_context.
+ * @param h Engine handle (configured).
+ * @param workspace Workspace name.
+ * @param app_context The workspace's text; nullopt = use the handle's.
+ * @req REQ-MCP-027
+ * @version 2.14.0
+ */
+void entropic::apply_workspace_app_context(
+    entropic_handle_t h, const std::string& workspace,
+    const std::optional<std::string>& app_context) {
+    if (!app_context) {
+        h->engine->clear_workspace_prompts(workspace);
+        return;
+    }
+    const auto data_dir = entropic::config::resolve_data_dir(h->config);
+    std::string constitution, handle_ctx;
+    entropic::prompts::load_shared_prompt_sources(h->config, data_dir,
+                                                  constitution, handle_ctx);
+    std::string prefix;
+    if (!constitution.empty()) { prefix += constitution + "\n\n"; }
+    if (!app_context->empty()) { prefix += *app_context + "\n\n"; }
+    entropic::WorkspacePrompts prompts;
+    prompts.default_prompt = prefix;
+    for (const auto& [name, tier] : h->config.models.tiers) {
+        prompts.tier_prompts[name] = prefix
+            + entropic::prompts::resolve_tier_identity_full(tier, name, data_dir).body;
+    }
+    auto def = prompts.tier_prompts.find(h->config.models.default_tier);
+    if (def != prompts.tier_prompts.end()) { prompts.default_prompt = def->second; }
+    h->engine->set_workspace_prompts(workspace, std::move(prompts));
+}
+
+/**
+ * @brief Give a server set the handle's external-server policy (v2.14.0).
+ * @param h Engine handle with config loaded.
+ * @param servers Server set to configure.
+ * @param with_declared Whether this set connects `mcp.external_servers`.
+ * @req REQ-MCP-025
+ * @version 2.14.0
+ */
+void entropic::wire_external_server_policy(entropic_handle_t h,
+                                           ServerManager& servers,
+                                           bool with_declared) {
+    MCPConfig policy = h->config.mcp;
+    if (!with_declared) { policy.external_servers.clear(); }
+    servers.set_mcp_config(policy);
+    servers.set_own_bridge_socket(expected_bridge_socket(h));
+    servers.set_discovered_server_approver(discovered_server_thunk, h);
 }
 
 /**
@@ -265,7 +375,7 @@ entropic_set_path_approval_callback(entropic_handle_t handle,
  * @return Owned workspace with connected servers.
  * @utility
  * @req REQ-MCP-027
- * @version 2.13.0 [reviewed]
+ * @version 2.14.0 [reviewed]
  */
 static std::unique_ptr<EntropicWorkspace> build_workspace(
     entropic_handle_t h, const std::string& name,
@@ -288,6 +398,9 @@ static std::unique_ptr<EntropicWorkspace> build_workspace(
     ws->servers->init_builtins(mcp, tier_names,
                                data_dir.string(), require_context);
     ws->servers->load_plugins(mcp);
+    // gh#199: the workspace inherits the handle's enablement policy, so its
+    // root's .mcp.json launches nothing the operator did not enable.
+    entropic::wire_external_server_policy(h, *ws->servers, false);
     return ws;
 }
 
@@ -332,6 +445,51 @@ static entropic_error_t validate_workspace_args(
 }
 
 /**
+ * @brief Read a new workspace's opt-in app_context file (gh#179).
+ *
+ * `workspace_app_context` unset, or the file absent from this root: no
+ * override — the workspace's sessions keep the handle's app_context. The
+ * file is repository-supplied text going into a system prompt, so it must
+ * resolve INSIDE the root: a symlink out of the repository is refused
+ * rather than followed.
+ *
+ * @param handle Engine handle.
+ * @param root Workspace root (absolute).
+ * @param[out] text The file's text, when one was loaded.
+ * @return ENTROPIC_OK, ENTROPIC_ERROR_IO (unreadable) or
+ *         ENTROPIC_ERROR_INVALID_ARGUMENT (escapes the root), with
+ *         last_error set.
+ * @dg_internal
+ * @version 2.14.0
+ */
+static entropic_error_t load_workspace_context_file(
+    entropic_handle_t handle, const std::filesystem::path& root,
+    std::optional<std::string>& text) {
+    namespace fs = std::filesystem;
+    const auto& rel = handle->config.workspace_app_context;
+    std::error_code ec;
+    if (rel.empty() || !fs::exists(root / rel, ec)) { return ENTROPIC_OK; }
+    const auto file = fs::weakly_canonical(root / rel, ec);
+    const auto base = fs::weakly_canonical(root, ec);
+    std::ifstream in(file, std::ios::binary);
+    entropic_error_t rc = ENTROPIC_OK;
+    if (file.lexically_relative(base).string().rfind("..", 0) == 0) {
+        handle->last_error = "workspace_app_context " + (root / rel).string()
+            + " resolves outside the workspace root (" + file.string() + ")";
+        rc = ENTROPIC_ERROR_INVALID_ARGUMENT;
+    } else if (!in) {
+        handle->last_error = "cannot read workspace_app_context " + file.string();
+        rc = ENTROPIC_ERROR_IO;
+    } else {
+        text = std::string(std::istreambuf_iterator<char>(in), {});
+        logger->info("workspace app_context loaded from {} ({} bytes)",
+                     file.string(), text->size());
+    }
+    if (rc != ENTROPIC_OK) { logger->error("{}", handle->last_error); }
+    return rc;
+}
+
+/**
  * @brief Create a named workspace (gh#166) — see entropic.h.
  * @param handle Engine handle.
  * @param name Workspace name.
@@ -340,7 +498,7 @@ static entropic_error_t validate_workspace_args(
  * @req REQ-API-005
  * @req REQ-MCP-027
  * @req REQ-ABI-002
- * @version 2.13.0
+ * @version 2.14.0
  */
 extern "C" ENTROPIC_EXPORT entropic_error_t
 entropic_workspace_create(entropic_handle_t handle,
@@ -350,15 +508,19 @@ entropic_workspace_create(entropic_handle_t handle,
     if (rc != ENTROPIC_OK) { return rc; }
     entropic::HandleApiLock lock(handle);
     std::filesystem::path root;
+    std::optional<std::string> ctx;
     rc = validate_workspace_args(handle, name, dir, root);
+    if (rc == ENTROPIC_OK) { rc = load_workspace_context_file(handle, root, ctx); }
     if (rc == ENTROPIC_OK) {
         try {
             auto ws = build_workspace(handle, name, root);
+            ws->app_context = ctx;
             ws->servers->initialize();
             std::lock_guard<std::mutex> guard(handle->workspace_mutex);
             handle->workspaces[name] = std::move(ws);
-            logger->info("workspace '{}' created at {}", name,
-                         root.string());
+            entropic::apply_workspace_app_context(handle, name, ctx);  // gh#179
+            logger->info("workspace '{}' created at {} (app_context: {})",
+                         name, root.string(), ctx ? "its own" : "the handle's");
         } catch (const std::exception& e) {
             // Design rule #5: exceptions never cross the .so boundary.
             handle->last_error = e.what();
@@ -377,7 +539,7 @@ entropic_workspace_create(entropic_handle_t handle,
  * @req REQ-API-005
  * @req REQ-MCP-027
  * @req REQ-ABI-002
- * @version 2.13.0
+ * @version 2.14.0
  */
 extern "C" ENTROPIC_EXPORT entropic_error_t
 entropic_session_bind_workspace(entropic_handle_t handle,
@@ -407,8 +569,55 @@ entropic_session_bind_workspace(entropic_handle_t handle,
             rc = ENTROPIC_ERROR_INVALID_ARGUMENT;
         } else {
             handle->session_workspace[key] = name;
+            handle->engine->bind_session_workspace(key, name);  // gh#179
             logger->info("session '{}' bound to workspace '{}'", key, name);
         }
+    }
+    return rc;
+}
+
+/**
+ * @brief Give a workspace its own app_context (gh#179) — see entropic.h .
+ * @param handle Engine handle.
+ * @param name Workspace name.
+ * @param app_context Text; "" = none; NULL = the handle's.
+ * @return ENTROPIC_OK, or a typed argument/state error.
+ * @req REQ-API-005
+ * @req REQ-MCP-027
+ * @req REQ-ABI-002
+ * @version 2.14.0
+ */
+extern "C" ENTROPIC_EXPORT entropic_error_t
+entropic_workspace_set_app_context(entropic_handle_t handle,
+                                   const char* name,
+                                   const char* app_context) {
+    auto rc = check_server_mgr(handle);
+    if (rc != ENTROPIC_OK) { return rc; }
+    if (name == nullptr || *name == '\0') { return ENTROPIC_ERROR_INVALID_ARGUMENT; }
+    entropic::HandleApiLock lock(handle);
+    std::optional<std::string> ctx;
+    if (app_context != nullptr) { ctx = app_context; }
+    {
+        std::lock_guard<std::mutex> guard(handle->workspace_mutex);
+        auto it = handle->workspaces.find(name);
+        if (it == handle->workspaces.end()) {
+            handle->last_error = std::string("unknown workspace: ") + name;
+            rc = ENTROPIC_ERROR_INVALID_ARGUMENT;
+        } else {
+            it->second->app_context = ctx;
+        }
+    }
+    try {
+        if (rc == ENTROPIC_OK) {
+            entropic::apply_workspace_app_context(handle, name, ctx);
+            logger->info("workspace '{}' app_context {}", name,
+                         ctx ? "set (" + std::to_string(ctx->size()) + " bytes)"
+                             : std::string("reset to the handle's"));
+        }
+    } catch (const std::exception& e) {
+        // Design rule #5: exceptions never cross the .so boundary.
+        handle->last_error = e.what();
+        rc = ENTROPIC_ERROR_INTERNAL;
     }
     return rc;
 }

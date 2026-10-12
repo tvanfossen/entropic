@@ -539,7 +539,10 @@ SCENARIO("Async ask emits notifications/progress (not ask_complete) "
         bridge.subscribe(sock[0]);
 
         WHEN("an async task completes (null handle → error branch)") {
-            bridge.run_async_ask("prompt", "task-issue4-ab", -1);
+            // v2.14.0: completions go to the task's OWNER only, so the subscribed
+            // peer is the owner here. What this test pins is the notification's
+            // shape, which did not change.
+            bridge.run_async_ask("prompt", "task-issue4-ab", sock[0]);
             std::this_thread::sleep_for(std::chrono::milliseconds(200));
 
             auto notif = read_one_notification(sock[1]);
@@ -603,7 +606,10 @@ SCENARIO("Async ask notification method is in the MCP-spec allowed set",
         bridge.subscribe(sock[0]);
 
         WHEN("a completion notification fires") {
-            bridge.run_async_ask("prompt", "task-spec", -1);
+            // v2.14.0: completions go to the task's OWNER only, so the subscribed
+            // peer is the owner here. What this test pins is the notification's
+            // shape, which did not change.
+            bridge.run_async_ask("prompt", "task-spec", sock[0]);
             std::this_thread::sleep_for(std::chrono::milliseconds(200));
             auto notif = read_one_notification(sock[1]);
 
@@ -1191,6 +1197,102 @@ SCENARIO("gh#144: the ask tool advertises session as OPTIONAL",
                 }
                 CHECK(scoped == 2);
             }
+        }
+    }
+}
+
+// ── v2.14.0 (gh#205): sessions, ownership and the new ask arguments ──
+
+SCENARIO("v2.14.0: an async completion reaches its owner and no other client",
+         "[external_bridge][gh205][2.14.0]") {
+    GIVEN("two subscribed clients, one of which starts a task") {
+        ExternalMCPConfig cfg;
+        ExternalBridge bridge(nullptr, cfg, "/tmp/test-owner-only");
+        std::array<int, 2> owner{-1, -1};
+        std::array<int, 2> other{-1, -1};
+        REQUIRE(socketpair(AF_UNIX, SOCK_STREAM, 0, owner.data()) == 0);
+        REQUIRE(socketpair(AF_UNIX, SOCK_STREAM, 0, other.data()) == 0);
+        bridge.subscribe(owner[0]);
+        bridge.subscribe(other[0]);
+
+        WHEN("the task completes") {
+            bridge.run_async_ask("prompt", "task-owner", owner[0]);
+            std::this_thread::sleep_for(std::chrono::milliseconds(200));
+            THEN("the owner is notified with its own task id") {
+                auto notif = read_one_notification(owner[1]);
+                CHECK(notif["params"]["progressToken"].get<std::string>()
+                      == "task-owner");
+            }
+            AND_THEN("the other client receives nothing") {
+                // Pre-2.14.0 this was a broadcast: every connected client
+                // learned every other client's task ids and outcomes.
+                char buf[64];
+                const ssize_t n = ::recv(other[1], buf, sizeof(buf),
+                                         MSG_DONTWAIT);
+                CHECK(n < 0);
+            }
+        }
+        bridge.unsubscribe(owner[0]);
+        bridge.unsubscribe(other[0]);
+        for (int fd : owner) { close(fd); }
+        for (int fd : other) { close(fd); }
+    }
+}
+
+SCENARIO("v2.14.0: turns queue per session, not across the whole bridge",
+         "[external_bridge][gh205][concurrency][2.14.0]") {
+    GIVEN("a bridge whose engine runs sessions concurrently") {
+        ExternalMCPConfig cfg;
+        ExternalBridge bridge(nullptr, cfg, "/tmp/test-lanes");
+        long waited = 0;
+        REQUIRE(bridge.begin_turn_wait(5000, &waited, "alpha"));
+
+        WHEN("a different session asks for a turn") {
+            long w = 0;
+            const bool got = bridge.begin_turn_wait(200, &w, "beta");
+            THEN("it is admitted at once instead of queueing behind alpha") {
+                CHECK(got);
+                CHECK(w < 150);
+            }
+            if (got) { bridge.end_turn_wait("beta"); }
+        }
+        WHEN("the SAME session asks again") {
+            long w = 0;
+            const bool got = bridge.begin_turn_wait(100, &w, "alpha");
+            THEN("it still waits its turn") {
+                CHECK_FALSE(got);
+            }
+        }
+        bridge.end_turn_wait("alpha");
+        THEN("every lane drains when its turns end") {
+            CHECK_FALSE(bridge.turn_in_flight());
+            CHECK(bridge.turn_queue_depth() == 0);
+        }
+    }
+}
+
+SCENARIO("gh#205: ask advertises tier and workspace, both OPTIONAL",
+         "[external_bridge][gh205][gh116][2.14.0]") {
+    GIVEN("a bridge with default config") {
+        ExternalMCPConfig cfg;
+        ExternalBridge bridge(nullptr, cfg, "/tmp/test-ask-schema");
+        auto reply = bridge.dispatch(
+            R"({"jsonrpc":"2.0","id":1,"method":"tools/list"})", -1);
+        auto tools = json::parse(reply)["result"]["tools"];
+        THEN("both are declared and neither is required") {
+            bool found = false;
+            for (const auto& t : tools) {
+                if (t["name"] != "entropic.ask") { continue; }
+                found = true;
+                const auto& props = t["inputSchema"]["properties"];
+                CHECK(props.contains("tier"));
+                CHECK(props.contains("workspace"));
+                for (const auto& r : t["inputSchema"]["required"]) {
+                    CHECK(r != "tier");
+                    CHECK(r != "workspace");
+                }
+            }
+            CHECK(found);
         }
     }
 }

@@ -30,6 +30,7 @@ namespace entropic::cli {
 
 int run_mcp_bridge(int argc, char* argv[]);
 int run_version();
+int run_serve(int argc, char* argv[]);
 int run_download(int argc, char* argv[]);
 
 } // namespace entropic::cli
@@ -37,7 +38,7 @@ int run_download(int argc, char* argv[]);
 /**
  * @brief Print top-level usage to stderr.
  * @utility
- * @version 2.1.7
+ * @version 2.14.0
  */
 static void print_usage()
 {
@@ -46,6 +47,7 @@ static void print_usage()
         "\n"
         "Subcommands:\n"
         "  mcp-bridge   Relay MCP/stdio to a running engine's unix socket\n"
+        "  serve        Host the engine for every MCP client over HTTP\n"
         "  download     Fetch a bundled GGUF model\n"
         "  version      Print engine version\n"
         "\n"
@@ -57,6 +59,11 @@ static void print_usage()
         "  --socket PATH       Override socket discovery (bypasses the\n"
         "                      project_dir hash). For non-standard engine\n"
         "                      deployments and deterministic testing.\n"
+        "\n"
+        "Options for serve (v2.14.0):\n"
+        "  --config FILE       Engine config (YAML)\n"
+        "  --port N            Serve MCP at http://127.0.0.1:N/mcp; clients send\n"
+        "                      the bearer token in ~/.entropic/serve/N.token\n"
         "\n"
         "Options for download:\n"
         "  --list              List available model keys\n"
@@ -94,6 +101,7 @@ constexpr Subcommand kSubcommands[] = {
     {"mcp-bridge",  entropic::cli::run_mcp_bridge},
     {"version",     run_version_adapter},
     {"download",    entropic::cli::run_download},
+    {"serve",       entropic::cli::run_serve},     // gh#204 (v2.14.0)
 };
 
 } // anonymous namespace

@@ -27,6 +27,8 @@
 #include <entropic/inference/orchestrator.h>
 #include <entropic/mcp/mcp_authorization.h>
 #include <entropic/mcp/external_bridge.h>
+
+#include "http_listener.h"
 #include <entropic/mcp/server_manager.h>
 #include <entropic/mcp/tool_executor.h>
 #include <entropic/storage/audit_logger.h>
@@ -42,6 +44,7 @@
 #include <map>
 #include <memory>
 #include <mutex>
+#include <optional>
 #include <string>
 
 // Forward declarations for Phase 1+ subsystems.
@@ -73,9 +76,10 @@ struct InterfaceContext;  // gh#58 follow-up (v2.2.6): per-handle iface ctx
  * which is the entire point: switching repository must not cost a 13 GiB
  * reload.
  *
- * Per-workspace `app_context` is deliberately out of scope (follow-up).
+ * v2.14.0 (gh#179): a workspace may carry its own `app_context`, which
+ * replaces the handle's in the prompts its bound sessions are seeded with.
  *
- * @version 2.13.0
+ * @version 2.14.0
  */
 struct EntropicWorkspace {
     std::string name;                    ///< Caller-chosen workspace name
@@ -85,6 +89,8 @@ struct EntropicWorkspace {
     /// what lets two sessions in DIFFERENT repositories delegate
     /// concurrently.
     std::unique_ptr<entropic::ServerManager> servers;
+    /// @brief gh#179: this workspace's app_context; nullopt = the handle's.
+    std::optional<std::string> app_context;
 };
 
 /**
@@ -165,6 +171,9 @@ struct entropic_engine {
 
     // ── Phase 7: External MCP bridge (v2.0.8) ──────────────────
     std::unique_ptr<entropic::ExternalBridge> external_bridge;   ///< Unix socket MCP bridge
+    /// @brief Streamable-HTTP front end for external_bridge (gh#204). Declared
+    /// AFTER it so it is destroyed FIRST: it dispatches into the bridge.
+    std::unique_ptr<entropic::http::HttpListener> http_listener;
 
     // ── Stream observer (v2.0.10) ────────────────────────────
     /// @brief Global stream observer — fires for all streaming output.
@@ -263,6 +272,67 @@ inline entropic::ServerManager* workspace_servers(entropic_handle_t h,
  * @version 2.13.0
  */
 void wire_outside_root_approver(entropic_handle_t h);
+
+/**
+ * @brief The socket this handle's external bridge binds, or empty when the
+ *        handle runs no bridge (v2.14.0, gh#200).
+ *
+ * One function for the bridge and the self-connection guard, so the guard
+ * can never compare against a path the bridge does not bind — the exact
+ * disagreement gh#200 reported.
+ *
+ * @param h Engine handle with config loaded.
+ * @return Socket path, or empty.
+ * @version 2.14.0
+ */
+std::filesystem::path expected_bridge_socket(entropic_handle_t h);
+
+/**
+ * @brief The project dir the external bridge derives its socket from.
+ * @param h Engine handle with config loaded.
+ * @return `config_dir`, else the process cwd.
+ * @version 2.14.0
+ */
+std::filesystem::path bridge_project_dir(entropic_handle_t h);
+
+/**
+ * @brief Give a server set the handle's external-server policy (v2.14.0).
+ *
+ * The set receives the handle's `.mcp.json` enablement keys, the bridge
+ * socket to refuse, and an approver over the handle's
+ * ENTROPIC_HOOK_PRE_MCP_SERVER_CONNECT hooks — the same for the default set
+ * and every workspace, which is what makes a workspace stop spawning its
+ * root's `.mcp.json` (gh#199). Declared `external_servers` go to the default
+ * set only: they are the handle's, not every repository's.
+ *
+ * Call before `ServerManager::initialize()`.
+ *
+ * @param h Engine handle with config loaded.
+ * @param servers Server set to configure.
+ * @param with_declared Whether this set connects `mcp.external_servers`.
+ * @req REQ-MCP-025
+ * @version 2.14.0
+ */
+void wire_external_server_policy(entropic_handle_t h,
+                                 ServerManager& servers, bool with_declared);
+
+/**
+ * @brief Give a workspace's sessions prompts built on its own app_context
+ *        (gh#179), or return them to the handle's.
+ *
+ * Assembles exactly what configure assembles — constitution, app_context,
+ * tier identity — with the workspace's text in the app_context slot, and
+ * registers the result with the engine for the workspace.
+ *
+ * @param h Engine handle (configured).
+ * @param workspace Workspace name.
+ * @param app_context The workspace's text; nullopt = use the handle's.
+ * @req REQ-MCP-027
+ * @version 2.14.0
+ */
+void apply_workspace_app_context(entropic_handle_t h,
+                                 const std::string& workspace,
+                                 const std::optional<std::string>& app_context);
 
 /**
  * @brief The facade's gh#160 `ScopedSandbox` swap callback.

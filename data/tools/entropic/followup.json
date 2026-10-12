@@ -15,6 +15,67 @@
         "description": "Maximum number of matches to return (default 3)"
       }
     },
-    "required": ["query"]
+    "required": [
+      "query"
+    ]
+  },
+  "outputSchema": {
+    "oneOf": [
+      {
+        "title": "success",
+        "type": "object",
+        "required": [
+          "results"
+        ],
+        "properties": {
+          "results": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "required": [
+                "delegation_id",
+                "target_tier",
+                "summary",
+                "completed_at"
+              ],
+              "properties": {
+                "delegation_id": {
+                  "type": "string"
+                },
+                "target_tier": {
+                  "type": "string"
+                },
+                "summary": {
+                  "type": "string"
+                },
+                "completed_at": {
+                  "type": "string"
+                }
+              }
+            },
+            "description": "newest first; empty when nothing matches"
+          }
+        }
+      },
+      {
+        "title": "error",
+        "type": "object",
+        "required": [
+          "error",
+          "message"
+        ],
+        "properties": {
+          "error": {
+            "enum": [
+              "invalid_args",
+              "storage_unavailable"
+            ]
+          },
+          "message": {
+            "type": "string"
+          }
+        }
+      }
+    ]
   }
 }

@@ -28,3 +28,12 @@ catch_discover_tests(entropic-regression-tests
     TEST_PREFIX "regression/"
     PROPERTIES LABELS "regression"
 )
+
+# v2.14.0 (gh#204): one cpp-httplib in librentropic — see the script header.
+if (TARGET cpp-httplib)
+    add_test(NAME regression/httplib_single_version
+        COMMAND ${CMAKE_CURRENT_SOURCE_DIR}/httplib_single_version.sh
+                $<TARGET_FILE:entropic-facade> $<TARGET_FILE:cpp-httplib>)
+    set_tests_properties(regression/httplib_single_version
+        PROPERTIES LABELS "regression")
+endif()

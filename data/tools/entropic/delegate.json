@@ -48,5 +48,78 @@
       "target",
       "task"
     ]
+  },
+  "outputSchema": {
+    "oneOf": [
+      {
+        "title": "dispatched",
+        "type": "object",
+        "required": [
+          "action",
+          "target",
+          "task",
+          "max_turns",
+          "context"
+        ],
+        "properties": {
+          "action": {
+            "enum": [
+              "delegate"
+            ]
+          },
+          "target": {
+            "type": "string"
+          },
+          "task": {
+            "type": "string"
+          },
+          "max_turns": {
+            "type": "integer",
+            "description": "-1 = the tier's own limit"
+          },
+          "context": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "required": [
+                "path",
+                "lines",
+                "note"
+              ],
+              "properties": {
+                "path": {
+                  "type": "string"
+                },
+                "lines": {
+                  "type": "string"
+                },
+                "note": {
+                  "type": "string"
+                }
+              }
+            },
+            "description": "the usable `context` references passed on (entries without a path are dropped)"
+          }
+        }
+      },
+      {
+        "title": "error",
+        "type": "object",
+        "required": [
+          "error",
+          "message"
+        ],
+        "properties": {
+          "error": {
+            "enum": [
+              "requires_context"
+            ]
+          },
+          "message": {
+            "type": "string"
+          }
+        }
+      }
+    ]
   }
 }

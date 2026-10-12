@@ -263,5 +263,5 @@ TEST_CASE("test_diagnose_no_provider_error", "[diagnose]") {
     // Don't set provider
     auto envelope = server.execute("diagnose", "{}");
     auto result = extract_result(envelope);
-    REQUIRE(result.find("Error") != std::string::npos);
+    REQUIRE(json::parse(result).at("error") == "provider_unavailable");  // v2.14.0
 }

@@ -233,11 +233,36 @@ public:
 
     /// @brief Extra top-level YAML appended verbatim to config.local.yaml.
     ///
-    /// For a scenario that needs a section the generator does not write —
-    /// e.g. `mcp:` with a fixed `working_dir` and an outside-root policy
-    /// (v2.13.0). Must be complete top-level keys; "" writes nothing.
-    /// @version 2.13.0
+    /// For a scenario that needs a section the generator does not write.
+    /// Must be complete top-level keys; "" writes nothing. NOT `mcp:` — the
+    /// generator always writes that block (gh#186), so put MCP keys in
+    /// extra_mcp_config; setup() refuses a second top-level `mcp:`.
+    /// @version 2.14.0
     std::string extra_config;
+
+    /// @brief Root for the project's filesystem/bash/git servers.
+    ///
+    /// gh#186: empty means the project's OWN temp directory. Before this the
+    /// generator wrote no `mcp:` block, the servers fell back to the PROCESS
+    /// cwd — which under ctest is the source checkout — and a model's relative
+    /// `write_file` landed in the repository (`src/main.py`, observed twice in
+    /// one day from test-gh93-behavioral). setup() refuses any root inside the
+    /// source tree.
+    /// @version 2.14.0
+    fs::path mcp_working_dir;
+
+    /// @brief Emit `models.defer_load: true` (gh#157/gh#198).
+    ///
+    /// Lives in the generated `models:` block, which extra_config cannot add
+    /// to without duplicating the key.
+    /// @version 2.14.0
+    bool defer_load = false;
+
+    /// @brief Extra lines inside the generated `mcp:` block, two-space indented.
+    ///
+    /// e.g. "  filesystem:\n    allow_outside_root: optional\n".
+    /// @version 2.14.0
+    std::string extra_mcp_config;
 
     /// @brief Why the last `setup()` returned nullptr ("" when it did not).
     /// @version 2.13.0
@@ -252,10 +277,11 @@ public:
      */
     entropic_handle_t setup(const std::vector<TierSpec>& tiers,
                             const std::string& default_tier = "") {
+        setup_failure_ = root_refusal();
+        if (!setup_failure_.empty()) { return nullptr; }
         write_project_files(tiers, default_tier);
         setenv("ENTROPIC_DATA_DIR",
                (fs::path(MODEL_PATH) / "data").string().c_str(), 1);
-        setup_failure_.clear();
         auto rc = entropic_create(&handle_);
         if (rc != ENTROPIC_OK) {
             setup_failure_ = setup_failure_text(rc, "entropic_create", tiers);
@@ -278,6 +304,43 @@ public:
     }
 
 private:
+    /// @brief The servers' root: the explicit override, else the project dir.
+    /// @version 2.14.0
+    fs::path mcp_root() const {
+        return mcp_working_dir.empty() ? dir_ : mcp_working_dir;
+    }
+
+    /**
+     * @brief Why this project must not be configured, or "" when it may.
+     *
+     * gh#186. Two ways a facade test can end up with servers rooted in the
+     * source checkout, both refused loudly instead of discovered from debris:
+     * an explicit root inside MODEL_PATH, and a hand-written top-level `mcp:`
+     * in extra_config — which would duplicate the generated block, and under
+     * last-key-wins silently drop the working_dir this class exists to set.
+     * @return Refusal text, or "".
+     * @version 2.14.0
+     */
+    std::string root_refusal() const {
+        const auto repo = fs::weakly_canonical(fs::path(MODEL_PATH));
+        const auto root = fs::weakly_canonical(mcp_root());
+        const auto rel = root.lexically_relative(repo);
+        const bool inside = !rel.empty() && *rel.begin() != "..";
+        if (inside) {
+            return "FacadeProject root " + root.string()
+                 + " is inside the source tree " + repo.string()
+                 + " (gh#186) - a model's relative write would land in "
+                   "the repository";
+        }
+        const bool own_mcp = extra_config.rfind("mcp:", 0) == 0
+            || extra_config.find("\nmcp:") != std::string::npos;
+        if (own_mcp) {
+            return "extra_config declares a top-level `mcp:` block; use "
+                   "mcp_working_dir / extra_mcp_config (gh#186)";
+        }
+        return "";
+    }
+
     void write_project_files(const std::vector<TierSpec>& tiers,
                              const std::string& default_tier) {
         std::string cfg = "models:\n";
@@ -288,11 +351,14 @@ private:
             }
             cfg += tier_config_block(t);
         }
+        if (defer_load) { cfg += "  defer_load: true\n"; }
         cfg += "  default: "
              + (default_tier.empty() ? tiers.front().name : default_tier) + "\n";
         cfg += "constitutional_validation:\n  enabled: false\n";
         cfg += std::string("permissions:\n  auto_approve: ")
              + (auto_approve_tools ? "true" : "false") + "\n";
+        cfg += "mcp:\n  working_dir: " + mcp_root().string() + "\n";
+        cfg += extra_mcp_config;
         cfg += extra_config;
         write_file(dir_ / "config.local.yaml", cfg);
     }

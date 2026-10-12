@@ -1,6 +1,6 @@
 {
   "name": "list_directory",
-  "description": "List files and subdirectories at a given path.\n\nReturns structured output with file/directory indicators and sizes.\nOptionally recursive with configurable depth limit.\n\n**Response format:**\n```json\n{\"path\": \"src/\", \"entries\": [{\"name\": \"main.py\", \"type\": \"file\", \"size\": 1234}, {\"name\": \"utils/\", \"type\": \"dir\"}]}\n```",
+  "description": "List the files and subdirectories of a directory, sorted by name. Optionally recursive, to a depth limit.",
   "inputSchema": {
     "type": "object",
     "properties": {
@@ -14,8 +14,100 @@
       },
       "max_depth": {
         "type": "integer",
-        "description": "Maximum recursion depth (default: 3, only used with recursive=true)"
+        "minimum": 0,
+        "description": "Maximum recursion depth below `path` (default: 3, only used with recursive=true; 0 = the directory itself)"
+      },
+      "limit": {
+        "type": "integer",
+        "minimum": 1,
+        "maximum": 5000,
+        "description": "Maximum entries to return (default 500, max 5000)"
+      },
+      "offset": {
+        "type": "integer",
+        "minimum": 0,
+        "description": "Number of entries to skip, from a previous next_offset (default 0)"
       }
     }
+  },
+  "outputSchema": {
+    "oneOf": [
+      {
+        "title": "success",
+        "type": "object",
+        "required": [
+          "path",
+          "entries",
+          "truncated"
+        ],
+        "properties": {
+          "path": {
+            "type": "string",
+            "description": "the listed directory, relative to the project root when inside it"
+          },
+          "entries": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "required": [
+                "name",
+                "type",
+                "size"
+              ],
+              "properties": {
+                "name": {
+                  "type": "string",
+                  "description": "path relative to the listed directory (a bare name unless recursive)"
+                },
+                "type": {
+                  "enum": [
+                    "file",
+                    "directory"
+                  ]
+                },
+                "size": {
+                  "type": "integer",
+                  "description": "bytes for a regular file, else 0"
+                }
+              }
+            }
+          },
+          "truncated": {
+            "type": "boolean",
+            "description": "true = partial answer"
+          },
+          "reason": {
+            "enum": [
+              "limit",
+              "walk"
+            ],
+            "description": "`limit`: more exist, continue at next_offset; `walk`: walk cap hit, narrow the search"
+          },
+          "next_offset": {
+            "type": "integer",
+            "description": "the `offset` for the next page"
+          }
+        }
+      },
+      {
+        "title": "error",
+        "type": "object",
+        "required": [
+          "error",
+          "message"
+        ],
+        "properties": {
+          "error": {
+            "enum": [
+              "not_directory",
+              "invalid_args"
+            ]
+          },
+          "message": {
+            "type": "string"
+          }
+        }
+      }
+    ]
   }
 }

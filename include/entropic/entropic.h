@@ -36,10 +36,23 @@
  * entropic_alloc(). Strings returned as const char* are owned by
  * the handle and valid until the next call on that handle.
  *
+ * @par Serving many MCP clients (v2.14.0, gh#204)
+ * With `mcp.external.enabled` and `mcp.external.http_port: N`, configure
+ * also serves the external MCP bridge over Streamable HTTP at
+ * `http://127.0.0.1:N/mcp` (loopback only; reach it remotely with
+ * `ssh -L N:127.0.0.1:N host`). Clients authenticate with
+ * `Authorization: Bearer <token>`, where the token is the contents of
+ * `$HOME/.entropic/serve/N.token`: 64 hex characters, regenerated on every
+ * start, mode 0600 in a 0700 directory, removed by entropic_destroy().
+ * Requests carrying an `Origin` header or a foreign `Host` are refused. If
+ * the port cannot be served, configure fails with ENTROPIC_ERROR_IO.
+ * `entropic serve --config FILE --port N` is the headless host built on
+ * this. See docs/security.md.
+ *
  * @req REQ-API-014
  * @req REQ-ABI-001
  * @req REQ-ABI-002
- * @version 1.9.10
+ * @version 2.14.0
  */
 
 #pragma once
@@ -85,6 +98,23 @@ ENTROPIC_EXPORT entropic_error_t entropic_create(entropic_handle_t* handle);
  * paths, and prepares the engine for operation. Does NOT load models
  * (that happens on first generate or explicit activate).
  *
+ * @par External MCP servers (v2.14.0)
+ * Every configure entry point — this, entropic_configure_from_file() and
+ * entropic_configure_dir() — connects the handle's external MCP servers
+ * before returning: every entry in `mcp.external_servers` (the operator
+ * declared it), plus each server discovered in `<mcp.working_dir>/.mcp.json`
+ * or `~/.entropic/.mcp.json` that is ENABLED. A discovered server is refused
+ * when named in `mcp.disabled_mcpjson_servers`, connected when named in
+ * `mcp.enabled_mcpjson_servers` or `mcp.enable_all_project_mcp_servers` is
+ * true, and otherwise connected only if an
+ * ENTROPIC_HOOK_PRE_MCP_SERVER_CONNECT hook approves it — with no such hook
+ * registered it is NOT connected. Register that hook between
+ * entropic_create() and configure for it to see the default set's servers;
+ * workspaces (entropic_workspace_create()) apply the same policy to their own
+ * root. Any entry that would connect back to this handle's own bridge socket
+ * is refused. Before v2.14.0 `mcp.external_servers` was never connected and
+ * discovery ran only for workspaces, unconditionally.
+ *
  * JSON is used at the C API boundary because it's universal — any language
  * can produce it. Config FILES are YAML (parsed by ryml inside
  * librentropic-config.so). Use entropic_configure_from_file() to load
@@ -101,7 +131,7 @@ ENTROPIC_EXPORT entropic_error_t entropic_create(entropic_handle_t* handle);
  * @req REQ-API-004
  * @req REQ-API-005
  * @req REQ-ABI-001
- * @version 1.8.0
+ * @version 2.14.0
  */
 ENTROPIC_EXPORT entropic_error_t entropic_configure(
     entropic_handle_t handle,
@@ -1162,6 +1192,47 @@ ENTROPIC_EXPORT entropic_error_t entropic_run_session_streaming(
     int* cancel_flag);
 
 /**
+ * @brief Streaming turn on a named session, under a named tier (gh#205).
+ *
+ * The streaming counterpart of entropic_run_session_as(): the turn is locked
+ * to `tier_or_identity` with exactly its semantics (the tier's grammar and
+ * samplers apply to this turn; its system prompt is seeded only on an empty
+ * conversation). This is what lets ONE host serve several output contracts —
+ * before it, a streaming caller could not pick a tier at all, so a consumer
+ * needing two tiers ran two hosts.
+ *
+ * A set `cancel_flag` stops THIS turn only, never another session's (v2.14.0;
+ * the same now holds for entropic_run_session_streaming()).
+ *
+ * Additive: ENTROPIC_API_VERSION does not move.
+ *
+ * @param handle Engine handle.
+ * @param session_key Session to run under; NULL or "" = default session.
+ * @param tier_or_identity Tier (or identity) to lock this turn to.
+ * @param input Null-terminated user input.
+ * @param on_token Per-token callback.
+ * @param user_data Forwarded to on_token.
+ * @param cancel_flag Optional cancel flag (NULL for none).
+ * @return ENTROPIC_OK; ENTROPIC_ERROR_CANCELLED when cancelled;
+ *         ENTROPIC_ERROR_IDENTITY_NOT_FOUND for an unknown tier;
+ *         ENTROPIC_ERROR_ALREADY_RUNNING when this session has a turn in
+ *         flight; ENTROPIC_ERROR_INVALID_ARGUMENT for a NULL tier, input or
+ *         callback.
+ * @threadsafety NOT serialized. See entropic_run_session().
+ * @req REQ-API-009
+ * @req REQ-IDEN-001
+ * @version 2.14.0
+ */
+ENTROPIC_EXPORT entropic_error_t entropic_run_session_streaming_as(
+    entropic_handle_t handle,
+    const char* session_key,
+    const char* tier_or_identity,
+    const char* input,
+    void (*on_token)(const char* token, size_t len, void* user_data),
+    void* user_data,
+    int* cancel_flag);
+
+/**
  * @brief Read one session's conversation as a JSON array (gh#144).
  * @param handle Engine handle.
  * @param session_key Session to read; NULL or "" = default session.
@@ -1363,6 +1434,41 @@ ENTROPIC_EXPORT entropic_error_t entropic_session_bind_workspace(
     entropic_handle_t handle,
     const char* session_key,
     const char* name);
+
+/**
+ * @brief Give a workspace its own app_context (gh#179).
+ *
+ * One resident model serving several repositories: each workspace's
+ * sessions are seeded with the handle's constitution and tier identity,
+ * and THIS text in the app_context slot instead of the handle's. Taken
+ * verbatim, like `app_context: {content: ...}` (gh#141).
+ *
+ * Applies to every session bound to the workspace whose conversation has
+ * not started — a started conversation keeps the system message it was
+ * seeded with. Bind order does not matter. A delegated child of a bound
+ * session gets the workspace's prompt for its tier too.
+ *
+ * A workspace can also take its text from a file in its root, opt-in, via
+ * the `workspace_app_context` config key (e.g. `.entropic/ENTROPIC.md`);
+ * this call overrides whatever that loaded.
+ *
+ * @param handle Engine handle (must be configured).
+ * @param name Workspace name previously passed to entropic_workspace_create().
+ * @param app_context The workspace's app_context text; "" = no app_context
+ *        for this workspace; NULL = drop the override and use the handle's.
+ * @return ENTROPIC_OK on success.
+ * @return ENTROPIC_ERROR_INVALID_HANDLE — handle is NULL.
+ * @return ENTROPIC_ERROR_INVALID_STATE — handle not configured.
+ * @return ENTROPIC_ERROR_INVALID_ARGUMENT — NULL/empty or unknown name.
+ * @threadsafety Serialized per-handle (api_mutex).
+ * @req REQ-API-005
+ * @req REQ-MCP-027
+ * @version 2.14.0
+ */
+ENTROPIC_EXPORT entropic_error_t entropic_workspace_set_app_context(
+    entropic_handle_t handle,
+    const char* name,
+    const char* app_context);
 
 /**
  * @brief Get the number of messages in the conversation.

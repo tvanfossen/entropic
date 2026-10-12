@@ -1,6 +1,6 @@
 {
   "name": "web_search",
-  "description": "Search the web using DuckDuckGo and return a list of results with titles, URLs, and snippets.\n\nUse this to find information, documentation, or references online. Returns up to 10 results.",
+  "description": "PLACEHOLDER — not implemented. No search backend is wired; every call returns the `not_implemented` error. Disabled by default (mcp.enable_web).",
   "inputSchema": {
     "type": "object",
     "properties": {
@@ -14,6 +14,26 @@
         "default": 5
       }
     },
-    "required": ["query"]
+    "required": [
+      "query"
+    ]
+  },
+  "outputSchema": {
+    "title": "error",
+    "type": "object",
+    "required": [
+      "error",
+      "message"
+    ],
+    "properties": {
+      "error": {
+        "enum": [
+          "not_implemented"
+        ]
+      },
+      "message": {
+        "type": "string"
+      }
+    }
   }
 }

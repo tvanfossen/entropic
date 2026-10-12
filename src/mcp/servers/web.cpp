@@ -63,11 +63,11 @@ public:
 };
 
 /**
- * @brief Parse fetch args and return placeholder.
+ * @brief Parse fetch args and return the declared not_implemented error.
  * @param args_json JSON with "url" and optional "max_length".
- * @return ServerResponse with placeholder result.
+ * @return ServerResponse with `{"error":"not_implemented",...}`.
  * @dg_internal
- * @version 1.8.5
+ * @version 2.14.0
  */
 ServerResponse WebFetchTool::execute(const std::string& args_json) {
     auto args = nlohmann::json::parse(args_json);
@@ -80,8 +80,11 @@ ServerResponse WebFetchTool::execute(const std::string& args_json) {
 
     logger->info("[web_fetch] url='{}' max_length={}", url, max_length);
 
+    // v2.14.0 (gh#174/#203): a declared error, not placeholder prose a
+    // model could mistake for a fetched page or a result list.
     return {
-        "Web fetch not yet connected (requires cpp-httplib integration)",
+        tool_error_json("not_implemented", "Web fetch is not implemented in this build; "
+                                   "the web server is a placeholder (mcp.enable_web)."),
         {}
     };
 }
@@ -126,11 +129,11 @@ public:
 };
 
 /**
- * @brief Parse search args and return placeholder.
+ * @brief Parse search args and return the declared not_implemented error.
  * @param args_json JSON with "query" and optional "max_results".
- * @return ServerResponse with placeholder result.
+ * @return ServerResponse with `{"error":"not_implemented",...}`.
  * @dg_internal
- * @version 1.8.5
+ * @version 2.14.0
  */
 ServerResponse WebSearchTool::execute(const std::string& args_json) {
     auto args = nlohmann::json::parse(args_json);
@@ -144,8 +147,11 @@ ServerResponse WebSearchTool::execute(const std::string& args_json) {
     logger->info("[web_search] query='{}' max_results={}",
                  query, max_results);
 
+    // v2.14.0 (gh#174/#203): a declared error, not placeholder prose a
+    // model could mistake for a fetched page or a result list.
     return {
-        "Web search not yet connected (requires cpp-httplib integration)",
+        tool_error_json("not_implemented", "Web search is not implemented in this build; "
+                                   "the web server is a placeholder (mcp.enable_web)."),
         {}
     };
 }

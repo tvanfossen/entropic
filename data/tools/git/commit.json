@@ -13,6 +13,24 @@
         "description": "Stage all changes first"
       }
     },
-    "required": ["message"]
+    "required": [
+      "message"
+    ]
+  },
+  "outputSchema": {
+    "type": "object",
+    "required": [
+      "exit_code",
+      "output"
+    ],
+    "properties": {
+      "exit_code": {
+        "type": "integer",
+        "description": "0 ok; non-zero: git failed, see output; -1: git did not start"
+      },
+      "output": {
+        "type": "string"
+      }
+    }
   }
 }

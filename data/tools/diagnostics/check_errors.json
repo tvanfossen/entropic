@@ -1,6 +1,6 @@
 {
   "name": "check_errors",
-  "description": "Check if a file has any errors (not warnings).\n\nReturns true if file has errors, false if clean.\n\nLighter weight than full diagnostics when you only need error status.",
+  "description": "PLACEHOLDER — not implemented. No language server is connected; every call returns the `not_implemented` error. Disabled by default (mcp.enable_diagnostics).",
   "inputSchema": {
     "type": "object",
     "properties": {
@@ -9,6 +9,26 @@
         "description": "Path to the file to check"
       }
     },
-    "required": ["file_path"]
+    "required": [
+      "file_path"
+    ]
+  },
+  "outputSchema": {
+    "title": "error",
+    "type": "object",
+    "required": [
+      "error",
+      "message"
+    ],
+    "properties": {
+      "error": {
+        "enum": [
+          "not_implemented"
+        ]
+      },
+      "message": {
+        "type": "string"
+      }
+    }
   }
 }

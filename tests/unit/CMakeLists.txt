@@ -384,6 +384,7 @@ add_executable(entropic-core-tests
     core/message_queue_test.cpp  # gh#40 (v2.1.10)
     core/turn_exclusion_test.cpp  # gh#144 (v2.12.0)
     core/session_conversation_test.cpp  # gh#144 (v2.12.0)
+    core/workspace_prompt_test.cpp      # gh#179 (v2.14.0)
     # v2.3.10: backstop coverage for streaming <think> tag filter
     core/stream_think_filter_test.cpp
 )
@@ -407,11 +408,16 @@ add_executable(entropic-mcp-tests
     mcp/permission_manager_test.cpp
     mcp/tool_executor_test.cpp
     mcp/server_manager_test.cpp
+    # v2.14.0 (gh#199, gh#200): external-server enablement + self-bridge.
+    mcp/discovery_policy_test.cpp
     # gh#158 (v2.13.0): the root lock's owner / shared / exclusive rules
     mcp/tool_root_lock_test.cpp
     mcp/tool_calling_loop_test.cpp
     # Per-server behavioral tests
     mcp/servers/filesystem_test.cpp
+    # gh#203 (v2.14.0): outputSchema contract tests.
+    mcp/servers/filesystem_contract_test.cpp
+    mcp/servers/tool_contract_gate_test.cpp
     mcp/servers/ignore_matcher_test.cpp
     mcp/servers/bash_test.cpp
     mcp/servers/git_test.cpp
@@ -556,6 +562,13 @@ add_executable(entropic-api-tests
     # v2.13.0: outside-root file access asks the host's path approver by
     # default, with explicit allow/deny lists; workspaces stay confined.
     api/path_approval_test.cpp
+    # v2.14.0 (gh#199, gh#200): external MCP servers connect only when an
+    # operator enabled them; YAML external_servers finally connect.
+    api/mcp_discovery_gate_test.cpp
+    # gh#205 (v2.14.0): streaming under a named tier — argument contract.
+    api/run_session_streaming_as_test.cpp
+    # gh#204 (v2.14.0): Streamable-HTTP front end and its security bar.
+    api/http_listener_test.cpp
     # gh#158 (v2.13.0): the built-in servers' own state — read tracker and
     # working directory — shared by concurrent sessions on the default set.
     api/builtin_server_sharing_test.cpp
@@ -572,6 +585,12 @@ add_executable(entropic-api-tests
     api/tool_namespace_test.cpp
     # v2.1.7 (gh#34): mcp-bridge CLI relay round-trip tests.
     mcp/mcp_bridge_relay_test.cpp
+    # gh#204 (v2.14.0): `entropic serve` end to end, over HTTP.
+    api/serve_cli_test.cpp
+    # gh#203 (v2.14.0): followup shape through the real storage provider.
+    api/followup_provider_test.cpp
+    # gh#179 (v2.14.0): per-workspace app_context.
+    api/workspace_app_context_test.cpp
 )
 
 # v2.1.1 (#3): serialize_messages_utf8_test.cpp #includes the private
@@ -603,6 +622,8 @@ target_link_libraries(entropic-api-tests PRIVATE
     entropic-types
     spdlog::spdlog
     Catch2::Catch2WithMain
+    # gh#204 (v2.14.0): http_listener_test is an HTTP client of the listener.
+    httplib::httplib
 )
 
 # v1.8.9: C99 header compilation test (pure C, not C++)

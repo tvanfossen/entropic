@@ -820,8 +820,12 @@ struct FilesystemConfig {
     /// @version 2.13.0
     std::vector<std::filesystem::path> outside_root_deny;
 
-    std::optional<int> max_read_bytes; ///< Max file read size (nullopt = derive from context)
-    float max_read_context_pct = 0.25f; ///< Max context % for single file read
+    /// @brief Byte budget of ONE read_file window (nullopt = derive from
+    ///        context). v2.14.0 (gh#201): a longer file is paged, not
+    ///        refused; only a single line larger than the budget is
+    ///        `size_exceeded`.
+    std::optional<int> max_read_bytes;
+    float max_read_context_pct = 0.25f; ///< Context share for one read_file window (when max_read_bytes is unset)
 
     /// @brief Hard cap on directory entries visited by ONE glob or grep
     ///        walk; <= 0 disables the cap (gh#161).
@@ -852,11 +856,25 @@ struct FilesystemConfig {
 struct ExternalMCPConfig {
     bool enabled = false;                                ///< Enable external MCP
     std::optional<std::filesystem::path> socket_path;    ///< Socket path (nullopt = derived)
-    int rate_limit = 10;                                 ///< Requests per minute (1–100)
+    /// @brief NOT ENFORCED. Parsed since the bridge shipped and read by
+    /// nothing; the bridge logs a warning at start when it is set to anything
+    /// but the default (v2.14.0). Kept only so existing configs still load —
+    /// enforcing it now at 10/min would throttle every consumer.
+    int rate_limit = 10;
     /// Route entropic.ask through entropic_run (false) or entropic_run_streaming
     /// (true, default). Set false when MTP is active — streaming binds on_token
     /// and trips the MTP incompatibility guard (gh#115, v2.9.12).
     bool ask_streaming = true;
+
+    /// @brief Also serve the bridge over Streamable HTTP on 127.0.0.1:<port>
+    /// (gh#204, v2.14.0). 0 (default) = unix socket only.
+    ///
+    /// One URL for every MCP client, instead of a host per client. Loopback
+    /// only; clients authenticate with the bearer token written to
+    /// `~/.entropic/serve/<port>.token` (mode 0600) on each start. For remote
+    /// use, tunnel with `ssh -L <port>:127.0.0.1:<port> host`. If the port
+    /// cannot be served, configure fails with ENTROPIC_ERROR_IO.
+    int http_port = 0;
 
     /// @brief Namespace for the tools this bridge advertises (gh#145).
     ///
@@ -937,15 +955,24 @@ struct MCPConfig {
     bool enable_filesystem = true;   ///< Enable filesystem server
     bool enable_bash = true;         ///< Enable bash server
     bool enable_git = true;          ///< Enable git server
-    bool enable_diagnostics = true;  ///< Enable diagnostics server
-    bool enable_web = true;          ///< Enable web server
+    bool enable_diagnostics = false; ///< Diagnostics server — placeholder, off by default (v2.14.0, gh#174)
+    bool enable_web = false;         ///< Web server — placeholder, off by default (v2.14.0, gh#174)
     FilesystemConfig filesystem;     ///< Filesystem server config
     BashConfig bash;                 ///< Bash server config (v2.13.0)
     ExternalMCPConfig external;      ///< External MCP server config (Entropic-as-server)
-    /// Parsed since v1.8.1 and read by NOTHING in the C++ engine — the bash
-    /// limit is `bash.timeout_seconds`, external tool calls use
-    /// `tool_call_timeout_ms`. Kept only so existing configs still load.
-    int server_timeout_seconds = 30;
+    /// @brief Seconds an external MCP server gets to come up: the initialize
+    /// handshake and its tools/list, on first connect and on every reconnect
+    /// (gh#175, v2.14.0). Must be >= 1.
+    ///
+    /// Parsed since v1.8.1 and read by nothing until v2.14.0, while a
+    /// hardcoded 10 s bounded bring-up instead. The default is 10 so that
+    /// wiring the key changes no deployment's behaviour — the old default of
+    /// 30 never did anything. It matters more from v2.14.0: configure now
+    /// connects external servers synchronously (gh#199), so this is how long a
+    /// hung server can hold configure. Unrelated to `bash.timeout_seconds`
+    /// (the bash tool's own limit).
+    /// @version 2.14.0
+    int server_timeout_seconds = 10;
     std::string working_dir;         ///< Server working directory (empty = CWD) (v2.0.4)
 
     /**
@@ -960,7 +987,31 @@ struct MCPConfig {
     std::vector<std::filesystem::path> plugins;
 
     /* ── v1.8.7: External MCP client settings ──────────── */
-    std::unordered_map<std::string, ExternalServerEntry> external_servers; ///< Named external servers
+    /// @brief Named external servers the operator declared (v1.8.7).
+    ///
+    /// Declared here = enabled: an operator who writes an entry asked for it.
+    /// Before v2.14.0 this key was in the struct and the schema but parsed
+    /// from no config file and connected by nothing.
+    /// @version 2.14.0
+    std::unordered_map<std::string, ExternalServerEntry> external_servers;
+
+    /* ── v2.14.0: .mcp.json discovery, Claude-Code style ─── */
+    /// @brief `.mcp.json` servers pre-approved by name (gh#199).
+    ///
+    /// Discovery reads `<root>/.mcp.json` and `~/.entropic/.mcp.json`, then
+    /// connects ONLY enabled entries: refused if named in
+    /// `disabled_mcpjson_servers`; connected if named here or
+    /// `enable_all_project_mcp_servers` is true; otherwise the
+    /// `ENTROPIC_HOOK_PRE_MCP_SERVER_CONNECT` pre-hook decides; with no hook
+    /// registered, NOT connected. Inherited by every workspace.
+    /// @version 2.14.0
+    std::vector<std::string> enabled_mcpjson_servers;
+    /// @brief `.mcp.json` servers always refused, even under enable-all.
+    /// @version 2.14.0
+    std::vector<std::string> disabled_mcpjson_servers;
+    /// @brief Pre-approve every discovered server not explicitly disabled.
+    /// @version 2.14.0
+    bool enable_all_project_mcp_servers = false;
     ReconnectConfig reconnect;                   ///< Reconnection backoff policy
     uint32_t health_check_interval_ms = 0;       ///< Ping interval (0 = disabled)
     uint32_t tool_call_timeout_ms = 30000;       ///< Per-call timeout for external tools
@@ -1309,6 +1360,20 @@ struct ParsedConfig {
      * writable path to point at.
      */
     std::optional<std::string> app_context_content;
+
+    /**
+     * @brief Per-workspace app_context file, relative to each workspace root
+     *        (gh#179, v2.14.0). Empty = off (the default).
+     *
+     * When set (e.g. `.entropic/ENTROPIC.md`), a workspace whose root holds
+     * that file uses its text as the app_context for every session bound
+     * to it, in place of the handle's. A workspace without the file keeps
+     * the handle's. Off by default because it puts repository-supplied text
+     * into the system prompt — the same "the repository decides" exposure
+     * gh#199 closed for `.mcp.json`. Must be relative and stay inside the
+     * root (no `..`). Read once, when the workspace is created.
+     */
+    std::filesystem::path workspace_app_context;
 
     /**
      * @brief gh#158 (v2.13.0): may DIFFERENT session keys run together?

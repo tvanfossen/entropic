@@ -27,6 +27,7 @@
 #include <chrono>
 #include <filesystem>
 #include <map>
+#include <shared_mutex>
 #include <memory>
 #include <string>
 #include <vector>
@@ -165,6 +166,43 @@ public:
      * @version 2.13.0
      */
     bool set_outside_root_approver(OutsideRootApprover fn, void* user_data);
+
+    /**
+     * @brief Approver consulted for a discovered `.mcp.json` server that
+     *        config neither disabled nor pre-approved (v2.14.0, gh#199).
+     * @param context_json See ENTROPIC_HOOK_PRE_MCP_SERVER_CONNECT.
+     * @param user_data Forwarded from set_discovered_server_approver().
+     * @return true to connect, false to refuse.
+     */
+    using DiscoveredServerApprover = bool (*)(const std::string& context_json,
+                                              void* user_data);
+
+    /**
+     * @brief Install the discovered-server approver (v2.14.0, gh#199).
+     *
+     * Without one, a discovered server that config did not enable is NOT
+     * connected — silence is a refusal. The facade installs a thunk over the
+     * handle's ENTROPIC_HOOK_PRE_MCP_SERVER_CONNECT hooks on every set it
+     * builds, default and workspace alike.
+     *
+     * @param fn Approver, or nullptr to clear.
+     * @param user_data Forwarded to `fn`.
+     * @version 2.14.0
+     */
+    void set_discovered_server_approver(DiscoveredServerApprover fn,
+                                        void* user_data);
+
+    /**
+     * @brief The socket this handle's external bridge binds (v2.14.0, gh#200).
+     *
+     * Any external server that would connect back to it — declared or
+     * discovered — is refused. Empty (the default) means the handle runs no
+     * bridge, so there is nothing to connect back to.
+     *
+     * @param socket Bound (or about-to-be-bound) bridge socket path.
+     * @version 2.14.0
+     */
+    void set_own_bridge_socket(const std::filesystem::path& socket);
 
     /**
      * @brief Release every in-process server's state for one session
@@ -453,6 +491,9 @@ private:
 
     PermissionManager permissions_;                                 ///< Permission manager
     std::filesystem::path project_dir_;                             ///< Project root
+    DiscoveredServerApprover discovered_approver_ = nullptr;        ///< gh#199
+    void* discovered_approver_ud_ = nullptr;                        ///< gh#199
+    std::filesystem::path own_bridge_socket_;                       ///< gh#200
     std::map<std::string, std::unique_ptr<MCPServerBase>> servers_; ///< Name → in-process server
 
     /// @brief gh#158: guards the working directory every in-process and
@@ -526,8 +567,45 @@ private:
     std::map<std::string, std::unique_ptr<PluginServer>> plugin_servers_; ///< Name → loaded plugin
 
     /* ── v1.8.7: External server state ─────────────────── */
-    std::map<std::string, std::unique_ptr<ExternalMCPClient>> external_clients_; ///< Name → external client
-    std::map<std::string, ServerInfo> server_info_;                               ///< All server info
+    /// @brief Name → external client. SHARED ownership (gh#171, v2.14.0): a
+    /// routed call holds its own reference, so a disconnect landing mid-call
+    /// cannot destroy the client under it. Guarded by external_mutex_.
+    std::map<std::string, std::shared_ptr<ExternalMCPClient>> external_clients_;
+    std::map<std::string, ServerInfo> server_info_;  ///< All server info; guarded by external_mutex_
+
+    /**
+     * @brief Guards external_clients_ and server_info_ (gh#171, v2.14.0).
+     *
+     * The only registry maps that change after configure: runtime
+     * entropic_register_mcp_server / deregister, routine once one host serves
+     * many clients. A LEAF lock — held only to copy entries in or out, never
+     * across I/O, a tool call, or another lock — so it cannot enter a cycle
+     * with root_lock_ or the engine's generation lock (gh#158 lock order).
+     * servers_ and plugin_servers_ stay unlocked: they are written only during
+     * configuration, before any run exists.
+     */
+    /// Owned through a pointer for the same reason as root_lock_: a lock
+    /// cannot move and a ServerManager can.
+    std::unique_ptr<std::shared_mutex> external_mutex_ =
+        std::make_unique<std::shared_mutex>();
+
+    /**
+     * @brief Snapshot the external clients under a shared lock (gh#171).
+     * @return (name, client) pairs; callers use them with no lock held.
+     * @dg_internal
+     * @version 2.14.0
+     */
+    std::vector<std::pair<std::string, std::shared_ptr<ExternalMCPClient>>>
+    external_snapshot() const;
+
+    /**
+     * @brief Look up one external client under a shared lock (gh#171).
+     * @param name Server name.
+     * @return The client, or null when not registered.
+     * @dg_internal
+     * @version 2.14.0
+     */
+    std::shared_ptr<ExternalMCPClient> find_external(const std::string& name) const;
     std::unique_ptr<HealthMonitor> health_monitor_;                               ///< Health monitoring
     std::unique_ptr<MCPJsonDiscovery> mcp_json_discovery_;                        ///< .mcp.json discovery
     MCPConfig mcp_config_;                                                        ///< MCP configuration
@@ -538,6 +616,29 @@ private:
      * @version 1.8.7
      */
     void initialize_external_servers();
+
+    /**
+     * @brief Connect every server the operator declared in config (v2.14.0).
+     * @dg_internal
+     * @version 2.14.0
+     */
+    void connect_declared_servers();
+
+    /**
+     * @brief Discover `.mcp.json` servers and connect the enabled ones.
+     * @dg_internal
+     * @version 2.14.0
+     */
+    void connect_discovered_servers();
+
+    /**
+     * @brief Whether a discovered server may be launched (gh#199/#200).
+     * @param cfg Discovered server config.
+     * @return true to connect.
+     * @dg_internal
+     * @version 2.14.0
+     */
+    bool admit_discovered(const ExternalServerConfig& cfg) const;
 
     /**
      * @brief Route a tool call to the correct server.
@@ -580,7 +681,7 @@ private:
      * @utility
      * @version 1.8.7
      */
-    void connect_and_register_external(
+    std::shared_ptr<ExternalMCPClient> connect_and_register_external(
         const std::string& name,
         std::unique_ptr<ExternalMCPClient> client,
         const std::string& source,

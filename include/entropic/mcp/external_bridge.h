@@ -51,6 +51,7 @@
 #include <filesystem>
 #include <memory>
 #include <mutex>
+#include <map>
 #include <set>
 #include <string>
 #include <thread>
@@ -81,7 +82,7 @@ namespace entropic {
  * that serialises every caller reaching the engine.
  *
  * @dg_internal
- * @version 2.12.0-rc2
+ * @version 2.14.0
  */
 class ENTROPIC_EXPORT ExternalBridge {
 public:
@@ -184,19 +185,28 @@ public:
      * @param timeout_ms Give up after this long and let the caller report a
      *                   busy engine rather than hang.
      * @param waited_ms_out Optional; receives the time actually spent waiting.
+     * @param session_key Session this turn runs under (v2.14.0). Callers of
+     *        the SAME session queue FIFO; callers of different sessions wait
+     *        only for their own lane, because the engine runs sessions
+     *        concurrently (gh#158). When the handle has
+     *        `concurrent_sessions: false` every session shares one lane, as
+     *        before — the engine would refuse a second concurrent session.
      * @return true when it is this caller's turn — the caller MUST then call
-     *         end_turn_wait(). false on timeout, owning nothing.
+     *         end_turn_wait() with the same session_key. false on timeout,
+     *         owning nothing.
      * @req REQ-BRIDGE-001
-     * @version 2.12.0
+     * @version 2.14.0
      */
-    bool begin_turn_wait(long timeout_ms, long* waited_ms_out);
+    bool begin_turn_wait(long timeout_ms, long* waited_ms_out,
+                         const std::string& session_key = "");
 
     /**
-     * @brief Hand the turn to the next ticket in line.
+     * @brief Hand the turn to the next ticket in this session's lane.
+     * @param session_key The key passed to the matching begin_turn_wait().
      * @req REQ-BRIDGE-001
-     * @version 2.12.0
+     * @version 2.14.0
      */
-    void end_turn_wait();
+    void end_turn_wait(const std::string& session_key = "");
 
     /**
      * @brief Mark an async task failed because its turn never came (gh#144).
@@ -222,19 +232,20 @@ public:
                                   const std::string& text);
 
     /**
-     * @brief How many callers are waiting behind the one in flight.
-     * @return Queue depth, excluding the caller currently running.
+     * @brief How many callers are waiting behind the one(s) in flight.
+     * @return Waiters summed over every session's lane (v2.14.0).
      * @utility
-     * @version 2.12.0
+     * @version 2.14.0
      */
-    size_t turn_queue_depth() const { return waiters_.load(); }
+    size_t turn_queue_depth() const;
 
     /**
      * @brief Whether a turn is currently running on the engine.
+     * @return true when any session's lane holds a turn (v2.14.0).
      * @utility
-     * @version 2.12.0
+     * @version 2.14.0
      */
-    bool turn_in_flight() const { return turn_busy_.load(); }
+    bool turn_in_flight() const;
 
     /**
      * @brief Handle entropic.ask_status — check async task state.
@@ -275,10 +286,27 @@ public:
      */
     void detach_phase_observer();
 
+    /**
+     * @brief Run an ask on a background worker and notify its owner.
+     *
+     * v2.14.0: the completion notification goes to the client that started
+     * the task (`client_fd`) and to no other — it used to be broadcast, so
+     * every connected client learned every other client's task ids and
+     * outcomes. `tier` locks the turn exactly as entropic_run_session_as().
+     *
+     * @param prompt User prompt.
+     * @param task_id Assigned task id.
+     * @param client_fd Owning client; -1 for none (nobody is notified).
+     * @param session_key Session to run under ("" = default).
+     * @param tier Tier or identity to lock to ("" = route as usual).
+     * @req REQ-BRIDGE-001
+     * @version 2.14.0
+     */
     void run_async_ask(const std::string& prompt,
                        const std::string& task_id,
                        int client_fd,
-                       const std::string& session_key = "");
+                       const std::string& session_key = "",
+                       const std::string& tier = "");
 
     /**
      * @brief Write the sentinel file for an async task completion.
@@ -359,6 +387,8 @@ public:
         std::string phase = "queued";    ///< queued, running, running:<tier>, done, failed, cancelled (P1-5)
         std::string result;              ///< Final text or error message
         std::chrono::steady_clock::time_point created; ///< For TTL cleanup
+        std::string session_key;         ///< Session it runs under (v2.14.0)
+        int owner_fd = -1;               ///< Client that started it (v2.14.0)
     };
 
     /**
@@ -415,6 +445,21 @@ public:
      * @version 2.0.6-rc16
      */
     void broadcast_notification(const nlohmann::json& notif);
+
+    /**
+     * @brief Write a notification to ONE subscribed client (v2.14.0).
+     *
+     * For anything that belongs to a single caller — an async task's
+     * completion above all. Nothing is sent when `fd` is negative or is not
+     * (or no longer) a subscriber; a failed write drops the subscriber, as
+     * broadcast_notification() does.
+     *
+     * @param fd Owning client's fd.
+     * @param notif JSON-RPC notification object.
+     * @dg_internal (public for unit test access)
+     * @version 2.14.0
+     */
+    void notify_client(int fd, const nlohmann::json& notif);
 
     /**
      * @brief Current subscriber count (for diagnostics / testing).
@@ -493,26 +538,53 @@ private:
     entropic_handle_t handle_;                 ///< Engine handle (not owned)
     ExternalMCPConfig config_;                 ///< Config snapshot
 
-    // ── Turn queue (gh#144, v2.12.0) ─────────────────────────
+    // ── Turn queue (gh#144, v2.12.0; per-session lanes v2.14.0) ──
     // Serialises every path that reaches the engine — sync ask, streaming
-    // ask, AND the detached async worker. Missing the async path would let
+    // ask, AND the detached async worker — PER SESSION. Missing the async path would let
     // an async ask bypass the queue and collide with a sync one, earning an
     // ALREADY_RUNNING where the caller expected to be queued.
     //
     // Nothing else on the bridge may take turn_mutex_. In particular
-    // handle_clear -> cancel_inflight_async_tasks raises the engine
-    // interrupt, and must NOT wait behind the turn it is trying to cancel —
+    // handle_clear -> cancel_inflight_async_tasks interrupts that SESSION's
+    // run, and must NOT wait behind the turn it is trying to cancel —
     // that would be gh#109's failure one layer up. It reaches the engine
     // through entropic_context_clear (api_mutex), which runs never take.
-    mutable std::mutex turn_mutex_;            ///< Guards the ticket counters
+    /// @brief One session's line (v2.14.0; one shared line before).
+    struct TurnLane {
+        uint64_t next_ticket = 0;      ///< Next ticket to hand out
+        uint64_t now_serving = 0;      ///< Ticket whose turn it is
+        size_t waiters = 0;            ///< Callers waiting in this lane
+        bool busy = false;             ///< A turn holds this lane
+        /// Tickets whose owner timed out. Skipped when the line reaches
+        /// them, so one abandoned waiter cannot stall the callers behind it.
+        std::set<uint64_t> abandoned;
+    };
+    mutable std::mutex turn_mutex_;            ///< Guards lanes_
     std::condition_variable turn_cv_;          ///< Signalled when a turn ends
-    uint64_t next_ticket_ = 0;                 ///< Next ticket to hand out
-    uint64_t now_serving_ = 0;                 ///< Ticket whose turn it is
-    std::atomic<size_t> waiters_{0};           ///< Callers waiting in line
-    std::atomic<bool> turn_busy_{false};       ///< A turn is running
-    /// Tickets whose owner timed out. Skipped when the line reaches them,
-    /// so one abandoned waiter cannot stall every caller behind it.
-    std::set<uint64_t> abandoned_tickets_;
+    std::map<std::string, TurnLane> lanes_;    ///< Lane per session key
+
+    /**
+     * @brief The lane a session's turns queue in (v2.14.0).
+     * @param session_key Session key.
+     * @return The key itself when sessions run concurrently, else "".
+     * @dg_internal
+     * @version 2.14.0
+     */
+    std::string lane_for(const std::string& session_key) const;
+
+    /**
+     * @brief Body of one async ask: wait, run, record, notify the owner.
+     * @param prompt User prompt.
+     * @param task_id Task id.
+     * @param client_fd Owning client.
+     * @param session_key Session key.
+     * @param tier Tier or identity; "" routes as usual.
+     * @dg_internal
+     * @version 2.14.0
+     */
+    void async_worker(const std::string& prompt, const std::string& task_id,
+                      int client_fd, const std::string& session_key,
+                      const std::string& tier);
     std::filesystem::path socket_path_;        ///< Unix socket path
     std::string bound_canonical_;              ///< Process-registry key
     int listen_fd_ = -1;                       ///< Listening socket fd

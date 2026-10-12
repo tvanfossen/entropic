@@ -2,6 +2,87 @@ _Last 10 releases. Older history: [OLD_NOTES.md](OLD_NOTES.md). Kept short
 because `gh release create --notes-file` hits GitHub's 125,000-char release
 body limit once this file accumulates full project history — see v2.9.3._
 
+# entropic v2.14.0
+
+Minor release — **one engine host for every client and every repository.**
+`entropic serve` hosts the engine over Streamable HTTP; any number of MCP
+clients share it, each in its own session, workspace and tier, concurrently.
+
+## Read this first — behaviour that changes without you asking
+
+- **Bundled tool results changed shape.** Every bundled tool now declares an
+  `outputSchema` and returns exactly that; the description's "Response
+  format" is generated from it (gh#203).
+  - `read_file`: `lines` is `[{line, content}]` (was a bare string array);
+    long files are paged (`offset`/`limit`, `truncated`, `next_offset`)
+    instead of refused; `path` is root-relative.
+  - `grep`: `{matches, truncated, reason?, next_offset?}` (was a bare array);
+    new `limit`/`offset`/`path`; binary files are skipped.
+  - `glob`: `{paths, ...}`; `list_directory`: `{path, entries, ...}`, sorted,
+    recursive names relative to the listed directory. The truncation
+    sentinel element inside arrays is gone.
+  - `edit_file`: inserts AFTER `insert_line` (it inserted before);
+    `insert_line: 0` inserts at the start (it silently did nothing); errors
+    `no_match` (was `not_found`), `out_of_range`, `invalid_args`.
+  - `entropic.inspect` → `{target, key?, data}`; `context_inspect` →
+    `{messages}`; `followup` → `{results:[{delegation_id, target_tier,
+    summary, completed_at}]}` as it always promised. Refusals are
+    `{"error": code, "message"}` with declared codes, not `Error:` prose.
+  - `todo`: an out-of-range index or unknown action is now an error (both
+    reported success while doing nothing).
+- **diagnostics and web are off by default** and answer `not_implemented`;
+  they were placeholders offered to every model (gh#174).
+- **Workspaces no longer launch their root's `.mcp.json` by default.** A
+  discovered server connects only when enabled (`enabled_mcpjson_servers`,
+  `enable_all_project_mcp_servers`, or a `PRE_MCP_SERVER_CONNECT` hook);
+  with no hook, nothing connects (gh#199/#200).
+- **`mcp.external_servers` now actually connects** on the handle (it was
+  parsed by no loader).
+- **Bridge progress notifications are spec-correct** (numeric `progress`,
+  `message`, `_meta.progressToken`), and async completions go only to the
+  client that submitted the task.
+- **A failed HTTP listener fails configure** with `ENTROPIC_ERROR_IO`.
+- **Argument `minimum`/`maximum` are enforced.** A structured `{"error":...}`
+  result now counts toward the repeated-failure guard (gh#190).
+- **The default tool block is ~25% larger** (~1.7k tokens) — the price of
+  declared contracts; four placeholder tools fewer offsets part of it.
+
+## New features
+
+- `entropic serve --config FILE --port N` and `mcp.external.http_port`:
+  Streamable HTTP on 127.0.0.1 with a per-start bearer token in
+  `~/.entropic/serve/N.token` (decision #84; remote use via `ssh -L`).
+- `entropic.ask` takes `tier` (tier or identity) and `workspace` (an
+  absolute repository path creates the workspace). Turns queue per session,
+  so different sessions run concurrently (gh#205).
+- `entropic_run_session_streaming_as`; a stream's cancel stops only its run.
+- Per-workspace app_context: `entropic_workspace_set_app_context` and the
+  opt-in `workspace_app_context` file (gh#179).
+- MCP `isError` from external servers is honoured.
+
+## Engine bug fixes
+
+- A deferred handle no longer creates a CUDA context while idle (gh#198).
+- The external server registry is locked; `server_timeout_seconds` bounds
+  bring-up; bash commands stop when their session is interrupted
+  (gh#171/#175/#172).
+- `context_clear` on one session no longer cancels another's turn.
+
+## Distribution
+
+- CPU tarball: `entropic-2.14.0-linux-x86_64-cpu.tar.gz` (sha256 in companion file)
+- CUDA tarball: `entropic-2.14.0-linux-x86_64-cuda.tar.gz` (sha256 in companion file)
+- Python wrapper: `pip install entropic-engine==2.14.0` then `entropic install-engine`
+
+## Known limitations
+
+- HTTP clients get no server-initiated stream; poll `ask_status` for async
+  tasks.
+- The `entropic.*` bridge tools do not yet declare an `outputSchema`
+  (declaring one obliges MCP `structuredContent`).
+- Local TSan on GCC 11 false-positives on condition-variable waits; CI's
+  GCC 13 job is unaffected.
+
 # entropic v2.13.2
 
 Patch release — **prefill becomes visible, and `auto` starts using the lever

@@ -7,6 +7,7 @@
  */
 
 #include <entropic/mcp/servers/bash.h>
+#include <entropic/types/run_scope.h>
 #include <entropic/mcp/tool_base.h>
 #include <entropic/mcp/server_base.h>
 #include <entropic/types/logging.h>
@@ -97,6 +98,7 @@ struct ShellRun {
     std::string output;        ///< Combined stdout+stderr (partial on timeout)
     int exit_code = -1;        ///< Shell status; 128+N if killed by signal N
     bool timed_out = false;    ///< The deadline expired and the group was killed
+    bool cancelled = false;    ///< The run was interrupted and the group was killed (gh#172)
     long long elapsed_ms = 0;  ///< Wall time, spawn to reap
 };
 
@@ -193,31 +195,68 @@ bool shell_exited(pid_t pid) {
 }
 
 /**
- * @brief Collect output until the shell exits or the deadline passes.
+ * @brief Why a running shell should stop being waited on (gh#172).
+ * @version 2.14.0
+ */
+enum class ShellStop {
+    running,    ///< Keep waiting
+    exited,     ///< The shell finished on its own
+    deadline,   ///< mcp.bash.timeout_seconds ran out
+    cancelled   ///< The run executing this tool call was interrupted
+};
+
+/**
+ * @brief One poll's verdict: exited, out of time, cancelled, or running.
+ *
+ * gh#172: the run's cancel token is polled on the same cadence as the
+ * deadline, so `entropic_interrupt_session` stops a shell command within
+ * kPollMs instead of waiting out the tool timeout. No run scope on this
+ * thread (a plain API call, a test) reads as not cancelled.
+ *
+ * @param pid The shell.
+ * @param deadline When the command's time is up.
+ * @return The stop reason, or running.
+ * @req REQ-MCP-023
+ * @req REQ-LOOP-006
+ * @version 2.14.0
+ */
+ShellStop poll_stop(pid_t pid, Clock::time_point deadline) {
+    ShellStop stop = ShellStop::running;
+    if (shell_exited(pid)) {
+        stop = ShellStop::exited;
+    } else if (entropic::current_run_cancelled()) {
+        stop = ShellStop::cancelled;
+    } else if (Clock::now() >= deadline) {
+        stop = ShellStop::deadline;
+    }
+    return stop;
+}
+
+/**
+ * @brief Collect output until the shell exits, the deadline passes, or the
+ *        run is cancelled.
  * @param pid The shell.
  * @param fd Read end.
  * @param deadline When the command's time is up.
  * @param out Output accumulator.
- * @return true when the deadline passed first.
+ * @return Why waiting stopped.
  * @req REQ-MCP-023
- * @version 2.13.0
+ * @version 2.14.0
  */
-bool collect_until_exit(pid_t pid, int fd, Clock::time_point deadline,
-                        std::string& out) {
+ShellStop collect_until_exit(pid_t pid, int fd, Clock::time_point deadline,
+                             std::string& out) {
     bool open = true;
-    bool exited = false;
-    bool expired = false;
-    while (!exited && !expired) {
+    ShellStop stop = ShellStop::running;
+    while (stop == ShellStop::running) {
         if (open) {
             open = pump(fd, out, kPollMs);
         } else {
             // The shell closed its output but is still running.
             std::this_thread::sleep_for(std::chrono::milliseconds(kPollMs));
         }
-        exited = shell_exited(pid);
-        expired = !exited && Clock::now() >= deadline;
+        stop = poll_stop(pid, deadline);
     }
-    return expired;
+    return stop;
 }
 
 /**
@@ -280,7 +319,7 @@ int reap(pid_t pid) {
  * @param timeout_s Wall-clock limit in seconds.
  * @return The run's output, exit code, and whether it timed out.
  * @req REQ-MCP-023
- * @version 2.13.0
+ * @version 2.14.0
  */
 ShellRun run_shell(const std::string& cmd, int timeout_s) {
     ShellRun run;
@@ -291,9 +330,13 @@ ShellRun run_shell(const std::string& cmd, int timeout_s) {
         run.output = "Failed to start /bin/sh";
         return run;
     }
-    run.timed_out = collect_until_exit(
+    const auto stop = collect_until_exit(
         pid, fd, start + std::chrono::seconds(timeout_s), run.output);
-    ::kill(-pid, SIGKILL);  // the whole group: timed-out tree or leftovers
+    run.timed_out = stop == ShellStop::deadline;
+    run.cancelled = stop == ShellStop::cancelled;
+    // The whole group: a timed-out or cancelled tree, or what a finished
+    // command left running in the background.
+    ::kill(-pid, SIGKILL);
     drain(fd, run.output);
     ::close(fd);
     run.exit_code = reap(pid);
@@ -332,6 +375,57 @@ nlohmann::json timeout_error(const ShellRun& run, int limit_s) {
     err["elapsed_ms"] = run.elapsed_ms;
     err["output"] = run.output;
     return err;
+}
+
+/**
+ * @brief The typed error the model sees when its run was interrupted (gh#172).
+ *
+ * Distinct from a failure and from a timeout: nothing went wrong with the
+ * command, the session was stopped. Partial output is kept.
+ *
+ * @param run The cancelled run.
+ * @return `{"error":"cancelled","message",...,"elapsed_ms","output"}`.
+ * @req REQ-MCP-023
+ * @version 2.14.0
+ */
+nlohmann::json cancelled_error(const ShellRun& run) {
+    nlohmann::json err;
+    err["error"] = "cancelled";
+    err["message"] = "The session was interrupted while this command ran; "
+        "it was stopped together with every process it started. Output "
+        "printed before then is in `output`.";
+    err["elapsed_ms"] = run.elapsed_ms;
+    err["output"] = run.output;
+    return err;
+}
+
+/**
+ * @brief The tool result for one finished, timed-out or cancelled run.
+ * @param run The run.
+ * @param limit_s The enforced timeout.
+ * @param command The command, for the log line.
+ * @return Result JSON.
+ * @req REQ-MCP-023
+ * @version 2.14.0
+ */
+nlohmann::json shell_result(const ShellRun& run, int limit_s,
+                            const std::string& command) {
+    nlohmann::json result;
+    if (run.cancelled) {
+        logger->info("Bash: CANCELLED after {} ms — process group killed, "
+                     "cmd='{}'", run.elapsed_ms, command);
+        result = cancelled_error(run);
+    } else if (run.timed_out) {
+        logger->warn("Bash: TIMEOUT after {} ms (limit {} s) — process "
+                     "group killed, cmd='{}'", run.elapsed_ms, limit_s, command);
+        result = timeout_error(run, limit_s);
+    } else {
+        logger->info("Bash: exit={}, output={} chars, {} ms, cmd='{}'",
+                     run.exit_code, run.output.size(), run.elapsed_ms, command);
+        result["exit_code"] = run.exit_code;
+        result["output"] = run.output;
+    }
+    return result;
 }
 
 }  // namespace
@@ -391,7 +485,7 @@ private:
  *         or the working_dir rejection error when the cwd failed
  *         validation — in which case no shell ran.
  * @req REQ-MCP-023
- * @version 2.13.0
+ * @version 2.14.0
  */
 ServerResponse ExecuteTool::execute(const std::string& args_json) {
     auto args = nlohmann::json::parse(args_json);
@@ -413,20 +507,7 @@ ServerResponse ExecuteTool::execute(const std::string& args_json) {
 
     const int limit = server_.timeout();
     auto run = run_shell(full_cmd, limit);
-    nlohmann::json result;
-    if (run.timed_out) {
-        logger->warn("Bash: TIMEOUT after {} ms (limit {} s) — process "
-                     "group killed, cmd='{}'",
-                     run.elapsed_ms, limit, command);
-        result = timeout_error(run, limit);
-    } else {
-        logger->info("Bash: exit={}, output={} chars, {} ms, cmd='{}'",
-                     run.exit_code, run.output.size(), run.elapsed_ms,
-                     command);
-        result["exit_code"] = run.exit_code;
-        result["output"] = run.output;
-    }
-    return {result.dump(), {}};
+    return {shell_result(run, limit, command).dump(), {}};
 }
 
 // ── BashServer ──────────────────────────────────────────────────

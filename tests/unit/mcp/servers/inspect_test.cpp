@@ -170,7 +170,7 @@ TEST_CASE("test_inspect_config_full", "[inspect]") {
 
     auto r = get_result(
         server.execute("inspect", R"({"target":"config"})"));
-    auto j = json::parse(r);
+    auto j = json::parse(r).at("data");  // v2.14.0: {target, key?, data}
     REQUIRE(j.contains("model"));
     REQUIRE(j.contains("loop"));
 }
@@ -183,7 +183,7 @@ TEST_CASE("test_inspect_config_section", "[inspect]") {
     auto r = get_result(
         server.execute("inspect",
             R"({"target":"config","key":"model"})"));
-    auto j = json::parse(r);
+    auto j = json::parse(r).at("data");  // v2.14.0: {target, key?, data}
     REQUIRE(j.contains("path"));
 }
 
@@ -195,7 +195,7 @@ TEST_CASE("test_inspect_config_unknown_section", "[inspect]") {
     auto r = get_result(
         server.execute("inspect",
             R"({"target":"config","key":"nonexistent"})"));
-    REQUIRE(r.find("Error") != std::string::npos);
+    REQUIRE(json::parse(r).at("error") == "not_found");  // v2.14.0: declared code
     REQUIRE(r.find("not found") != std::string::npos);
 }
 
@@ -207,7 +207,7 @@ TEST_CASE("test_inspect_identity_by_name", "[inspect]") {
     auto r = get_result(
         server.execute("inspect",
             R"({"target":"identity","key":"eng"})"));
-    auto j = json::parse(r);
+    auto j = json::parse(r).at("data");  // v2.14.0: {target, key?, data}
     REQUIRE(j["name"] == "eng");
 }
 
@@ -223,7 +223,7 @@ TEST_CASE("test_inspect_identity_includes_assembled_prompt", "[inspect][2.1.0]")
     auto r = get_result(
         server.execute("inspect",
             R"({"target":"identity","key":"eng"})"));
-    auto j = json::parse(r);
+    auto j = json::parse(r).at("data");  // v2.14.0: {target, key?, data}
     REQUIRE(j["name"] == "eng");
     REQUIRE(j.contains("assembled_prompt"));
     auto p = j["assembled_prompt"].get<std::string>();
@@ -238,7 +238,7 @@ TEST_CASE("test_inspect_identity_unknown", "[inspect]") {
     auto r = get_result(
         server.execute("inspect",
             R"({"target":"identity","key":"nonexistent"})"));
-    REQUIRE(r.find("Error") != std::string::npos);
+    REQUIRE(json::parse(r).at("error") == "not_found");  // v2.14.0: declared code
     REQUIRE(r.find("Available") != std::string::npos);
 }
 
@@ -250,7 +250,7 @@ TEST_CASE("test_inspect_tool_by_name", "[inspect]") {
     auto r = get_result(
         server.execute("inspect",
             R"({"target":"tool","key":"filesystem.read_file"})"));
-    auto j = json::parse(r);
+    auto j = json::parse(r).at("data");  // v2.14.0: {target, key?, data}
     REQUIRE(j["name"] == "filesystem.read_file");
 }
 
@@ -262,7 +262,7 @@ TEST_CASE("test_inspect_tool_unknown", "[inspect]") {
     auto r = get_result(
         server.execute("inspect",
             R"({"target":"tool","key":"nonexistent"})"));
-    REQUIRE(r.find("Error") != std::string::npos);
+    REQUIRE(json::parse(r).at("error") == "not_found");  // v2.14.0
 }
 
 TEST_CASE("test_inspect_state", "[inspect]") {
@@ -272,7 +272,7 @@ TEST_CASE("test_inspect_state", "[inspect]") {
 
     auto r = get_result(
         server.execute("inspect", R"({"target":"state"})"));
-    auto j = json::parse(r);
+    auto j = json::parse(r).at("data");  // v2.14.0: {target, key?, data}
     REQUIRE(j.contains("agent_state"));
     REQUIRE(j.contains("delegation_depth"));
 }
@@ -284,7 +284,7 @@ TEST_CASE("test_inspect_metrics", "[inspect]") {
 
     auto r = get_result(
         server.execute("inspect", R"({"target":"metrics"})"));
-    auto j = json::parse(r);
+    auto j = json::parse(r).at("data");  // v2.14.0: {target, key?, data}
     REQUIRE(j.contains("total_iterations"));
     REQUIRE(j.contains("total_tool_calls"));
 }
@@ -296,7 +296,7 @@ TEST_CASE("test_inspect_history_default", "[inspect]") {
 
     auto r = get_result(
         server.execute("inspect", R"({"target":"history"})"));
-    auto j = json::parse(r);
+    auto j = json::parse(r).at("data");  // v2.14.0: {target, key?, data}
     REQUIRE(j.is_array());
     REQUIRE(j.size() == 5);  // mock caps at 5
 }
@@ -309,7 +309,7 @@ TEST_CASE("test_inspect_history_with_limit", "[inspect]") {
     auto r = get_result(
         server.execute("inspect",
             R"({"target":"history","key":"3"})"));
-    auto j = json::parse(r);
+    auto j = json::parse(r).at("data");  // v2.14.0: {target, key?, data}
     REQUIRE(j.size() == 3);
 }
 
@@ -342,7 +342,7 @@ TEST_CASE("test_inspect_unknown_target", "[inspect]") {
     auto r = get_result(
         server.execute("inspect",
             R"({"target":"bogus"})"));
-    REQUIRE(r.find("Error") != std::string::npos);
+    REQUIRE(json::parse(r).at("error") == "unknown_target");  // v2.14.0
     REQUIRE(r.find("unknown target") != std::string::npos);
 }
 
@@ -361,7 +361,7 @@ TEST_CASE("test_inspect_no_provider_error", "[inspect]") {
     EntropicServer server({"lead", "eng"}, TEST_DATA_DIR);
     auto r = get_result(
         server.execute("inspect", R"({"target":"state"})"));
-    REQUIRE(r.find("Error") != std::string::npos);
+    REQUIRE(json::parse(r).at("error") == "provider_unavailable");  // v2.14.0
 }
 
 // ── gh#33 bug 3 (v2.1.6): null-deref crash on empty/invalid args ──

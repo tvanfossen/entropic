@@ -45,7 +45,7 @@
 #include <string>
 #include <thread>
 
-CATCH_REGISTER_LISTENER(ModelTestListener)
+CATCH_REGISTER_LISTENER(FacadeTestListener)
 
 namespace {
 

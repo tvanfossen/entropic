@@ -139,20 +139,23 @@ TEST_CASE("todo update and remove actions mutate the list",
     }
 }
 
-TEST_CASE("todo format_list returns '(empty)' on a fresh server",
-          "[entropic][v2.3.10][coverage]") {
-    // A session with no list yet renders the empty-list branch of
-    // format_todo_list, which emits "(empty)".
+TEST_CASE("todo format_list returns '(empty)' once the list is emptied",
+          "[entropic][v2.3.10][coverage][gh203][2.14.0]") {
+    // The empty-list branch of format_todo_list emits "(empty)". This test
+    // used to reach it with an UPDATE of index 0 on an empty list — which
+    // changed nothing yet reported success, an undocumented no-op. v2.14.0
+    // makes that an out_of_range error, so reach "(empty)" honestly.
     EntropicServer server({"lead", "eng"}, TEST_DATA_DIR);
+    auto result_of = [&](const json& args) {
+        auto env = json::parse(server.execute("todo", args.dump()));
+        return env["result"].get<std::string>();
+    };
 
-    json args;
-    args["action"] = "update";
-    args["index"] = 0;
-    args["status"] = "x";
-    auto envelope = server.execute("todo", args.dump());
-    auto resp = json::parse(envelope);
-    REQUIRE(resp["result"].get<std::string>().find("(empty)")
-            != std::string::npos);
+    CHECK(json::parse(result_of({{"action", "update"}, {"index", 0}, {"status", "completed"}}))
+              .at("error") == "out_of_range");
+    result_of({{"action", "add"}, {"content", "one"}});
+    auto emptied = json::parse(result_of({{"action", "remove"}, {"index", 0}}));
+    REQUIRE(emptied.at("todo_state") == "(empty)");
 }
 
 TEST_CASE("gh#158: the todo list belongs to the calling session",
@@ -494,7 +497,8 @@ TEST_CASE("followup rejects non-object args with a typed error",
     // at entropic_server.cpp:1195.
     auto envelope = server.execute("followup", "42");
     auto result = extract_result(envelope);
-    REQUIRE(result.find("invalid args") != std::string::npos);
+    // v2.14.0: a declared code; the message used to BE the code.
+    REQUIRE(json::parse(result).at("error") == "invalid_args");
 }
 
 TEST_CASE("followup rejects empty query with a typed error",
@@ -515,7 +519,7 @@ TEST_CASE("followup with malformed (non-JSON) args returns invalid-args error",
     // at entropic_server.cpp:1194-1195.
     auto envelope = server.execute("followup", "not-json");
     auto result = extract_result(envelope);
-    REQUIRE(result.find("invalid args") != std::string::npos);
+    REQUIRE(json::parse(result).at("error") == "invalid_args");  // v2.14.0
 }
 
 TEST_CASE("Entropic tools advertise their required access levels",

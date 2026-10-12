@@ -18,6 +18,8 @@
 
 #include <nlohmann/json.hpp>
 
+#include <algorithm>
+#include <cstring>
 #include <filesystem>
 #include <fstream>
 #include <functional>
@@ -375,50 +377,8 @@ bool walk_budget_spent(WalkBudget& budget) {
     return spent;
 }
 
-/**
- * @brief The truncation sentinel appended to a cut-short result.
- *
- * Appended as a trailing element rather than wrapping the array,
- * because glob and grep results are arrays of paths and match objects
- * respectively and both shapes are already contracted. A truncation
- * the model cannot see would be worse than the 87 s hang it replaces —
- * it would look like a complete, empty answer.
- *
- * @param budget Spent walk budget.
- * @return JSON object carrying the human-readable notice.
- * @dg_internal
- * @version 2.13.0
- */
-json walk_truncation_notice(const WalkBudget& budget) {
-    json note;
-    note["truncated"] = true;
-    note["note"] = "walk truncated at " + std::to_string(budget.visited)
-        + " entries — narrow the pattern";
-    return note;
-}
 
-/**
- * @brief Append the truncation sentinel when the walk was cut short.
- *
- * Shared by glob and grep so the two can never disagree about how a
- * bounded walk is reported (gh#161).
- *
- * @param[in,out] result Result array to annotate.
- * @param budget Walk budget after the walk.
- * @param tool Tool name, for the log line.
- * @param pattern Requested pattern, for the log line.
- * @dg_internal
- * @version 2.13.0
- */
-void note_truncated_walk(json& result, const WalkBudget& budget,
-                         const std::string& tool,
-                         const std::string& pattern) {
-    if (!budget.truncated) { return; }
-    auto note = walk_truncation_notice(budget);
-    logger->warn("{} '{}': {}", tool, pattern,
-                 note.at("note").get<std::string>());
-    result.push_back(note);
-}
+
 
 /**
  * @brief Read entire file contents into a string.
@@ -492,31 +452,228 @@ std::string make_error(const std::string& code,
 }
 
 /**
- * @brief Build read_file result JSON from content string.
- * @param path Canonical path string.
- * @param content File content.
- * @return JSON carrying the path, the total line count, and `lines` as
- *         an ORDERED ARRAY — not a keyed object (gh#120), so line order
- *         survives serialisation.
- * @req REQ-MCP-021
- * @version 2.9.18
+ * @brief A requested page: how many results to skip, how many to keep.
+ * @dg_internal
+ * @version 2.14.0
  */
-std::string build_read_result(const std::string& path,
-                              const std::string& content) {
-    json result;
-    result["path"] = path;
+struct Page {
+    long offset = 0; ///< Results to skip (from a previous next_offset)
+    long limit = 0;  ///< Results to keep
+};
 
-    std::istringstream stream(content);
-    std::string line;
-    json lines = json::array();
+/**
+ * @brief Read `offset`/`limit` from tool arguments (gh#202).
+ *
+ * Bounds are enforced here as well as by the executor's schema check,
+ * because a handler can be reached without the executor (tests, the
+ * plugin ABI). Out of range is a declared error, never a silent clamp.
+ *
+ * @param args Tool arguments.
+ * @param default_limit Limit when `limit` is absent.
+ * @param max_limit Largest accepted `limit`.
+ * @param[out] page Parsed page.
+ * @return "" on success, else a structured `invalid_args` error.
+ * @req REQ-MCP-022
+ * @version 2.14.0
+ */
+std::string read_page(const json& args, long default_limit, long max_limit,
+                      Page& page) {
+    page.offset = args.value<long>("offset", 0);
+    page.limit = args.value("limit", default_limit);
+    std::string err;
+    // Written with '>' only: knots v1.4.3 reads a bare '<' here as a
+    // template bracket and loses the function boundary.
+    if (0 > page.offset || 1 > page.limit || page.limit > max_limit) {
+        err = make_error("invalid_args",
+            "offset must be >= 0 and limit 1.." + std::to_string(max_limit)
+            + " (got offset " + std::to_string(page.offset) + ", limit "
+            + std::to_string(page.limit) + ")");
+    }
+    return err;
+}
 
-    while (std::getline(stream, line)) {
-        lines.push_back(line);
+/**
+ * @brief Collects one page of results and reports how the page ended.
+ *
+ * Replaces v2.13.0's trailing `{"truncated":true}` sentinel inside a
+ * result array — an undeclared shape — with declared fields: `truncated`,
+ * `reason` (`limit` = more exist, continue at `next_offset`; `walk` = the
+ * directory walk hit its cap) (gh#173/#202/#203).
+ *
+ * @dg_internal
+ * @version 2.14.0
+ */
+class PagedResult {
+public:
+    /**
+     * @brief Start collecting a page.
+     * @param page Requested page.
+     * @version 2.14.0
+     */
+    explicit PagedResult(Page page) : page_(page) {}
+
+    /**
+     * @brief Offer the next result in order.
+     * @param item Result.
+     * @return false once the page is full and a further result exists —
+     *         the caller stops walking.
+     * @dg_internal
+     * @version 2.14.0
+     */
+    bool offer(json item) {
+        bool keep_going = true;
+        if (page_.offset > seen_) {
+            ++seen_;
+        } else if (static_cast<long>(items_.size()) >= page_.limit) {
+            more_ = true;
+            keep_going = false;
+        } else {
+            items_.push_back(std::move(item));
+        }
+        return keep_going;
     }
 
-    result["total"] = static_cast<int>(lines.size());
-    result["lines"] = std::move(lines);
-    return result.dump();
+    /**
+     * @brief Whether the page filled with results still to come.
+     * @return true once offer() has returned false.
+     * @dg_internal
+     * @version 2.14.0
+     */
+    bool full() const { return more_; }
+
+    /**
+     * @brief Write the page into `result` under `key`, with its ending.
+     * @param[in,out] result Result object.
+     * @param key Array key ("paths", "matches", "entries").
+     * @param walk_truncated Whether the walk stopped on its cap.
+     * @dg_internal
+     * @version 2.14.0
+     */
+    void finish(json& result, const std::string& key,
+                bool walk_truncated) {
+        const long returned = static_cast<long>(items_.size());
+        result[key] = std::move(items_);
+        result["truncated"] = more_ || walk_truncated;
+        if (more_) {
+            result["reason"] = "limit";
+            result["next_offset"] = page_.offset + returned;
+        } else if (walk_truncated) {
+            result["reason"] = "walk";
+        }
+    }
+
+private:
+    Page page_;
+    long seen_ = 0;
+    bool more_ = false;
+    json items_ = json::array(); ///< Collected page
+};
+
+/**
+ * @brief How a path is shown to the model: root-relative when inside the
+ *        root (what a citation and every path argument use), else
+ *        absolute (gh#203).
+ * @param root Canonical project root.
+ * @param path Path to show.
+ * @return Display string; "." for the root itself.
+ * @dg_internal
+ * @version 2.14.0
+ */
+std::string display_path(const fs::path& root, const fs::path& path) {
+    return path_within(path, root)
+        ? path.lexically_relative(root).generic_string()
+        : path.string();
+}
+
+/**
+ * @brief The window of a file one read_file call returns.
+ * @dg_internal
+ * @version 2.14.0
+ */
+struct ReadWindow {
+    long offset = 1; ///< First line, 1-based
+    long limit = 0;  ///< Max lines; 0 = until the byte budget is spent
+    long budget = 0; ///< Max content bytes; <= 0 = unbounded
+};
+
+/**
+ * @brief Accumulates one read_file window, line by line.
+ * @dg_internal
+ * @version 2.14.0
+ */
+struct WindowReader {
+    const ReadWindow& w;          ///< Requested window
+    json lines = json::array();   ///< Lines taken so far
+    long bytes = 0;               ///< Content bytes taken
+    bool more = false;            ///< A line past the window exists
+    std::string err;              ///< size_exceeded, when set
+
+    /**
+     * @brief Consider line `n` for the window.
+     * @param n 1-based line number.
+     * @param line Line text.
+     * @dg_internal
+     * @version 2.14.0
+     */
+    void take(long n, const std::string& line) {
+        const long size = static_cast<long>(line.size()) + 1;
+        const bool full = (w.limit > 0 && static_cast<long>(lines.size()) >= w.limit)
+            || (w.budget > 0 && bytes + size > w.budget);
+        if (w.offset > n || more) { return; }
+        if (full && lines.empty()) {
+            err = make_error("size_exceeded", "Line " + std::to_string(n)
+                + " is " + std::to_string(size) + " bytes, more than the "
+                "whole read budget (" + std::to_string(w.budget) + ")");
+        } else if (full) {
+            more = true;
+        } else {
+            json entry;
+            entry["line"] = n;
+            entry["content"] = line;
+            lines.push_back(std::move(entry));
+            bytes += size;
+        }
+    }
+};
+
+/**
+ * @brief Read a window of numbered lines, streaming (gh#201).
+ *
+ * Every line carries its 1-based number so a model that cites what it
+ * read never counts. The whole file is walked to report `total`, but
+ * only the window is held. A window stops at `limit` lines or when the
+ * next line would overrun the byte budget; then `truncated` is true and
+ * `next_offset` names where to resume. A single line larger than the
+ * whole budget cannot be returned at all and is `size_exceeded`.
+ *
+ * @param path File to read.
+ * @param display Path as shown to the model.
+ * @param w Requested window.
+ * @param[out] err Set to a structured error on failure.
+ * @return The declared success object (see read_file.json).
+ * @req REQ-MCP-021
+ * @version 2.14.0
+ */
+json read_numbered_lines(const fs::path& path, const std::string& display,
+                         const ReadWindow& w, std::string& err) {
+    std::ifstream in(path, std::ios::binary);
+    WindowReader reader{w};
+    std::string line;
+    long n = 0;
+    while (reader.err.empty() && std::getline(in, line)) {
+        reader.take(++n, line);
+    }
+    err = reader.err;
+    json result;
+    result["path"] = display;
+    result["total"] = n;
+    result["offset"] = w.offset;
+    result["truncated"] = reader.more;
+    if (reader.more) {
+        result["next_offset"] = w.offset + static_cast<long>(reader.lines.size());
+    }
+    result["lines"] = std::move(reader.lines);
+    return result;
 }
 
 /**
@@ -734,17 +891,17 @@ int count_occurrences(const std::string& content,
  * @param old_str String to find.
  * @param new_str Replacement string.
  * @param replace_all Replace all occurrences vs single.
- * @param error_type Output: "not_found" or "multiple_matches" on failure.
+ * @param error_type Output: "no_match" or "multiple_matches" on failure.
  * @return Modified content, or nullopt on error.
  * @dg_internal
- * @version 1.8.5
+ * @version 2.14.0
  */
 std::optional<std::string>
 apply_str_replace(const std::string& content, const std::string& old_str, const std::string& new_str, bool replace_all, std::string& error_type) {
 
     int occurrences = count_occurrences(content, old_str);
     if (occurrences == 0) {
-        error_type = "not_found";
+        error_type = "no_match";
         return std::nullopt;
     }
     if (!replace_all && occurrences > 1) {
@@ -763,36 +920,49 @@ apply_str_replace(const std::string& content, const std::string& old_str, const 
 }
 
 /**
- * @brief Insert text before a given line number.
+ * @brief Number of lines in `content` as read_file numbers them.
  * @param content File content.
- * @param line_num 1-based line number.
- * @param new_str Text to insert.
- * @return Modified content.
+ * @return Line count (a final line without '\n' counts).
  * @dg_internal
- * @version 2.1.4
+ * @version 2.14.0
+ */
+long count_lines(const std::string& content) {
+    long n = static_cast<long>(std::count(content.begin(), content.end(), '\n'));
+    return (!content.empty() && content.back() != '\n') ? n + 1 : n;
+}
+
+/**
+ * @brief Insert text AFTER line `after` (0 = start of file).
+ *
+ * v2.14.0 (gh#203): the schema always said AFTER; the code inserted
+ * BEFORE, and `insert_line: 0` matched no line and wrote nothing while
+ * reporting success. The caller validates `after` in 0..count_lines.
+ * A file's missing final newline is preserved.
+ *
+ * @param content File content.
+ * @param after Line the new text follows (0..line count).
+ * @param new_str Text to insert (may span lines).
+ * @return Modified content.
+ * @req REQ-MCP-021
+ * @version 2.14.0
  */
 std::string apply_insert(const std::string& content,
-                         int line_num,
+                         long after,
                          const std::string& new_str) {
-    // (#13/#15 v2.1.4: function body unchanged; doxygen-guard parser
-    // re-evaluates the position after surrounding helpers were added.)
-    std::istringstream stream(content);
-    std::ostringstream out;
-    std::string line;
-    int current = 0;
-
-    while (std::getline(stream, line)) {
-        ++current;
-        if (current == line_num) {
-            out << new_str << '\n';
-        }
-        out << line << '\n';
+    size_t pos = 0;
+    for (long line = 0; line < after; ++line) {
+        auto nl = content.find('\n', pos);
+        pos = (nl == std::string::npos) ? content.size() : nl + 1;
     }
-
-    if (line_num > current) {
-        out << new_str << '\n';
+    std::string text = new_str;
+    bool at_unterminated_end = pos == content.size() && !content.empty()
+        && content.back() != '\n';
+    if (at_unterminated_end) {
+        text = "\n" + text;
+    } else if (text.empty() || text.back() != '\n') {
+        text += '\n';
     }
-    return out.str();
+    return content.substr(0, pos) + text + content.substr(pos);
 }
 
 
@@ -885,152 +1055,142 @@ EntryAction classify_glob_entry(
 }
 
 /**
- * @brief Collect files matching a glob, honoring IgnoreMatcher and
- *        brace-expanded patterns.
+ * @brief Collect files matching a glob into one page, honoring
+ *        IgnoreMatcher and brace-expanded patterns.
  *
- * Issues #13/#15 (v2.1.4). Pre-2.1.4 brace expansion threw
- * regex_error and killed the session; build artifacts also leaked
- * into results. This single function now handles both fixes via the
- * expand_braces + classify_glob_entry helpers.
+ * Issues #13/#15 (v2.1.4): brace expansion + ignore filtering.
+ * v2.14.0 (gh#203): paths are root-relative and paged; the caller learns
+ * whether the page filled or the walk ran out of budget.
  *
- * @param root Starting directory for traversal.
+ * @param root Starting directory for traversal (the project root).
  * @param pattern Glob pattern (may contain `{a,b,c}`).
- * @param max_results Maximum number of results.
  * @param ignore Optional ignore matcher (nullptr disables filtering).
- * @param[in,out] budget Entry budget; the walk stops when it is spent
- *                and the budget records that it was (gh#161).
- * @return Absolute paths of matching regular files, capped at
- *         `max_results`, with ignored files omitted and ignored
- *         directories never descended into. `**` matches files at the
- *         root as well as in subdirectories (gh#126).
+ * @param[in,out] budget Entry budget (gh#161).
+ * @param[in,out] page Page being collected.
  * @req REQ-MCP-022
  * @req REQ-MCP-021
- * @version 2.13.0
+ * @version 2.14.0
  */
-std::vector<std::string> collect_glob_matches(
+void collect_glob_matches(
     const fs::path& root,
     const std::string& pattern,
-    int max_results,
     const IgnoreMatcher* ignore,
-    WalkBudget& budget) {
+    WalkBudget& budget,
+    PagedResult& page) {
 
     auto patterns = expand_braces(pattern);
-    std::vector<std::string> matches;
     auto it = fs::recursive_directory_iterator(
         root, fs::directory_options::skip_permission_denied);
 
     for (auto& entry : it) {
-        if (static_cast<int>(matches.size()) >= max_results) {
-            break;
-        }
-        auto action = classify_glob_entry(entry, root, patterns,
-                                          ignore);
+        auto action = classify_glob_entry(entry, root, patterns, ignore);
         if (action == EntryAction::kSkipPrune) {
             it.disable_recursion_pending();
-        } else if (action == EntryAction::kTake) {
-            matches.push_back(entry.path().string());
+        } else if (action == EntryAction::kTake
+                   && !page.offer(display_path(root, entry.path()))) {
+            break;
         }
         if (walk_budget_spent(budget)) { break; }
     }
-    return matches;
 }
 
 /**
- * @brief Search a single file for regex matches.
+ * @brief Whether a file looks binary: a NUL byte in its first 8 KiB.
  *
- * Bounded by a shared total-match limit rather than a per-file one, so
- * a single huge file cannot crowd out the rest of the search.
+ * grep's description always said binary files were skipped; until
+ * v2.14.0 nothing checked (gh#203).
  *
- * @param path File path.
- * @param re Compiled regex.
- * @param matches Output vector for match results, appended to in place.
- * @param limit Maximum total matches across the whole grep.
- * @req REQ-MCP-022
- * @version 1.8.5
+ * @param path File.
+ * @return true when the file should not be searched as text.
+ * @dg_internal
+ * @version 2.14.0
  */
-void grep_file(const fs::path& path,
-               const std::regex& re,
-               std::vector<json>& matches,
-               int limit) {
-    std::ifstream in(path);
-    if (!in.is_open()) {
-        return;
-    }
+bool looks_binary(const fs::path& path) {
+    std::ifstream in(path, std::ios::binary);
+    char buf[8192];
+    in.read(buf, sizeof(buf));
+    return std::memchr(buf, '\0', static_cast<size_t>(in.gcount())) != nullptr;
+}
 
+/**
+ * @brief Search a single file for regex matches, feeding one page.
+ * @param path File path.
+ * @param display Path as shown to the model.
+ * @param re Compiled regex.
+ * @param[in,out] page Page being collected.
+ * @return false once the page is full (stop the search).
+ * @req REQ-MCP-022
+ * @version 2.14.0
+ */
+bool grep_file(const fs::path& path, const std::string& display,
+               const std::regex& re, PagedResult& page) {
+    std::ifstream in(path);
     std::string line;
-    int line_num = 0;
-    while (std::getline(in, line)) {
+    long line_num = 0;
+    bool keep_going = !looks_binary(path);
+    while (keep_going && std::getline(in, line)) {
         ++line_num;
-        if (static_cast<int>(matches.size()) >= limit) {
-            return;
+        if (std::regex_search(line, re)) {
+            json m;
+            m["path"] = display;
+            m["line"] = line_num;
+            m["content"] = line;
+            keep_going = page.offer(std::move(m));
         }
-        if (!std::regex_search(line, re)) {
-            continue;
-        }
-        json m;
-        m["path"] = path.string();
-        m["line"] = line_num;
-        m["content"] = line;
-        matches.push_back(std::move(m));
     }
+    return !page.full();
 }
 
 /**
  * @brief Convert a directory entry to a JSON object.
  * @param entry Directory entry.
- * @return JSON with name, type, and size fields.
+ * @param base The listed directory; `name` is relative to it.
+ * @return JSON with name, type ("file"|"directory") and size.
  * @dg_internal
- * @version 1.8.5
+ * @version 2.14.0
  */
-json entry_to_json(const fs::directory_entry& entry) {
+json entry_to_json(const fs::directory_entry& entry, const fs::path& base) {
     json j;
-    j["name"] = entry.path().filename().string();
-
-    if (entry.is_directory()) {
-        j["type"] = "directory";
-        j["size"] = 0;
-    } else {
-        j["type"] = "file";
-        j["size"] = entry.is_regular_file()
-            ? static_cast<int64_t>(entry.file_size())
-            : 0;
-    }
+    j["name"] = entry.path().lexically_relative(base).generic_string();
+    bool dir = entry.is_directory();
+    j["type"] = dir ? "directory" : "file";
+    j["size"] = (!dir && entry.is_regular_file())
+        ? static_cast<int64_t>(entry.file_size()) : 0;
     return j;
 }
 
 /**
- * @brief Collect directory entries, optionally recursive.
+ * @brief Collect directory entries, optionally recursive, sorted by name.
+ *
+ * v2.14.0: charged to the walk budget like glob and grep (a recursive
+ * listing of a large tree was unbounded), and sorted so `offset` pages
+ * through a stable order.
+ *
  * @param dir Directory to list.
- * @param recursive Whether to recurse into subdirectories (defaults to
- *                  false at the tool boundary, gh#116).
- * @param max_depth Maximum recursion depth (tool default 3, gh#116);
- *                  deeper entries are pruned rather than listed.
- * @return One JSON object per listed entry carrying name, type and
- *         size.
+ * @param recursive Whether to recurse (tool default false, gh#116).
+ * @param max_depth Depth below `dir` to descend (tool default 3; 0 =
+ *                  direct children only).
+ * @param[in,out] budget Walk budget.
+ * @return Entries sorted by relative name.
  * @req REQ-MCP-021
- * @version 1.8.5
+ * @version 2.14.0
  */
 std::vector<json> collect_entries(const fs::path& dir,
                                   bool recursive,
-                                  int max_depth) {
+                                  int max_depth,
+                                  WalkBudget& budget) {
     std::vector<json> entries;
-
-    if (!recursive) {
-        for (auto& entry : fs::directory_iterator(dir)) {
-            entries.push_back(entry_to_json(entry));
-        }
-        return entries;
-    }
-
     auto it = fs::recursive_directory_iterator(
         dir, fs::directory_options::skip_permission_denied);
     for (auto& entry : it) {
-        if (it.depth() > max_depth) {
+        if (!recursive || it.depth() >= max_depth) {
             it.disable_recursion_pending();
-            continue;
         }
-        entries.push_back(entry_to_json(entry));
+        entries.push_back(entry_to_json(entry, dir));
+        if (walk_budget_spent(budget)) { break; }
     }
+    std::sort(entries.begin(), entries.end(),
+              [](const json& a, const json& b) { return a["name"] < b["name"]; });
     return entries;
 }
 
@@ -1039,16 +1199,17 @@ std::vector<json> collect_entries(const fs::path& dir,
  * @param args Parsed JSON arguments.
  * @param content Current file content.
  * @param out Modified content (output).
+ * @param[out] ok The success object's mode fields.
  * @return An empty string on success; otherwise a structured
- *         `not_found` error when old_string is absent, or
+ *         `no_match` error when old_string is absent, or
  *         `multiple_matches` (with the use-replace_all hint) when it is
  *         ambiguous — an ambiguous edit is refused, never guessed.
  * @req REQ-MCP-021
- * @version 1.8.6
+ * @version 2.14.0
  */
 std::string do_str_replace(const json& args,
                            const std::string& content,
-                           std::string& out) {
+                           std::string& out, json& ok) {
     auto old_str = args.at("old_string").get<std::string>();
     auto new_str = args.at("new_string").get<std::string>();
     bool replace_all = args.value("replace_all", false);
@@ -1058,11 +1219,14 @@ std::string do_str_replace(const json& args,
         content, old_str, new_str, replace_all, error_type);
     if (!result.has_value()) {
         auto msg = (error_type == "multiple_matches")
-            ? "old_string found multiple times — use replace_all"
+            ? "old_string found multiple times — add context or use replace_all"
             : "old_string not found in file";
         return make_error(error_type, msg);
     }
     out = result.value();
+    ok["mode"] = "str_replace";
+    ok["replacements"] = replace_all ? count_occurrences(content, old_str) : 1;
+    ok["message"] = "Edit applied";
     return "";
 }
 
@@ -1071,59 +1235,62 @@ std::string do_str_replace(const json& args,
  * @param args Parsed JSON arguments.
  * @param content Current file content.
  * @param out Modified content (output).
- * @return Empty string (always succeeds).
- * @dg_internal
- * @version 1.8.5
+ * @param[out] ok The success object's mode fields.
+ * @return "" on success, else a structured `out_of_range` error when
+ *         insert_line is not in 0..line count — never a silent no-op.
+ * @req REQ-MCP-021
+ * @version 2.14.0
  */
 std::string do_insert(const json& args,
                       const std::string& content,
-                      std::string& out) {
-    auto line_num = args.at("insert_line").get<int>();
-    auto new_str = args.at("new_string").get<std::string>();
-    out = apply_insert(content, line_num, new_str);
+                      std::string& out, json& ok) {
+    const long after = args.at("insert_line").get<long>();
+    const long total = count_lines(content);
+    if (after < 0 || after > total) {
+        return make_error("out_of_range", "insert_line must be 0.."
+            + std::to_string(total) + " for this file (got "
+            + std::to_string(after) + ")");
+    }
+    out = apply_insert(content, after, args.at("new_string").get<std::string>());
+    ok["mode"] = "insert";
+    ok["inserted_after"] = after;
+    ok["message"] = "Text inserted";
     return "";
 }
 
 /**
  * @brief Apply an edit operation and return result JSON or error.
- * @param args Parsed arguments — `old_string` selects replace mode,
- *             `insert_line` selects insert mode.
+ * @param args Parsed arguments — exactly one of `old_string` (replace
+ *             mode) or `insert_line` (insert mode).
  * @param resolved Resolved (root-confined) file path.
- * @param path_str Path as string for logging.
- * @return A success JSON object naming the edited path when the edit
- *         applied and was written back; otherwise the mode's structured
- *         error, or `invalid_args` when neither mode was selected. The
+ * @param display Path as shown to the model.
+ * @return The mode's declared success object when the edit applied and
+ *         was written back; otherwise the mode's structured error, or
+ *         `invalid_args` when not exactly one mode was selected. The
  *         file is left untouched on every error path.
  * @req REQ-MCP-021
- * @version 1.8.5
+ * @version 2.14.0
  */
 std::string apply_edit(const json& args,
                        const std::filesystem::path& resolved,
-                       const std::string& path_str) {
+                       const std::string& display) {
+    const bool replace = args.contains("old_string");
+    if (replace == args.contains("insert_line")) {
+        return make_error("invalid_args", "edit_file takes exactly one of "
+            "old_string (STR_REPLACE) or insert_line (INSERT)");
+    }
     auto content = read_file_contents(resolved);
     std::string edited;
-    std::string err;
-
-    if (args.contains("old_string")) {
-        err = do_str_replace(args, content, edited);
-    } else if (args.contains("insert_line")) {
-        err = do_insert(args, content, edited);
-    } else {
-        return make_error("invalid_args",
-            "edit_file requires old_string or insert_line");
+    json ok;
+    auto out = replace ? do_str_replace(args, content, edited, ok)
+                       : do_insert(args, content, edited, ok);
+    if (out.empty()) {
+        write_file_contents(resolved, edited);
+        logger->info("Edited file: {} ({})", display, ok["mode"].get<std::string>());
+        ok["path"] = display;
+        out = ok.dump();
     }
-
-    if (!err.empty()) {
-        return err;
-    }
-
-    write_file_contents(resolved, edited);
-    logger->info("Edited file: {}", path_str);
-
-    json j;
-    j["path"] = path_str;
-    j["message"] = "Edit applied successfully";
-    return j.dump();
+    return out;
 }
 
 } // anonymous namespace
@@ -1201,96 +1368,121 @@ private:
  * @version 1.8.5
  */
 /**
- * @brief Run pre-read gates (existence, ignore, size cap).
+ * @brief Run pre-read gates (existence, directory, ignore).
  *
- * Returns a non-empty error JSON when any gate denies. Path-relative
- * ignore matching uses the server's IgnoreMatcher (#15, v2.1.4).
+ * Path-relative ignore matching uses the server's IgnoreMatcher (#15,
+ * v2.1.4). v2.14.0: the whole-file size gate is gone — a large file is
+ * read a window at a time (gh#201); `max_read_bytes` is now the window's
+ * byte budget.
  *
- * @param server Owning server (source of the root, ignore rules and
- *               size limit).
+ * @param server Owning server (source of the root and ignore rules).
  * @param resolved Already root-confined path.
- * @param path_str Resolved path as a string, for messages.
+ * @param display Path as shown to the model.
  * @return An empty string when the read may proceed; otherwise a
  *         structured error — `not_found` (whose message names
  *         list_directory, gh#124), `is_directory` for a directory
- *         argument (gh#116), `ignored` for a path excluded by
- *         .gitignore/.explorerignore, or `size_exceeded` naming both
- *         the size and the limit so the model pivots to offset/limit.
+ *         argument (gh#116), or `ignored` for a path excluded by
+ *         .gitignore/.explorerignore.
  * @req REQ-MCP-021
  * @req REQ-MCP-022
- * @version 2.10.0
+ * @version 2.14.0
  */
 std::string check_read_gates(FilesystemServer& server,
                              const fs::path& resolved,
-                             const std::string& path_str) {
+                             const std::string& display) {
     std::string err;
+    auto rel = fs::relative(resolved, server.root_dir()).generic_string();
     if (!fs::exists(resolved)) {
         err = make_error("not_found",
-            "File not found: " + path_str
+            "File not found: " + display
             + ". Use list_directory(\".\") to see available files"
               " in the working directory, or verify the path is"
               " relative to the configured root.");
     } else if (fs::is_directory(resolved)) {
         err = make_error("is_directory",
-            "Path is a directory, not a file: " + path_str);
-    } else {
-        auto rel = fs::relative(resolved, server.root_dir())
-                     .generic_string();
-        bool ignored = !rel.empty()
-            && server.ignore().is_ignored(rel, /*is_dir=*/false);
-        int size = static_cast<int>(fs::file_size(resolved));
-        int limit = server.max_read_bytes();
-        if (ignored) {
-            err = make_error("ignored",
-                "Path '" + rel + "' is excluded by .gitignore or "
-                ".explorerignore.");
-        } else if (limit > 0 && size > limit) {
-            err = make_error("size_exceeded",
-                "File " + path_str + " is " +
-                std::to_string(size) + " bytes (limit: " +
-                std::to_string(limit) + ")");
-        }
+            "Path is a directory, not a file: " + display);
+    } else if (!rel.empty() && server.ignore().is_ignored(rel, false)) {
+        err = make_error("ignored",
+            "Path '" + rel + "' is excluded by .gitignore or "
+            ".explorerignore.");
     }
     return err;
 }
 
 /**
- * @brief Execute read_file: resolve, gate, read, hash, track.
+ * @brief The window a read_file call asks for, validated.
+ * @param args Tool arguments.
+ * @param budget Byte budget (max_read_bytes).
+ * @param[out] w Parsed window.
+ * @return "" or a declared `invalid_args` error.
+ * @dg_internal
+ * @version 2.14.0
+ */
+std::string read_window(const json& args, long budget, ReadWindow& w) {
+    w.offset = args.value<long>("offset", 1);
+    w.limit = args.value<long>("limit", 0);
+    w.budget = budget;
+    return (1 > w.offset || 0 > w.limit)
+        ? make_error("invalid_args", "offset must be >= 1 and limit >= 1")
+        : std::string{};
+}
+
+/**
+ * @brief Read the requested window and record the read for the session.
+ * @param server Owning server (budget, tracker).
+ * @param resolved File to read (already gated).
+ * @param display Path as shown to the model.
+ * @param args Tool arguments (offset, limit).
+ * @param[out] err Declared error, when the window is invalid or a line
+ *             exceeds the budget.
+ * @return The declared success object (meaningful only when err is "").
+ * @dg_internal
+ * @version 2.14.0
+ */
+json read_and_track(FilesystemServer& server, const fs::path& resolved,
+                    const std::string& display, const json& args,
+                    std::string& err) {
+    ReadWindow w;
+    err = read_window(args, server.max_read_bytes(), w);
+    json result;
+    if (err.empty()) { result = read_numbered_lines(resolved, display, w, err); }
+    if (err.empty()) {
+        server.tracker().record_read(current_run_session(), resolved.string(),
+                                     hash_content(result["lines"].dump()));
+        logger->info("Read file: {} lines {}..{} of {} (truncated={})",
+                     resolved.string(), w.offset,
+                     w.offset + static_cast<long>(result["lines"].size()) - 1,
+                     result["total"].get<long>(), result["truncated"].get<bool>());
+    }
+    return result;
+}
+
+/**
+ * @brief Execute read_file: resolve, gate, read a numbered window, track.
  *
- * Issue #15 (v2.1.4): pre-read gating moved into check_read_gates so
- * the ignore-matcher refusal lives next to existence + size checks.
+ * A successful read records the read in the FileAccessTracker — which is
+ * why read_file must always execute and opts out of duplicate detection.
+ * A partial (windowed) read counts as a read for read-before-write.
  *
- * A successful read records the content hash in the FileAccessTracker —
- * which is why read_file must always execute and opts out of duplicate
- * detection.
+ * v2.13.0: resolved as a READ for the outside-root policy; gh#158: the
+ * read is recorded for the calling session only. v2.14.0 (gh#201): every
+ * line carries its number, and long files are paged.
  *
- * v2.13.0: the path is resolved as a READ, so an outside-root read under
- * `optional` asks the approver with access=read. gh#158: the read is
- * recorded for the calling session only.
- *
- * @param args_json JSON with a "path" key.
- * @return A ServerResponse with no directives whose result is either
- *         the numbered-lines JSON or the first failing gate's
- *         structured error.
+ * @param args_json JSON with "path" and optional "offset"/"limit".
+ * @return A ServerResponse with no directives whose result is the
+ *         declared success object or a declared structured error.
  * @req REQ-MCP-021
- * @version 2.13.0 [reviewed]
+ * @version 2.14.0
  */
 ServerResponse ReadFileTool::execute(const std::string& args_json) {
     auto args = json::parse(args_json);
-    auto requested = args.at("path").get<std::string>();
-    auto resolved = server_.resolve_path(requested, PathAccess::read,
-                                         name());
-    auto path_str = resolved.string();
-
-    auto err = check_read_gates(server_, resolved, path_str);
-    if (!err.empty()) { return {err, {}}; }
-
-    auto content = read_file_contents(resolved);
-    server_.tracker().record_read(current_run_session(), path_str,
-                                  hash_content(content));
-    auto size = static_cast<int>(fs::file_size(resolved));
-    logger->info("Read file: {} ({} bytes)", path_str, size);
-    return {build_read_result(path_str, content), {}};
+    auto resolved = server_.resolve_path(args.at("path").get<std::string>(),
+                                         PathAccess::read, name());
+    auto display = display_path(server_.root_dir(), resolved);
+    auto err = check_read_gates(server_, resolved, display);
+    json result;
+    if (err.empty()) { result = read_and_track(server_, resolved, display, args, err); }
+    return {err.empty() ? result.dump() : err, {}};
 }
 
 // ── WriteFileTool ────────────────────────────────────────
@@ -1338,11 +1530,11 @@ private:
  *
  * @param args_json JSON with "path" and "content" keys.
  * @return A ServerResponse with no directives whose result is either a
- *         success JSON naming the path and bytes written, or the
+ *         success JSON naming the root-relative path and bytes written, or the
  *         structured `read_before_write` error — in which case nothing
  *         is written.
  * @req REQ-MCP-021
- * @version 2.13.0
+ * @version 2.14.0
  */
 ServerResponse WriteFileTool::execute(
     const std::string& args_json) {
@@ -1365,7 +1557,7 @@ ServerResponse WriteFileTool::execute(
                  path_str, content.size());
 
     json result;
-    result["path"] = path_str;
+    result["path"] = display_path(server_.root_dir(), resolved);
     result["bytes_written"] = content.size();
     result["message"] = "File written successfully";
     return {result.dump(), {}};
@@ -1413,27 +1605,23 @@ private:
  * v2.13.0: resolved as a WRITE — an edit modifies the file.
  *
  * @param args_json JSON arguments.
- * @return ServerResponse with result.
+ * @return ServerResponse whose result is the declared success object or
+ *         a declared structured error.
  * @dg_internal
- * @version 2.13.0
+ * @version 2.14.0
  */
 ServerResponse EditFileTool::execute(const std::string& args_json) {
     auto args = json::parse(args_json);
     auto requested = args.at("path").get<std::string>();
     auto resolved = server_.resolve_path(requested, PathAccess::write,
                                          name());
-    auto path_str = resolved.string();
-
     auto violation = check_read_before_write(
-        server_.tracker(), path_str);
+        server_.tracker(), resolved.string());
     if (!violation.empty()) {
         return {violation, {}};
     }
-
-    auto result = apply_edit(args, resolved, path_str);
-    ServerResponse resp;
-    resp.result = result;
-    return resp;
+    return {apply_edit(args, resolved,
+                       display_path(server_.root_dir(), resolved)), {}};
 }
 
 // ── GlobTool ─────────────────────────────────────────────
@@ -1483,35 +1671,34 @@ private:
 };
 
 /**
- * @brief Execute glob: find files matching pattern.
+ * @brief Execute glob: one page of root-relative paths matching a pattern.
  *
- * Issues #13/#15 (v2.1.4): brace expansion in the pattern, ignore-
- * matcher filtering on results.
+ * Issues #13/#15 (v2.1.4): brace expansion, ignore filtering.
+ * v2.14.0 (gh#203): declared `{paths, truncated, reason?, next_offset?}`
+ * instead of an array whose last element might be a sentinel object.
  *
- * @param args_json JSON arguments.
- * @return ServerResponse with matched paths.
- * @dg_internal
- * @version 2.13.0
+ * @param args_json JSON with "pattern" and optional "limit"/"offset".
+ * @return ServerResponse with the declared result or `invalid_args`.
+ * @req REQ-MCP-022
+ * @version 2.14.0
  */
 ServerResponse GlobTool::execute(const std::string& args_json) {
     auto args = json::parse(args_json);
     auto pattern = args.at("pattern").get<std::string>();
-    constexpr int MAX_GLOB_RESULTS = 500;
+    Page requested;
+    auto err = read_page(args, 500, 5000, requested);
+    if (!err.empty()) { return {err, {}}; }
 
-    // Issue #15 (v2.1.4): pass server's IgnoreMatcher so build/, vendor/,
-    // doxygen/, and anything else listed in .gitignore + .explorerignore
-    // is filtered out. Pre-2.1.4 only the hardcoded SKIP_DIRS were honored.
-    // Issue #13 (v2.1.4): brace expansion handled inside.
     WalkBudget budget{server_.config().max_walk_entries, 0, false};
-    auto matches = collect_glob_matches(
-        server_.root_dir(), pattern, MAX_GLOB_RESULTS,
-        &server_.ignore(), budget);
-
-    logger->info("Glob '{}': {} matches, {} entries walked "
-                 "(after ignore filtering)",
-                 pattern, matches.size(), budget.visited);
-    json result = matches;
-    note_truncated_walk(result, budget, "Glob", pattern);
+    PagedResult page(requested);
+    collect_glob_matches(server_.root_dir(), pattern, &server_.ignore(),
+                         budget, page);
+    json result;
+    page.finish(result, "paths", budget.truncated);
+    logger->info("Glob '{}': {} paths, {} entries walked, truncated={}{}",
+                 pattern, result["paths"].size(), budget.visited,
+                 result["truncated"].get<bool>(),
+                 budget.truncated ? " (walk cap — narrow the pattern)" : "");
     return {result.dump(), {}};
 }
 
@@ -1593,76 +1780,122 @@ std::regex compile_grep_or_error(const std::string& pattern,
  * @version 2.1.4
  */
 /**
- * @brief Walk the tree applying the glob/ignore filter and grep files.
- * @param root Search root.
+ * @brief Walk `start` applying the glob/ignore filter and grep files.
+ * @param root Project root (patterns and shown paths are relative to it).
+ * @param start Directory to walk (the root, or the `path` argument).
  * @param file_patterns Brace-expanded glob patterns.
  * @param re Compiled content regex.
  * @param ignore Ignore matcher.
- * @param[in,out] budget Entry budget; the walk stops when it is spent
- *                and the budget records that it was (gh#161). grep
- *                needs this MORE than glob does — it also opens and
- *                reads every matching file.
- * @return Up to MAX_GREP_RESULTS match objects. Uses exactly the same
- *         classify_glob_entry filter glob does, so grep and glob honour
- *         .gitignore/.explorerignore identically and ignored
- *         directories are pruned rather than walked.
+ * @param[in,out] budget Entry budget (gh#161) — grep needs it MORE than
+ *                glob does, since it also opens every matching file.
+ * @param[in,out] page Page being collected.
  * @req REQ-MCP-022
- * @version 2.13.0
+ * @version 2.14.0
  */
-static std::vector<json> grep_search(
-    const fs::path& root, const std::vector<std::string>& file_patterns,
+static void grep_search(
+    const fs::path& root, const fs::path& start,
+    const std::vector<std::string>& file_patterns,
     const std::regex& re, const IgnoreMatcher& ignore,
-    WalkBudget& budget) {
-    constexpr int MAX_GREP_RESULTS = 100;
-    std::vector<json> matches;
+    WalkBudget& budget, PagedResult& page) {
     auto it = fs::recursive_directory_iterator(
-        root, fs::directory_options::skip_permission_denied);
+        start, fs::directory_options::skip_permission_denied);
     for (auto& entry : it) {
-        if (static_cast<int>(matches.size()) >= MAX_GREP_RESULTS) {
-            break;
-        }
         auto action = classify_glob_entry(entry, root, file_patterns,
                                           &ignore);
         if (action == EntryAction::kSkipPrune) {
             it.disable_recursion_pending();
-        } else if (action == EntryAction::kTake) {
-            grep_file(entry.path(), re, matches, MAX_GREP_RESULTS);
+        } else if (action == EntryAction::kTake
+                   && !grep_file(entry.path(),
+                                 display_path(root, entry.path()), re, page)) {
+            break;
         }
         if (walk_budget_spent(budget)) { break; }
     }
-    return matches;
 }
 
 /**
- * @brief Execute grep: compile regex, walk the tree, collect matches.
- * @param args_json JSON with a "pattern" key and an optional "glob"
- *                  (defaulting to "*").
- * @return A ServerResponse with no directives whose result is the JSON
- *         array of matches, or the structured `invalid_regex` error
- *         when the pattern would not compile.
+ * @brief Search `start` — one file, or a tree under the glob filter.
+ * @param server Owning server (root, ignore rules).
+ * @param start Resolved `path` argument.
+ * @param args Tool arguments (glob).
+ * @param re Compiled regex.
+ * @param[in,out] budget Walk budget.
+ * @param[in,out] page Page being collected.
+ * @dg_internal
+ * @version 2.14.0
+ */
+static void grep_target(FilesystemServer& server, const fs::path& start,
+                        const json& args, const std::regex& re,
+                        WalkBudget& budget, PagedResult& page) {
+    const auto& root = server.root_dir();
+    if (fs::is_regular_file(start)) {
+        grep_file(start, display_path(root, start), re, page);
+    } else {
+        grep_search(root, start,
+                    expand_braces(args.value("glob", std::string("*"))),
+                    re, server.ignore(), budget, page);
+    }
+}
+
+/**
+ * @brief Validate a grep call: paging, regex, and that `path` exists.
+ * @param args Tool arguments.
+ * @param start Resolved `path` argument.
+ * @param root Project root (for the message).
+ * @param[out] requested Parsed page.
+ * @param[out] re Compiled regex.
+ * @return "" or the first declared error (`invalid_args`,
+ *         `invalid_regex`, `not_found`).
+ * @dg_internal
+ * @version 2.14.0
+ */
+static std::string grep_preflight(const json& args, const fs::path& start,
+                                  const fs::path& root, Page& requested,
+                                  std::regex& re) {
+    std::string err = read_page(args, 100, 1000, requested);
+    re = compile_grep_or_error(args.at("pattern").get<std::string>(), err);
+    if (err.empty() && !fs::exists(start)) {
+        err = make_error("not_found", "No such file or directory: "
+                         + display_path(root, start));
+    }
+    return err;
+}
+
+/**
+ * @brief Execute grep: compile, then search one file or walk a tree.
+ *
+ * v2.14.0 (gh#173/#202/#203): declared envelope
+ * `{matches, truncated, reason?, next_offset?}`; `limit`/`offset` page
+ * past what used to be a silent 100-match cap; `path` aims at one file
+ * or directory; binary files are skipped.
+ *
+ * @param args_json JSON with "pattern" and optional "glob" (default
+ *                  "*"), "path", "limit" (default 100), "offset".
+ * @return A ServerResponse whose result is the declared success object,
+ *         or `invalid_regex`, `not_found` (no such `path`) or
+ *         `invalid_args`.
  * @req REQ-MCP-022
  * @req REQ-MCP-021
- * @version 2.13.0
+ * @version 2.14.0
  */
 ServerResponse GrepTool::execute(const std::string& args_json) {
     auto args = json::parse(args_json);
-    auto pattern = args.at("pattern").get<std::string>();
-    auto file_glob = args.value("glob", std::string("*"));
-
-    std::string err;
-    auto re = compile_grep_or_error(pattern, err);
+    auto start = server_.resolve_path(args.value("path", std::string(".")),
+                                      PathAccess::read, name());
+    Page requested;
+    std::regex re;
+    auto err = grep_preflight(args, start, server_.root_dir(), requested, re);
     if (!err.empty()) { return {err, {}}; }
 
-    auto file_patterns = expand_braces(file_glob);
     WalkBudget budget{server_.config().max_walk_entries, 0, false};
-    auto matches = grep_search(server_.root_dir(), file_patterns, re,
-                               server_.ignore(), budget);
-
-    logger->info("Grep '{}': {} matches, {} entries walked "
-                 "(after ignore filtering)",
-                 pattern, matches.size(), budget.visited);
-    json result = matches;
-    note_truncated_walk(result, budget, "Grep", pattern);
+    PagedResult page(requested);
+    grep_target(server_, start, args, re, budget, page);
+    json result;
+    page.finish(result, "matches", budget.truncated);
+    logger->info("Grep '{}' in {}: {} matches, {} entries walked, truncated={}",
+                 args.at("pattern").get<std::string>(), start.string(),
+                 result["matches"].size(), budget.visited,
+                 result["truncated"].get<bool>());
     return {result.dump(), {}};
 }
 
@@ -1714,41 +1947,62 @@ private:
 };
 
 /**
- * @brief Execute list_directory: list entries in a directory.
+ * @brief Collect one page of a directory listing into `result`.
+ * @param dir Directory to list.
+ * @param args Tool arguments (recursive, max_depth).
+ * @param requested Requested page.
+ * @param max_walk Walk cap (filesystem.max_walk_entries).
+ * @param[in,out] result Result object (gets entries + ending).
+ * @dg_internal
+ * @version 2.14.0
+ */
+static void list_page(const fs::path& dir, const json& args, Page requested,
+                      int max_walk, json& result) {
+    WalkBudget budget{max_walk, 0, false};
+    PagedResult page(requested);
+    for (auto& e : collect_entries(dir, args.value("recursive", false),
+                                   args.value("max_depth", 3), budget)) {
+        if (!page.offer(std::move(e))) { break; }
+    }
+    page.finish(result, "entries", budget.truncated);
+}
+
+/**
+ * @brief Execute list_directory: one page of a directory's entries.
  *
  * The optional parameters carry documented defaults (gh#116): `path`
  * defaults to the project root, `recursive` to false, `max_depth` to 3.
- * v2.13.0: resolved as a READ for the outside-root policy.
+ * v2.13.0: resolved as a READ for the outside-root policy. v2.14.0
+ * (gh#203): the declared `{path, entries, truncated, ...}` object instead
+ * of a bare array; recursive names are relative to the listed directory
+ * (they were bare file names, ambiguous across subdirectories).
  *
- * @param args_json JSON with optional "path", "recursive" and
- *                  "max_depth" keys — all three may be omitted.
- * @return A ServerResponse with no directives whose result is the JSON
- *         array of entries, or a structured `not_directory` error when
- *         the resolved path is not a directory.
+ * @param args_json JSON with optional "path", "recursive", "max_depth",
+ *                  "limit" (default 500) and "offset" — all may be omitted.
+ * @return A ServerResponse whose result is the declared success object,
+ *         or `not_directory` / `invalid_args`.
  * @req REQ-MCP-021
- * @version 2.13.0
+ * @version 2.14.0
  */
 ServerResponse ListDirectoryTool::execute(
     const std::string& args_json) {
 
     auto args = json::parse(args_json);
-    auto requested = args.value("path", std::string("."));
-    auto recursive = args.value("recursive", false);
-    auto max_depth = args.value("max_depth", 3);
-
-    auto resolved = server_.resolve_path(requested, PathAccess::read,
-                                         name());
-    if (!fs::is_directory(resolved)) {
-        return {make_error("not_directory",
-            "Not a directory: " + resolved.string()), {}};
+    auto resolved = server_.resolve_path(args.value("path", std::string(".")),
+                                         PathAccess::read, name());
+    auto display = display_path(server_.root_dir(), resolved);
+    Page requested;
+    auto err = read_page(args, 500, 5000, requested);
+    if (err.empty() && !fs::is_directory(resolved)) {
+        err = make_error("not_directory", "Not a directory: " + display);
     }
+    if (!err.empty()) { return {err, {}}; }
 
-    auto entries = collect_entries(
-        resolved, recursive, max_depth);
-
-    logger->info("Listed {}: {} entries",
-                 resolved.string(), entries.size());
-    json result = entries;
+    json result;
+    result["path"] = display;
+    list_page(resolved, args, requested, server_.config().max_walk_entries, result);
+    logger->info("Listed {}: {} entries, truncated={}", display,
+                 result["entries"].size(), result["truncated"].get<bool>());
     return {result.dump(), {}};
 }
 

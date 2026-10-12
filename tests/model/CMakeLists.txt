@@ -455,6 +455,21 @@ set_tests_properties(model/test-gh165-restore PROPERTIES TIMEOUT 900)
 add_model_test(test-gh166-workspaces test_gh166_workspaces.cpp)
 set_tests_properties(model/test-gh166-workspaces PROPERTIES TIMEOUT 1200)
 
+# gh#179 (v2.14.0): the EMERGENT multi-turn test for per-workspace
+# app_context. Two workspaces on ONE resident model, one context from the
+# opt-in file and one from the setter, run CONCURRENTLY over three turns.
+# The load-bearing assertions are the negative ones: a handle-wide context
+# would give both sessions the same codename.
+add_model_test(test-gh179-workspace-context test_gh179_workspace_context.cpp)
+set_tests_properties(model/test-gh179-workspace-context PROPERTIES TIMEOUT 900)
+
+# gh#204/gh#205 (v2.14.0): the multi-client ENGAGEMENT test for serving. Two
+# HTTP clients with the bearer token, different session/workspace/tier, at the
+# same time; concurrency is read from the bridge's own admission log.
+add_model_test(test-gh204-http-multiclient test_gh204_http_multiclient.cpp)
+target_link_libraries(test-gh204-http-multiclient PRIVATE httplib::httplib)
+set_tests_properties(model/test-gh204-http-multiclient PROPERTIES TIMEOUT 900)
+
 # v2.13.0: the EMERGENT multi-turn test for outside-root approval. A real
 # model reads outside its root under `allow_outside_root: optional`; the
 # host's path approver accepts one file and rejects another, and the tool

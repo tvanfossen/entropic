@@ -1431,29 +1431,51 @@ void ServerManager::process_health_events() {
 }
 
 /**
- * @brief Create ExternalMCPClient from YAML config entry.
+ * @brief Replace every `${ENTROPIC_WORKSPACE_ROOT}` with `root` (v2.14.1).
+ * @param s Text from a declared server entry.
+ * @param root This server set's root.
+ * @return The expanded text.
+ * @utility
+ * @version 2.14.1
+ */
+static std::string expand_workspace_root(std::string s, const std::string& root) {
+    static const std::string key = "${ENTROPIC_WORKSPACE_ROOT}";
+    for (auto p = s.find(key); p != std::string::npos;
+         p = s.find(key, p + root.size())) {
+        s.replace(p, key.size(), root);
+    }
+    return s;
+}
+
+/**
+ * @brief Create an ExternalMCPClient from a declared config entry.
  *
  * Issue #9 (v2.1.4): adapts the YAML-style ExternalServerEntry into the
  * canonical ExternalServerConfig and delegates to make_transport so the
- * three pre-existing transport-construction sites all share one
- * implementation.
+ * transport-construction sites share one implementation.
+ *
+ * v2.14.1: `${ENTROPIC_WORKSPACE_ROOT}` in the entry's args and env values
+ * expands to THIS server set's root. Every workspace now launches the
+ * declared servers itself, and a server that takes its repository from an
+ * argument or an environment variable (clew: CLAUDE_PROJECT_DIR) needs a
+ * way to be told which one; the child's cwd is already that root.
  *
  * @param name Server name.
  * @param entry Config entry.
  * @return Client instance.
  * @utility
- * @version 2.14.0
+ * @version 2.14.1
  */
 std::unique_ptr<ExternalMCPClient>
 ServerManager::create_external_client(
     const std::string& name,
     const ExternalServerEntry& entry) {
+    const auto root = project_dir_.string();
     ExternalServerConfig spec;
     spec.name = name;
     spec.command = entry.command;
-    spec.args = entry.args;
-    spec.env = std::map<std::string, std::string>(
-        entry.env.begin(), entry.env.end());
+    for (const auto& a : entry.args) { spec.args.push_back(expand_workspace_root(a, root)); }
+    for (const auto& [k, v] : entry.env) { spec.env[k] = expand_workspace_root(v, root); }
     spec.url = entry.url;
     spec.transport = entry.url.empty() ? "stdio" : "sse";
     return create_external_client(spec);

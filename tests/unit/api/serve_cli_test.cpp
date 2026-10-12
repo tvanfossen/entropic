@@ -175,6 +175,52 @@ SCENARIO("gh#204: entropic serve hosts the engine for a client holding the token
     }
 }
 
+SCENARIO("v2.14.1: SIGUSR1 releases models and keeps serving",
+         "[serve][cli][2.14.1]") {
+    // sumac frees the card for a GPU job with SIGUSR1 on its own host; a
+    // serve host had to be stopped instead, costing every conversation and
+    // the token. SIGUSR1 now calls entropic_release_model and the loop
+    // goes back to waiting.
+    ServeScratch s;
+    const int port = free_port();
+    const fs::path token_file =
+        s.home / ".entropic" / "serve" / (std::to_string(port) + ".token");
+    const pid_t pid = spawn_serve(
+        s, {"--config", s.config.string(), "--port", std::to_string(port)});
+    REQUIRE(pid > 0);
+    const bool up = await_file(token_file, std::chrono::seconds(30));
+    if (!up) { ::kill(pid, SIGKILL); ::waitpid(pid, nullptr, 0); }
+    REQUIRE(up);
+    const std::string token = slurp(token_file);
+
+    ::kill(pid, SIGUSR1);
+    const auto deadline = std::chrono::steady_clock::now() + std::chrono::seconds(10);
+    while (slurp(s.stderr_log).find("models released") == std::string::npos
+           && std::chrono::steady_clock::now() < deadline) {
+        std::this_thread::sleep_for(std::chrono::milliseconds(50));
+    }
+    httplib::Client cli("127.0.0.1", port);
+    cli.set_read_timeout(10, 0);
+    auto r = cli.Post("/mcp", {{"Authorization", "Bearer " + token}},
+        R"({"jsonrpc":"2.0","id":1,"method":"tools/list","params":{}})",
+        "application/json");
+    const bool token_kept = slurp(token_file) == token;
+    ::kill(pid, SIGTERM);
+    const int code = wait_exit(pid, std::chrono::seconds(30));
+    INFO("serve stderr:\n" << slurp(s.stderr_log));
+
+    THEN("the release is reported, and the host keeps serving with the same token") {
+        CHECK(slurp(s.stderr_log).find("SIGUSR1, models released (0)") != std::string::npos);
+        REQUIRE(r);
+        CHECK(r->status == 200);
+        CHECK(token_kept);
+    }
+    THEN("SIGTERM still ends it cleanly") {
+        CHECK(code == 0);
+        CHECK_FALSE(fs::exists(token_file));
+    }
+}
+
 SCENARIO("gh#204: entropic serve refuses to look up when it is not",
          "[serve][cli][gh204][2.14.0]") {
     ServeScratch s;

@@ -38,7 +38,7 @@ int run_download(int argc, char* argv[]);
 /**
  * @brief Print top-level usage to stderr.
  * @utility
- * @version 2.14.0
+ * @version 2.14.1
  */
 static void print_usage()
 {
@@ -64,6 +64,7 @@ static void print_usage()
         "  --config FILE       Engine config (YAML)\n"
         "  --port N            Serve MCP at http://127.0.0.1:N/mcp; clients send\n"
         "                      the bearer token in ~/.entropic/serve/N.token\n"
+        "                      SIGUSR1 frees model weights and keeps serving\n"
         "\n"
         "Options for download:\n"
         "  --list              List available model keys\n"

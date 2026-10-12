@@ -2,6 +2,39 @@ _Last 10 releases. Older history: [OLD_NOTES.md](OLD_NOTES.md). Kept short
 because `gh release create --notes-file` hits GitHub's 125,000-char release
 body limit once this file accumulates full project history — see v2.9.3._
 
+# entropic v2.14.1
+
+Patch release — **a server you declare once reaches every repository.**
+
+## Read this first — behaviour that changes without you asking
+
+- **Declared `mcp.external_servers` now launch in every workspace**, not only
+  on the handle. Each workspace starts its own instance in its repository
+  when it is created: one process per declared server per open workspace.
+  Through v2.14.0 a session bound to a workspace was not offered declared
+  servers at all (decision #87, revising #83).
+- **External stdio servers now start in their server set's root.** The
+  working directory has been set since v2.13.0 but was never applied at
+  spawn; every external server ran in the host's cwd.
+
+## New features
+
+- `${ENTROPIC_WORKSPACE_ROOT}` in a declared server's `args` or `env` values
+  expands to the root of the set launching it — e.g.
+  `env: {CLAUDE_PROJECT_DIR: "${ENTROPIC_WORKSPACE_ROOT}"}`.
+- `entropic serve`: SIGUSR1 releases every resident model and keeps serving
+  (listener, token, sessions and conversations stay); the next ask reloads.
+
+## Engine bug fixes
+
+- SIGUSR1 to `entropic serve` killed the host and left its token file behind.
+
+## Distribution
+
+- CPU tarball: `entropic-2.14.1-linux-x86_64-cpu.tar.gz` (sha256 in companion file)
+- CUDA tarball: `entropic-2.14.1-linux-x86_64-cuda.tar.gz` (sha256 in companion file)
+- Python wrapper: `pip install entropic-engine==2.14.1` then `entropic install-engine`
+
 # entropic v2.14.0
 
 Minor release — **one engine host for every client and every repository.**

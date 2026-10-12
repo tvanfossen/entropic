@@ -992,7 +992,12 @@ struct MCPConfig {
     /// Declared here = enabled: an operator who writes an entry asked for it.
     /// Before v2.14.0 this key was in the struct and the schema but parsed
     /// from no config file and connected by nothing.
-    /// @version 2.14.0
+    ///
+    /// v2.14.1: launched by EVERY server set — the handle's and each
+    /// workspace's — started in that set's root. `${ENTROPIC_WORKSPACE_ROOT}`
+    /// in an entry's args or env values expands to that root, e.g.
+    /// `env: {CLAUDE_PROJECT_DIR: "${ENTROPIC_WORKSPACE_ROOT}"}`.
+    /// @version 2.14.1
     std::unordered_map<std::string, ExternalServerEntry> external_servers;
 
     /* ── v2.14.0: .mcp.json discovery, Claude-Code style ─── */

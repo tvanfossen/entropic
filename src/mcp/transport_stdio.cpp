@@ -448,13 +448,19 @@ static std::vector<char*> build_envp(
 
 /**
  * @brief Spawn child process using posix_spawn with file actions.
+ *
+ * v2.14.1: the child starts in `working_dir_` when one is set. gh#166 added
+ * the field and every caller set it — to the server set's root, so a
+ * workspace's servers would start in their repository — but the spawn
+ * never applied it, and every external server inherited the HOST's cwd.
+ *
  * @param stdin_r Child stdin read end (dup2'd to STDIN_FILENO).
  * @param stdout_w Child stdout write end (dup2'd to STDOUT_FILENO).
  * @param stderr_w Child stderr write end (dup2'd to STDERR_FILENO).
  * @param env_strs Merged environment strings.
  * @return true on success, child_pid_ set.
  * @utility
- * @version 2.3.7
+ * @version 2.14.1
  */
 bool StdioTransport::spawn_child(
     int stdin_r, int stdout_w, int stderr_w,
@@ -465,6 +471,9 @@ bool StdioTransport::spawn_child(
     posix_spawn_file_actions_adddup2(&actions, stdin_r, STDIN_FILENO);
     posix_spawn_file_actions_adddup2(&actions, stdout_w, STDOUT_FILENO);
     posix_spawn_file_actions_adddup2(&actions, stderr_w, STDERR_FILENO);
+    if (!working_dir_.empty()) {
+        posix_spawn_file_actions_addchdir_np(&actions, working_dir_.c_str());
+    }
 
     auto argv = build_argv(command_, args_);
     auto envp = build_envp(env_strs);
@@ -476,11 +485,13 @@ bool StdioTransport::spawn_child(
     posix_spawn_file_actions_destroy(&actions);
 
     if (err != 0) {
-        logger->error("posix_spawnp failed for '{}' (cmd: {}): {}",
-                      display_name_, command_, strerror(err));
+        logger->error("posix_spawnp failed for '{}' (cmd: {}, cwd: '{}'): {}",
+                      display_name_, command_, working_dir_, strerror(err));
         child_pid_ = -1;
         return false;
     }
+    logger->info("Spawned '{}' (pid {}) in '{}'", display_name_, child_pid_,
+                 working_dir_.empty() ? "<host cwd>" : working_dir_);
     return true;
 }
 

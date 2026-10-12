@@ -12,7 +12,7 @@ cite them.
 
 ---
 
-## Current State (v2.13.2 on `main`; v2.14.0 in gate on `develop`)
+## Current State (v2.14.0 on `main`)
 
 - C++20 engine, pure C ABI at every `.so` boundary
 - Unit + regression tests (CPU pre-commit gate), ThreadSanitizer preset
@@ -53,7 +53,17 @@ cite them.
 
 ---
 
-## v2.14.0 — one engine host, many clients (IN GATE)
+## v2.14.1 — declared servers per workspace; release without stopping serve
+
+- Declared `mcp.external_servers` launch in every workspace, rooted at its
+  repository; `${ENTROPIC_WORKSPACE_ROOT}` names that root in args/env
+  (decision #87, revising #83). Unblocks sumac's serve-based plugin.
+- Fix: external stdio servers now actually start in their server set's
+  root (`working_dir` was stored since v2.13.0 and never applied).
+- `entropic serve`: SIGUSR1 releases resident models and keeps serving
+  (previously SIGUSR1 killed the host and left a stale token file).
+
+## v2.14.0 — one engine host, many clients (SHIPPED)
 
 Tracking issue gh#206. Goal: one long-running host that every editor reaches at
 one URL, safe across many repositories and costing nothing while idle — so
@@ -69,6 +79,8 @@ per workstream, merged to develop:
 | 1 Serving | #204, #205 | Streamable HTTP + bearer token, `entropic serve`, per-session lanes, ask tier/workspace (#84) |
 | 4 Tool contracts | #203, #173, #201, #202, #190, #174 | outputSchema on every tool, generated Response format, contract gate (#85) |
 | 6 Per-workspace context | #179 | setter + opt-in `workspace_app_context` file (#86) |
+
+Published at main `055d2a1`: https://github.com/tvanfossen/entropic/releases/tag/v2.14.0 (gate 92/92).
 
 Engagement tests: gh#204 multi-client HTTP (two sessions admitted after 0 ms
 while both turns in flight) and gh#179 concurrent per-workspace context.

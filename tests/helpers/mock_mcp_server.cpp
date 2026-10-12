@@ -15,6 +15,7 @@
  */
 
 #include <cstdlib>
+#include <fstream>
 #include <iostream>
 #include <optional>
 #include <sstream>
@@ -93,6 +94,16 @@ static json build_tools_call(int id, const json& params) {
         const char* v = std::getenv(key.c_str());
         text = "env[" + key + "]=";
         text += v != nullptr ? v : "(unset)";
+        handled_env = true;
+    }
+    if (!handled_env && params.value("name", "") == "read_project") {
+        // v2.14.1: report the project this child was started in. Proves a
+        // declared server runs rooted at ITS workspace — the file read is
+        // relative to the child's cwd, nothing else.
+        std::ifstream in("PROJECT.md");
+        std::stringstream body;
+        body << in.rdbuf();
+        text = in ? body.str() : std::string("(no PROJECT.md in cwd)");
         handled_env = true;
     }
     if (!handled_env) {

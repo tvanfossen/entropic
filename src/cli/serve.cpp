@@ -65,17 +65,42 @@ bool parse_args(int argc, char* argv[], ServeArgs& out) {
 }
 
 /**
- * @brief Block the signals we wait for, before any engine thread exists,
- *        so every thread inherits the mask and sigwait() gets them.
- * @param set Filled with SIGINT and SIGTERM.
+ * @brief Block the signals the host waits for, before any engine thread
+ *        exists, so every thread inherits the mask and sigwait() gets them.
+ * @param set Filled with SIGINT, SIGTERM and (v2.14.1) SIGUSR1.
  * @utility
- * @version 2.14.0
+ * @version 2.14.1
  */
 void block_shutdown_signals(sigset_t& set) {
     sigemptyset(&set);
     sigaddset(&set, SIGINT);
     sigaddset(&set, SIGTERM);
+    sigaddset(&set, SIGUSR1);
     pthread_sigmask(SIG_BLOCK, &set, nullptr);
+}
+
+/**
+ * @brief Serve until SIGINT/SIGTERM; SIGUSR1 releases the models.
+ *
+ * v2.14.1: SIGUSR1 frees every resident model's weights and keeps the
+ * host — its listener, token, sessions and conversations — so a GPU job
+ * can have the card without stopping the server. The next ask reloads.
+ *
+ * @param handle Configured handle.
+ * @param set Signals blocked by block_shutdown_signals.
+ * @return The signal that ended serving.
+ * @utility
+ * @version 2.14.1
+ */
+int serve_until_stopped(entropic_handle_t handle, const sigset_t& set) {
+    int sig = 0;
+    while (sigwait(&set, &sig) == 0 && sig == SIGUSR1) {
+        const auto rc = entropic_release_model(handle, nullptr);
+        std::fprintf(stderr, "entropic serve: SIGUSR1, models released (%d)%s%s\n",
+                     static_cast<int>(rc), rc == ENTROPIC_OK ? "" : ": ",
+                     rc == ENTROPIC_OK ? "" : entropic_last_error(handle));
+    }
+    return sig;
 }
 
 /**
@@ -102,7 +127,7 @@ entropic_error_t configure_host(const ServeArgs& args,
 /**
  * @brief Print usage for `serve`.
  * @utility
- * @version 2.14.0
+ * @version 2.14.1
  */
 void print_usage() {
     std::fprintf(stderr,
@@ -112,7 +137,8 @@ void print_usage() {
         "Clients send 'Authorization: Bearer <token>', the token being the\n"
         "contents of ~/.entropic/serve/N.token (regenerated each start).\n"
         "Loopback only; for remote use, tunnel: ssh -L N:127.0.0.1:N host.\n"
-        "Runs until SIGINT or SIGTERM.\n");
+        "Runs until SIGINT or SIGTERM. SIGUSR1 releases the loaded models\n"
+        "(the next request reloads) and keeps serving.\n");
 }
 
 }  // namespace
@@ -123,7 +149,7 @@ void print_usage() {
  * @param argv Arguments.
  * @return 0 after a clean shutdown; 1 on usage or startup failure.
  * @req REQ-BRIDGE-001
- * @version 2.14.0
+ * @version 2.14.1
  */
 int run_serve(int argc, char* argv[]) {
     ServeArgs args;
@@ -145,8 +171,7 @@ int run_serve(int argc, char* argv[]) {
             args.port.c_str(),
             std::getenv("HOME") != nullptr ? std::getenv("HOME") : "~",
             args.port.c_str());
-        int sig = 0;
-        sigwait(&set, &sig);
+        const int sig = serve_until_stopped(handle, set);
         std::fprintf(stderr, "entropic serve: %s, shutting down\n",
                      sig == SIGTERM ? "SIGTERM" : "SIGINT");
     }

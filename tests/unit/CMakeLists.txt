@@ -592,6 +592,8 @@ add_executable(entropic-api-tests
     api/followup_provider_test.cpp
     # gh#179 (v2.14.0): per-workspace app_context.
     api/workspace_app_context_test.cpp
+    # v2.14.3: the bridge release tool.
+    api/bridge_release_tool_test.cpp
 )
 
 # v2.1.1 (#3): serialize_messages_utf8_test.cpp #includes the private

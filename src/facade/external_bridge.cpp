@@ -112,7 +112,7 @@ static json tool_text(const std::string& text) {
  * longer be advertised under one spelling and dispatched under another — before
  * this the five names were written out twice, ~470 lines apart.
  *
- * @version 2.12.0
+ * @version 2.14.3
  */
 namespace tool_suffix {
 constexpr const char* kAsk           = "ask";
@@ -120,6 +120,7 @@ constexpr const char* kAskStatus     = "ask_status";
 constexpr const char* kStatus        = "status";
 constexpr const char* kContextClear  = "context_clear";
 constexpr const char* kContextCount  = "context_count";
+constexpr const char* kRelease       = "release";  // v2.14.3
 } // namespace tool_suffix
 
 /**
@@ -281,7 +282,7 @@ static json ask_status_tool(const ExternalMCPConfig& cfg) {
  * @param cfg External MCP config supplying prefix and description overrides.
  * @return JSON array of tool schemas.
  * @utility
- * @version 2.12.0-rc1
+ * @version 2.14.3
  */
 static json tool_definitions(const ExternalMCPConfig& cfg) {
     return json::array({
@@ -293,6 +294,12 @@ static json tool_definitions(const ExternalMCPConfig& cfg) {
                             "Clear conversation history."),
         session_scoped_tool(cfg, tool_suffix::kContextCount,
                             "Return the message count."),
+        // v2.14.3: the one way an MCP client can give the card back.
+        no_args_tool(cfg, tool_suffix::kRelease,
+                     "Unload every loaded model to free GPU/host memory. "
+                     "Sessions and their conversations are kept; the next "
+                     "ask reloads the model. Call when you are done for "
+                     "now. Refused while a turn is running — retry then."),
     });
 }
 
@@ -1026,6 +1033,96 @@ static json dispatch_ask(entropic_handle_t handle,
 }
 
 /**
+ * @brief Names of the models resident right now, from the snapshot.
+ * @param handle Engine handle.
+ * @return Tier names, comma-separated; "" when nothing is resident.
+ * @utility
+ * @version 2.14.3
+ */
+static std::string resident_tiers(entropic_handle_t handle) {
+    char* raw = nullptr;
+    std::string names;
+    if (entropic_residency_snapshot(handle, &raw) == ENTROPIC_OK && raw != nullptr) {
+        auto snap = json::parse(raw, nullptr, false);
+        const auto list = snap.is_object() ? snap.value("residency", json::array())
+                                           : json::array();
+        for (const auto& r : list) {
+            names += (names.empty() ? "" : ", ") + r.value("tier", std::string("?"));
+        }
+    }
+    entropic_free(raw);
+    return names;
+}
+
+/**
+ * @brief `release`: unload every resident model, keep everything else.
+ *
+ * v2.14.3: an MCP client could take the card (any ask) but not give it
+ * back; the only route was a signal to the host process. Same semantics as
+ * SIGUSR1 under `entropic serve`: entropic_release_model(h, NULL). A turn
+ * in flight is refused as a tool error — the C API refuses rather than
+ * waits, and so does this — so the caller knows to retry.
+ *
+ * @param handle Engine handle.
+ * @return MCP tool result: what was released, "nothing was resident", or
+ *         an isError result naming why not.
+ * @req REQ-BRIDGE-001
+ * @req REQ-INFER-019
+ * @version 2.14.3
+ */
+static json handle_release(entropic_handle_t handle) {
+    const std::string before = resident_tiers(handle);
+    const entropic_error_t rc = entropic_release_model(handle, nullptr);
+    json result;
+    if (rc == ENTROPIC_ERROR_ALREADY_RUNNING) {
+        result = tool_text("error: a turn is running on this engine; nothing "
+                           "was released — retry when it finishes");
+        result["isError"] = true;
+    } else if (rc != ENTROPIC_OK) {
+        const char* why = entropic_last_error(handle);
+        result = tool_text(std::string("error: release failed: ")
+                           + (why != nullptr ? why : "unknown"));
+        result["isError"] = true;
+    } else {
+        result = tool_text(before.empty()
+            ? "released: nothing was resident"
+            : "released: " + before + " — sessions kept; the next ask reloads");
+    }
+    logger->info("[release] rc={} resident_before='{}'", static_cast<int>(rc), before);
+    return result;
+}
+
+/// @brief A non-ask tool's handler (v2.14.3).
+using ToolHandler = json (*)(entropic_handle_t, ExternalBridge*, const json&);
+
+/**
+ * @brief Non-ask tools by suffix (v2.14.3).
+ *
+ * A table rather than an else-if chain: adding `release` made the chain
+ * the deepest construct in the bridge (knots nesting 5). Keyed by the same
+ * tool_suffix constants tool_definitions() advertises (gh#145).
+ *
+ * @return Suffix → handler.
+ * @utility
+ * @version 2.14.3
+ */
+static const std::unordered_map<std::string, ToolHandler>& tool_handlers() {
+    static const std::unordered_map<std::string, ToolHandler> table = {
+        {tool_suffix::kAskStatus, [](entropic_handle_t, ExternalBridge* b, const json& a) {
+             return b->handle_ask_status(a); }},
+        {tool_suffix::kStatus, [](entropic_handle_t h, ExternalBridge* b, const json&) {
+             return handle_status(h, b); }},
+        {tool_suffix::kContextClear, [](entropic_handle_t h, ExternalBridge* b, const json& a) {
+             return handle_clear(h, b, a.value("session", std::string{})); }},
+        {tool_suffix::kContextCount, [](entropic_handle_t h, ExternalBridge*, const json& a) {
+             return handle_count(h, a.value("session", std::string{})); }},
+        {tool_suffix::kRelease, [](entropic_handle_t h, ExternalBridge*, const json&) {
+             return handle_release(h); }},
+    };
+    return table;
+}
+
+/**
  * @brief Dispatch a tools/call to the appropriate handler.
  *
  * entropic.ask streams progress notifications to client_fd during
@@ -1039,7 +1136,7 @@ static json dispatch_ask(entropic_handle_t handle,
  * @param call_id JSON-RPC request id for progress correlation.
  * @return MCP tool result JSON.
  * @req REQ-BRIDGE-001
- * @version 2.14.0
+ * @version 2.14.3
  */
 static json dispatch_tool(entropic_handle_t handle,
                           ExternalBridge* bridge,
@@ -1063,17 +1160,11 @@ static json dispatch_tool(entropic_handle_t handle,
         }
         return dispatch_ask(handle, bridge, args, client_fd, token);
     }
-    json result;
-    if      (suffix == tool_suffix::kAskStatus)    { result = bridge->handle_ask_status(args); }
-    else if (suffix == tool_suffix::kStatus)       { result = handle_status(handle, bridge); }
-    else if (suffix == tool_suffix::kContextClear) {
-        result = handle_clear(handle, bridge,
-                              args.value("session", std::string{}));
-    } else if (suffix == tool_suffix::kContextCount) {
-        result = handle_count(handle, args.value("session", std::string{}));
-    }
-    else { result = tool_text("error: unknown tool '" + name + "'"); }
-    return result;
+    const auto& handlers = tool_handlers();
+    const auto it = handlers.find(suffix);
+    return it == handlers.end()
+        ? tool_text("error: unknown tool '" + name + "'")
+        : it->second(handle, bridge, args);
 }
 
 // ── Turn queue (gh#144, v2.12.0) ─────────────────────────

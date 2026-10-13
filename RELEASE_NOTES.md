@@ -2,6 +2,33 @@ _Last 10 releases. Older history: [OLD_NOTES.md](OLD_NOTES.md). Kept short
 because `gh release create --notes-file` hits GitHub's 125,000-char release
 body limit once this file accumulates full project history — see v2.9.3._
 
+# entropic v2.14.2
+
+Patch release — **concurrent streaming is safe.**
+
+## Engine bug fixes
+
+- **Concurrent streaming turns crashed the host and could cross-deliver
+  tokens (gh#208).** Each streaming run's sink was stored in one handle-wide
+  slot; a second concurrent streaming turn overwrote it, so one client's
+  tokens reached another client's stream and the first run to return left
+  the other streaming into freed memory. Every run now streams through its
+  own thread-scoped sink. If you set `ask_streaming: false` to work around
+  this, you can turn it back on.
+- **Bridge async notifications could reach the wrong client** when a client
+  disconnected while a notification was being sent and its descriptor number
+  was reused. Membership check and send now happen under one lock.
+- **Destroying a handle with an async ask in flight was a use-after-free.**
+  Async workers are now owned by the bridge, interrupted and joined on stop.
+- **Bridge shutdown could shut down an unrelated socket** (client fd closed
+  and reused between check and shutdown).
+
+## Distribution
+
+- CPU tarball: `entropic-2.14.2-linux-x86_64-cpu.tar.gz` (sha256 in companion file)
+- CUDA tarball: `entropic-2.14.2-linux-x86_64-cuda.tar.gz` (sha256 in companion file)
+- Python wrapper: `pip install entropic-engine==2.14.2` then `entropic install-engine`
+
 # entropic v2.14.1
 
 Patch release — **a server you declare once reaches every repository.**

@@ -38,6 +38,7 @@
 #include <entropic/entropic_export.h>
 
 #include <atomic>
+#include <cstddef>
 #include <string>
 
 namespace entropic {
@@ -178,6 +179,67 @@ public:
 
 private:
     std::string previous_;  ///< Key restored on destruction
+};
+
+/// @brief Signature of a run's stream-chunk sink (gh#208, v2.14.2).
+using RunStreamFn = void (*)(const char* chunk, size_t len, void* user_data);
+
+/**
+ * @brief Deliver a chunk to the stream sink published on THIS thread.
+ *
+ * gh#208 (v2.14.2): a streaming run's sink is per run, not per handle. The
+ * engine used to store it in the handle-wide callbacks slot, where a second
+ * concurrent streaming run overwrote it — routing one run's tokens to the
+ * other's consumer and, once that run returned, into a dead stack frame.
+ *
+ * @param chunk Chunk bytes.
+ * @param len Chunk length.
+ * @return true when a sink is installed on this thread (and was called).
+ * @utility
+ * @req REQ-LOOP-008
+ * @version 2.14.2
+ */
+ENTROPIC_EXPORT bool emit_to_current_run_stream(const char* chunk, size_t len);
+
+/**
+ * @brief RAII: publish a streaming run's sink to its own thread (gh#208).
+ *
+ * Generation runs inline on the run's thread — the property gh#158's
+ * per-run cancel token already relies on — so every chunk the run emits
+ * reaches this sink and no other run's. Restores the previous sink on
+ * destruction, so a nested streaming scope cannot orphan an outer one.
+ *
+ * @return An RAII guard binding this thread to the sink until it goes out
+ *         of scope, at which point the previous sink is restored.
+ * @req REQ-LOOP-008
+ * @version 2.14.2
+ */
+class ENTROPIC_EXPORT RunStreamScope {
+public:
+    /**
+     * @brief Publish (fn, user_data) as this thread's stream sink.
+     * @param fn Sink; nullptr installs "no sink".
+     * @param user_data Forwarded to fn.
+     * @return n/a (constructor).
+     * @req REQ-LOOP-008
+     * @version 2.14.2
+     */
+    RunStreamScope(RunStreamFn fn, void* user_data);
+
+    /**
+     * @brief Restore the previously published sink.
+     * @return n/a (destructor).
+     * @req REQ-LOOP-008
+     * @version 2.14.2
+     */
+    ~RunStreamScope();
+
+    RunStreamScope(const RunStreamScope&) = delete;
+    RunStreamScope& operator=(const RunStreamScope&) = delete;
+
+private:
+    RunStreamFn previous_fn_;  ///< Sink restored on destruction
+    void* previous_ud_;        ///< Its user_data
 };
 
 }  // namespace entropic

@@ -64,6 +64,12 @@ static json build_tools_list(int id,
             {"type", "object"},
             {"properties", {{"text", {{"type", "string"}}}}},
         };
+        if (name == "read_project") {
+            // v2.14.2: takes no input. An advertised `text` made a model
+            // decline to call it "without input text" (flaky gate run).
+            tool["description"] = "Return this project's PROJECT.md. Takes no arguments.";
+            tool["inputSchema"] = {{"type", "object"}, {"properties", json::object()}};
+        }
         tools.push_back(tool);
     }
 

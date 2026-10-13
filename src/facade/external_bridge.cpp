@@ -23,6 +23,7 @@
 
 #include <atomic>
 #include <cerrno>
+#include <algorithm>
 #include <chrono>
 #include <condition_variable>
 #include <cstring>
@@ -1427,7 +1428,7 @@ bool ExternalBridge::start() {
  *      we run it again as a defensive measure on shutdown errors)
  *
  * @req REQ-BRIDGE-001
- * @version 2.14.0
+ * @version 2.14.2
  */
 void ExternalBridge::stop() {
     running_.store(false);
@@ -1457,11 +1458,15 @@ void ExternalBridge::stop() {
         client_threads_.clear();
     }
     for (auto& ct : drained) {
+        // v2.14.2: under the client's fd_mutex — its thread may be closing
+        // the same descriptor right now (TSan).
+        std::lock_guard<std::mutex> fd_lock(ct->fd_mutex);
         if (ct->fd >= 0) { ::shutdown(ct->fd, SHUT_RDWR); }
     }
     for (auto& ct : drained) {
         if (ct->thread.joinable()) { ct->thread.join(); }
     }
+    join_async_workers();  // v2.14.2: no worker may outlive the bridge
 
     // Clean up socket file
     std::error_code ec;
@@ -1525,7 +1530,7 @@ void ExternalBridge::reap_finished_clients_locked() {
  * matching uid is closed before a serve thread is spawned.
  *
  * @req REQ-BRIDGE-001
- * @version 2.1.7
+ * @version 2.14.2
  */
 void ExternalBridge::accept_loop() {
     while (running_.load()) {
@@ -1558,8 +1563,11 @@ void ExternalBridge::accept_loop() {
         ct->thread = std::thread([this, raw, log_id]() {
             entropic::log::HandleLogScope scope(log_id);
             serve_client(raw->fd);
-            ::close(raw->fd);
-            raw->fd = -1;
+            {
+                std::lock_guard<std::mutex> fd_lock(raw->fd_mutex);
+                ::close(raw->fd);
+                raw->fd = -1;
+            }
             logger->info("External MCP client disconnected");
             raw->finished.store(true);
         });
@@ -1848,7 +1856,7 @@ static json task_complete_notification(const std::string& task_id,
  * @param task_id Assigned task ID.
  * @param client_fd Socket fd for completion notification.
  * @req REQ-BRIDGE-001
- * @version 2.12.0
+ * @version 2.14.2
  */
 void ExternalBridge::run_async_ask(
     const std::string& prompt,
@@ -1870,11 +1878,61 @@ void ExternalBridge::run_async_ask(
     // gh#59 (v2.3.1): the async-ask worker runs entropic_run on this
     // handle's behalf — scope its logs to the owning handle.
     int log_id = handle_ ? handle_->log_id : 0;
-    std::thread([this, prompt, task_id, client_fd, log_id, session_key,
-                 tier]() {
+    // v2.14.2: owned and joined by stop(), no longer detached — a detached
+    // worker outliving the bridge touched freed memory (TSan).
+    auto worker = std::make_unique<AsyncWorker>();
+    AsyncWorker* raw = worker.get();
+    std::lock_guard<std::mutex> lock(async_workers_mutex_);
+    reap_finished_async_locked();
+    worker->thread = std::thread([this, raw, prompt, task_id, client_fd,
+                                  log_id, session_key, tier]() {
         entropic::log::HandleLogScope scope(log_id);
         async_worker(prompt, task_id, client_fd, session_key, tier);
-    }).detach();
+        raw->finished.store(true);
+    });
+    async_workers_.push_back(std::move(worker));
+}
+
+/**
+ * @brief Join and forget async workers that have finished (v2.14.2).
+ * @dg_internal
+ * @version 2.14.2
+ */
+void ExternalBridge::reap_finished_async_locked() {
+    for (auto it = async_workers_.begin(); it != async_workers_.end();) {
+        const bool done = (*it)->finished.load();
+        if (done && (*it)->thread.joinable()) { (*it)->thread.join(); }
+        it = done ? async_workers_.erase(it) : std::next(it);
+    }
+}
+
+/**
+ * @brief Stop and join every async worker (v2.14.2).
+ *
+ * A running worker is mid-turn on the engine; interrupting bounds the wait
+ * to a token instead of a whole turn. Shutdown is handle-wide by nature,
+ * so the handle-wide interrupt is the right one here.
+ *
+ * @dg_internal
+ * @version 2.14.2
+ */
+void ExternalBridge::join_async_workers() {
+    std::vector<std::unique_ptr<AsyncWorker>> workers;
+    {
+        std::lock_guard<std::mutex> lock(async_workers_mutex_);
+        workers = std::move(async_workers_);
+        async_workers_.clear();
+    }
+    const bool running = std::any_of(workers.begin(), workers.end(),
+        [](const auto& w) { return !w->finished.load(); });
+    if (running && handle_ != nullptr && handle_->engine) {
+        logger->info("Bridge stopping with {} async ask(s) in flight — "
+                     "interrupting the engine", workers.size());
+        handle_->engine->interrupt();
+    }
+    for (auto& w : workers) {
+        if (w->thread.joinable()) { w->thread.join(); }
+    }
 }
 
 /**
@@ -1975,19 +2033,24 @@ static bool send_nonblocking(int fd, const std::string& payload) {
 
 /**
  * @brief Write a notification to ONE subscribed client (v2.14.0).
+ *
+ * v2.14.2: the membership check and the send happen under ONE hold of
+ * subscribers_mutex_. They were split, so a client could unsubscribe and
+ * close between them — and once the descriptor number was reused, the
+ * notification went to a different client (TSan; same class as gh#208).
+ * The send is non-blocking, so holding the lock across it stalls nobody;
+ * a client's thread unsubscribes before it closes, so a sender holding the
+ * lock never sees a closed or reused fd.
+ *
  * @param fd Owning client's fd; negative = nobody.
  * @param notif JSON-RPC notification object.
  * @dg_internal
- * @version 2.14.0
+ * @version 2.14.2
  */
 void ExternalBridge::notify_client(int fd, const json& notif) {
-    bool subscribed = false;
-    {
-        std::lock_guard<std::mutex> lock(subscribers_mutex_);
-        subscribed = fd >= 0 && subscribers_.count(fd) > 0;
-    }
-    if (subscribed && !send_nonblocking(fd, notif.dump() + "\n")) {
-        std::lock_guard<std::mutex> lock(subscribers_mutex_);
+    std::lock_guard<std::mutex> lock(subscribers_mutex_);
+    if (fd >= 0 && subscribers_.count(fd) > 0
+        && !send_nonblocking(fd, notif.dump() + "\n")) {
         subscribers_.erase(fd);
     }
 }
@@ -1995,53 +2058,30 @@ void ExternalBridge::notify_client(int fd, const json& notif) {
 /**
  * @brief Broadcast a JSON-RPC notification to every subscriber.
  *
- * Snapshots the subscriber set under the lock, releases the lock before
- * writing, then re-acquires to remove dead fds. This prevents one
- * blocked or slow client from stalling all other broadcasts.
- *
  * Issue #4 (v2.1.2, part C): write is non-blocking via
  * ``send(MSG_DONTWAIT)``. A subscriber whose recv buffer is full
  * (slow / non-draining consumer) returns ``EAGAIN``/``EWOULDBLOCK``
- * and is dropped on the same path as ``EBADF``/``EPIPE``. Pre-2.1.2
- * the broadcast used blocking ``write()``, which let one stalled
- * consumer wedge the async-task thread that emitted the notification
- * (the field-observed deadlock against entropic-explorer ↔ Claude
- * Code; see issue #4 reproduction).
+ * and is dropped on the same path as ``EBADF``/``EPIPE``, as is a
+ * partial write. Pre-2.1.2 the broadcast used blocking ``write()``, which
+ * let one stalled consumer wedge the async-task thread (issue #4). The
+ * longer-term replacement is a per-subscriber outbound queue + writer
+ * thread (proposal P2-20260429-001).
  *
- * A partial write is also treated as a drop. The dropped subscriber
- * loses the in-flight notification — acceptable because (a) post-#4
- * notifications are tiny progress signals (consumers fetch state via
- * ``ask_status``, not from the notification body), and (b) a
- * subscriber that can't accept ~200 bytes of buffered notification is
- * unhealthy anyway. The longer-term replacement is a per-subscriber
- * outbound queue + writer thread (see proposal
- * ``.claude/proposals/BACKLOG/P2-20260429-001-async-bridge-io-architecture.md``).
- *
- * Subscribers added between snapshot and dead-fd cleanup miss this
- * broadcast — correct, as they subscribed after the message was
- * initiated.
+ * v2.14.2: the sends happen under subscribers_mutex_. The old snapshot-
+ * then-send let a subscriber unsubscribe and close mid-broadcast, and a
+ * reused descriptor then received another client's notification (TSan).
+ * Non-blocking sends make holding the lock cheap, which is why the
+ * snapshot was never needed to avoid stalls.
  *
  * @param notif JSON-RPC notification object.
  * @req REQ-BRIDGE-001
- * @version 2.14.0
+ * @version 2.14.2
  */
 void ExternalBridge::broadcast_notification(const json& notif) {
-    auto payload = notif.dump() + "\n";
-
-    std::vector<int> snapshot;
-    {
-        std::lock_guard<std::mutex> lock(subscribers_mutex_);
-        snapshot.assign(subscribers_.begin(), subscribers_.end());
-    }
-
-    std::vector<int> dead;
-    for (int fd : snapshot) {
-        if (!send_nonblocking(fd, payload)) { dead.push_back(fd); }
-    }
-
-    if (!dead.empty()) {
-        std::lock_guard<std::mutex> lock(subscribers_mutex_);
-        for (int fd : dead) { subscribers_.erase(fd); }
+    const auto payload = notif.dump() + "\n";
+    std::lock_guard<std::mutex> lock(subscribers_mutex_);
+    for (auto it = subscribers_.begin(); it != subscribers_.end();) {
+        it = send_nonblocking(*it, payload) ? std::next(it) : subscribers_.erase(it);
     }
 }
 

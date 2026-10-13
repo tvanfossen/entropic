@@ -14,7 +14,9 @@
 #include <entropic/interfaces/i_inference_callbacks.h>
 
 #include <cstring>
+#include <chrono>
 #include <mutex>
+#include <thread>
 #include <string>
 #include <vector>
 
@@ -54,6 +56,10 @@ struct MockInference {
     /// handling of a typed backend refusal (ENTROPIC_ERROR_EVAL_CONTEXT_FULL,
     /// "this prompt cannot fit the tier context") had no CPU coverage at all.
     int generate_rc = 0;
+
+    /// @brief gh#208 (v2.14.2): sleep this long before each streamed token,
+    ///        so two concurrent streaming runs overlap deterministically.
+    int token_delay_ms = 0;
 
     /// @brief gh#158 (v2.13.0): guards the mutable fields above.
     ///
@@ -144,6 +150,7 @@ inline int mock_generate_stream(
     // overlap the concurrency scenario exists to produce.
     std::string resp;
     bool token_by_token = false;
+    int delay_ms = 0;
     int rc = 0;
     {
         std::lock_guard<std::mutex> lock(mock->mutex);
@@ -156,6 +163,7 @@ inline int mock_generate_stream(
             mock->response_queue.erase(mock->response_queue.begin());
         }
         token_by_token = mock->stream_token_by_token;
+        delay_ms = mock->token_delay_ms;
     }
 
     // v2.13.0: a refused turn emits nothing. Streaming tokens first and
@@ -167,6 +175,9 @@ inline int mock_generate_stream(
         for (size_t i = 0; i < resp.size(); ++i) {
             if (cancel != nullptr && *cancel != 0) {
                 return 0;
+            }
+            if (delay_ms > 0) {
+                std::this_thread::sleep_for(std::chrono::milliseconds(delay_ms));
             }
             on_token(&resp[i], 1, token_ud);
         }

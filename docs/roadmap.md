@@ -12,7 +12,7 @@ cite them.
 
 ---
 
-## Current State (v2.14.0 on `main`)
+## Current State (v2.14.1 on `main`)
 
 - C++20 engine, pure C ABI at every `.so` boundary
 - Unit + regression tests (CPU pre-commit gate), ThreadSanitizer preset
@@ -53,7 +53,13 @@ cite them.
 
 ---
 
-## v2.14.1 — declared servers per workspace; release without stopping serve
+## v2.14.2 — concurrent streaming is safe (gh#208)
+
+- Per-run, thread-scoped stream sink replaces the handle-wide slot (#88).
+- Three bridge races found by a corrected TSan sweep: client-fd shutdown vs
+  close, notification check-then-send, detached async workers (UAF).
+
+## v2.14.1 — declared servers per workspace; release without stopping serve (SHIPPED)
 
 - Declared `mcp.external_servers` launch in every workspace, rooted at its
   repository; `${ENTROPIC_WORKSPACE_ROOT}` names that root in args/env

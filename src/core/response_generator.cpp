@@ -276,7 +276,7 @@ struct StreamAccumulator {
  * @param len Token length.
  * @param user_data StreamAccumulator pointer.
  * @req REQ-LOOP-008
- * @version 2.13.0
+ * @version 2.14.2
  */
 static void stream_token_callback(
     const char* token,
@@ -323,7 +323,11 @@ static void stream_token_callback(
     }
 
     acc->content.append(token, len);
-    if (acc->callbacks->on_stream_chunk != nullptr) {
+    // gh#208 (v2.14.2): a streaming run's own sink first — published to
+    // this (the run's) thread. The handle-wide slot is only for a caller
+    // that registered one outside any streaming run.
+    if (!emit_to_current_run_stream(token, len)
+        && acc->callbacks->on_stream_chunk != nullptr) {
         acc->callbacks->on_stream_chunk(token, len,
                                          acc->callbacks->user_data);
     }

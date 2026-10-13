@@ -116,4 +116,51 @@ RunSessionScope::~RunSessionScope() {
     t_run_session = std::move(previous_);
 }
 
+namespace {
+
+/// @brief gh#208: this thread's streaming-run sink (nullptr = none).
+thread_local RunStreamFn t_run_stream_fn = nullptr;
+/// @brief Its user_data.
+thread_local void* t_run_stream_ud = nullptr;
+
+}  // namespace
+
+/**
+ * @brief Deliver a chunk to this thread's run stream sink (gh#208).
+ * @param chunk Chunk bytes.
+ * @param len Chunk length.
+ * @return true when a sink is installed (and was called).
+ * @utility
+ * @req REQ-LOOP-008
+ * @version 2.14.2
+ */
+bool emit_to_current_run_stream(const char* chunk, size_t len) {
+    const bool installed = t_run_stream_fn != nullptr;
+    if (installed) { t_run_stream_fn(chunk, len, t_run_stream_ud); }
+    return installed;
+}
+
+/**
+ * @brief Publish a streaming run's sink to this thread (gh#208).
+ * @param fn Sink.
+ * @param user_data Forwarded to fn.
+ * @req REQ-LOOP-008
+ * @version 2.14.2
+ */
+RunStreamScope::RunStreamScope(RunStreamFn fn, void* user_data)
+    : previous_fn_(t_run_stream_fn), previous_ud_(t_run_stream_ud) {
+    t_run_stream_fn = fn;
+    t_run_stream_ud = user_data;
+}
+
+/**
+ * @brief Restore the previous sink (gh#208).
+ * @req REQ-LOOP-008
+ * @version 2.14.2
+ */
+RunStreamScope::~RunStreamScope() {
+    t_run_stream_fn = previous_fn_;
+    t_run_stream_ud = previous_ud_;
+}
+
 }  // namespace entropic

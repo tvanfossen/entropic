@@ -21,11 +21,13 @@
  * Requires: GPU, gemma-4-E2B QAT GGUF on disk, mock-mcp-server binary.
  * Run: inv test --model --model-only --filter v2141
  *
- * @version 2.14.1
+ * @version 2.14.2
  */
 
 #include "facade_model_helpers.h"
 #include "model_test_context.h"
+
+#include <nlohmann/json.hpp>
 
 #include <algorithm>
 #include <cctype>
@@ -59,6 +61,19 @@ fs::path make_repo(const std::string& slot, const std::string& codename) {
     std::ofstream(dir / "PROJECT.md")
         << "This project's internal codename is " << codename << ".\n";
     return dir;
+}
+
+/// @brief The text of every proj.read_project result in a transcript.
+std::string tool_results(const std::string& transcript) {
+    auto msgs = nlohmann::json::parse(transcript, nullptr, false);
+    std::string out;
+    for (const auto& m : msgs.is_array() ? msgs : nlohmann::json::array()) {
+        const auto meta = m.value("metadata", nlohmann::json::object());
+        if (meta.value("tool_name", "") == "proj.read_project") {
+            out += m.value("content", "") + "\n";
+        }
+    }
+    return out;
 }
 
 /// @brief One session's first and last answers plus its last transcript.
@@ -130,10 +145,18 @@ SCENARIO("v2.14.1: a declared server serves each workspace from its own reposito
             INFO("A: [" << a.first << "] / [" << a.last << "]\nA transcript: " << a.transcript);
             INFO("B: [" << b.first << "] / [" << b.last << "]\nB transcript: " << b.transcript);
 
-            THEN("each answers from its own repository's instance, both times") {
-                CHECK(has_ci(a.first, "marigold"));
+            THEN("each session's tool call was served by its own repository's instance") {
+                // The property under test. The codename exists only in each
+                // repository's PROJECT.md, read by the child from ITS cwd, so
+                // a tool result carrying it proves which instance answered.
+                // (The first answer's phrasing is not asserted: E2B
+                // occasionally replies to an engine budget note instead —
+                // seen in the v2.14.2 runs with the right result in hand.)
+                CHECK(has_ci(tool_results(a.transcript), "marigold"));
+                CHECK(has_ci(tool_results(b.transcript), "saffron"));
+            }
+            THEN("each repeats its own codename from the conversation") {
                 CHECK(has_ci(a.last, "marigold"));
-                CHECK(has_ci(b.first, "saffron"));
                 CHECK(has_ci(b.last, "saffron"));
             }
             THEN("neither saw the other repository's file") {

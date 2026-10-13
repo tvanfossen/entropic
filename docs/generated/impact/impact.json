@@ -4,20 +4,81 @@
     "req_name": "External bridge exposes the engine over a peer-authenticated unix socket",
     "functions": [
       {
-        "name": "run_serve",
-        "file": "src/cli/serve.cpp",
-        "version": "2.14.1"
+        "name": "stop",
+        "file": "src/facade/external_bridge.cpp",
+        "version": "2.14.2"
+      },
+      {
+        "name": "accept_loop",
+        "file": "src/facade/external_bridge.cpp",
+        "version": "2.14.2"
+      },
+      {
+        "name": "run_async_ask",
+        "file": "src/facade/external_bridge.cpp",
+        "version": "2.14.2"
+      },
+      {
+        "name": "broadcast_notification",
+        "file": "src/facade/external_bridge.cpp",
+        "version": "2.14.2"
       }
     ]
   },
   {
-    "req_id": "REQ-MCP-027",
-    "req_name": "Named workspaces bind a session to its own tool root and servers",
+    "req_id": "REQ-LOOP-001",
+    "req_name": "Agent state machine with observable, dual-channel transitions",
     "functions": [
       {
-        "name": "build_workspace",
-        "file": "src/facade/entropic_mcp.cpp",
-        "version": "2.14.1"
+        "name": "run_streaming",
+        "file": "src/core/engine.cpp",
+        "version": "2.14.2"
+      },
+      {
+        "name": "run_streaming",
+        "file": "src/core/engine.cpp",
+        "version": "2.14.2"
+      }
+    ]
+  },
+  {
+    "req_id": "REQ-LOOP-008",
+    "req_name": "Family-aware streaming reasoning filter with UTF-8 alignment",
+    "functions": [
+      {
+        "name": "RunStreamScope",
+        "file": "include/entropic/types/run_scope.h",
+        "version": "2.14.2"
+      },
+      {
+        "name": "run_streaming",
+        "file": "src/core/engine.cpp",
+        "version": "2.14.2"
+      },
+      {
+        "name": "run_streaming",
+        "file": "src/core/engine.cpp",
+        "version": "2.14.2"
+      },
+      {
+        "name": "stream_token_callback",
+        "file": "src/core/response_generator.cpp",
+        "version": "2.14.2"
+      },
+      {
+        "name": "emit_to_current_run_stream",
+        "file": "src/types/run_scope.cpp",
+        "version": "2.14.2"
+      },
+      {
+        "name": "RunStreamScope",
+        "file": "src/types/run_scope.cpp",
+        "version": "2.14.2"
+      },
+      {
+        "name": "~RunStreamScope",
+        "file": "src/types/run_scope.cpp",
+        "version": "2.14.2"
       }
     ]
   }

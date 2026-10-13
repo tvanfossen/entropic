@@ -79,10 +79,11 @@ namespace entropic {
  *
  * gh#145 (v2.12.0): exposes config() so the tool-name handlers can read the
  * consumer's configured namespace. gh#144 (v2.12.0): owns the FIFO turn queue
- * that serialises every caller reaching the engine.
+ * that serialises every caller reaching the engine. v2.14.2: owns its async
+ * workers (joined by stop()) instead of detaching them.
  *
  * @dg_internal
- * @version 2.14.0
+ * @version 2.14.2
  */
 class ENTROPIC_EXPORT ExternalBridge {
 public:
@@ -535,6 +536,25 @@ private:
      */
     void reap_finished_clients_locked();
 
+    /**
+     * @brief Join and forget async workers that have finished (v2.14.2).
+     *
+     * Must be called with async_workers_mutex_ held.
+     * @dg_internal
+     * @version 2.14.2
+     */
+    void reap_finished_async_locked();
+
+    /**
+     * @brief Stop and join every async worker (v2.14.2).
+     *
+     * Interrupts the engine if any worker is still running, so shutdown is
+     * bounded by one token rather than a whole turn, then joins them all.
+     * @dg_internal
+     * @version 2.14.2
+     */
+    void join_async_workers();
+
     entropic_handle_t handle_;                 ///< Engine handle (not owned)
     ExternalMCPConfig config_;                 ///< Config snapshot
 
@@ -600,11 +620,24 @@ private:
     /// shutdown(fd) to wake their blocking reads and join cleanly.
     /// Guarded by client_threads_mutex_.
     struct ClientThread {
-        int fd;                          ///< Connected client socket
+        int fd;                          ///< Connected client socket (under fd_mutex once serving)
+        /// v2.14.2: the client thread closes `fd` while stop() may be
+        /// shutting it down; without this the number can be reused in
+        /// between and stop() shuts down an unrelated socket.
+        std::mutex fd_mutex;
         std::atomic<bool> finished{false}; ///< Set by the thread itself before exit
         std::thread thread;
     };
     std::vector<std::unique_ptr<ClientThread>> client_threads_;
+    /// @brief v2.14.2: an async ask's worker. These were detached while
+    /// capturing `this`, so destroying the bridge (entropic_destroy) with an
+    /// ask in flight was a use-after-free (TSan). Now owned and joined.
+    struct AsyncWorker {
+        std::atomic<bool> finished{false}; ///< Set by the worker before exit
+        std::thread thread;                ///< The worker
+    };
+    std::vector<std::unique_ptr<AsyncWorker>> async_workers_; ///< Under async_workers_mutex_
+    std::mutex async_workers_mutex_;                          ///< Guards async_workers_
     mutable std::mutex client_threads_mutex_;
 
     /// @brief Async task registry (task_id → state). Guarded by tasks_mutex_.

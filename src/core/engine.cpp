@@ -4114,7 +4114,7 @@ void on_stream_chunk(const char* t, size_t l, void* ud) {
  * @return 0=OK, 1=cancelled, 2=error.
  * @req REQ-LOOP-001
  * @req REQ-LOOP-008
- * @version 2.14.0
+ * @version 2.14.2
  */
 int AgentEngine::run_streaming(
     const std::string& input,
@@ -4135,10 +4135,11 @@ int AgentEngine::run_streaming(
     }
 
     StreamChunkCtx sctx{&filter, cancel_flag, this};
-    EngineCallbacks cbs{};
-    cbs.on_stream_chunk = on_stream_chunk;
-    cbs.user_data = &sctx;
-    set_callbacks(cbs);
+    // gh#208 (v2.14.2): this run's sink, published to this run's thread. It
+    // was stored in the handle-wide callbacks_ slot, where a concurrent
+    // streaming run overwrote it: tokens crossed between clients, and the
+    // first run to return left the other streaming into a dead frame.
+    RunStreamScope stream_scope(on_stream_chunk, &sctx);
 
     // gh#205: a tier (or identity) locks this turn exactly as run_turn_as does.
     auto result = tier.empty() ? run_turn(input) : run_turn_as(tier, input);
@@ -4183,7 +4184,7 @@ static std::string concat_user_echo(
  * @return 0=OK, 1=cancelled, 2=error.
  * @req REQ-LOOP-001
  * @req REQ-LOOP-008
- * @version 2.14.0
+ * @version 2.14.2
  */
 int AgentEngine::run_streaming(
     std::vector<Message> new_messages,
@@ -4203,10 +4204,11 @@ int AgentEngine::run_streaming(
     }
 
     StreamChunkCtx sctx{&filter, cancel_flag, this};
-    EngineCallbacks cbs{};
-    cbs.on_stream_chunk = on_stream_chunk;
-    cbs.user_data = &sctx;
-    set_callbacks(cbs);
+    // gh#208 (v2.14.2): this run's sink, published to this run's thread. It
+    // was stored in the handle-wide callbacks_ slot, where a concurrent
+    // streaming run overwrote it: tokens crossed between clients, and the
+    // first run to return left the other streaming into a dead frame.
+    RunStreamScope stream_scope(on_stream_chunk, &sctx);
 
     auto result = run_turn(std::move(new_messages));
     filter.flush();

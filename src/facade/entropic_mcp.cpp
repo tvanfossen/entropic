@@ -375,7 +375,7 @@ entropic_set_path_approval_callback(entropic_handle_t handle,
  * @return Owned workspace with connected servers.
  * @utility
  * @req REQ-MCP-027
- * @version 2.14.0 [reviewed]
+ * @version 2.14.1
  */
 static std::unique_ptr<EntropicWorkspace> build_workspace(
     entropic_handle_t h, const std::string& name,
@@ -400,7 +400,11 @@ static std::unique_ptr<EntropicWorkspace> build_workspace(
     ws->servers->load_plugins(mcp);
     // gh#199: the workspace inherits the handle's enablement policy, so its
     // root's .mcp.json launches nothing the operator did not enable.
-    entropic::wire_external_server_policy(h, *ws->servers, false);
+    // v2.14.1: and it launches the operator's DECLARED servers itself,
+    // rooted here — a bound session dispatches only to this set, so a
+    // declared server left on the base set was invisible to it (decision
+    // #87, revising #83).
+    entropic::wire_external_server_policy(h, *ws->servers, true);
     return ws;
 }
 

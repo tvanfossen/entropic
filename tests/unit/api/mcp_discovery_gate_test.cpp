@@ -23,6 +23,8 @@
 
 #include <entropic/entropic.h>
 
+#include <nlohmann/json.hpp>
+
 #include <chrono>
 #include <filesystem>
 #include <fstream>
@@ -182,6 +184,46 @@ SCENARIO("v2.14.0: a server declared in the handle's own config connects",
             // Pre-2.14.0 this key was in the struct and the schema but never
             // parsed from config, and nothing would have connected it anyway.
             CHECK(spawned(marker));
+        }
+    }
+}
+
+SCENARIO("v2.14.1: each workspace launches the declared servers, rooted at "
+         "its repository", "[api][mcp][external_servers][workspace][2.14.1]") {
+    // sumac's case: one serve host, many repositories, and a code-index
+    // server (clew) declared once in config. Through v2.14.0 declared
+    // servers connected on the handle's base set only, and a session bound
+    // to a workspace dispatches to its workspace's set — so a bound session
+    // never saw the server at all. Each workspace now launches its own
+    // instance, started in its root, and ${ENTROPIC_WORKSPACE_ROOT} in
+    // args/env names that root (clew derives its target from env).
+    GIVEN("a host declaring a probe that records its cwd and its env") {
+        const auto host = scratch("ws_decl_host");
+        const auto repo = scratch("ws_decl_repo");
+        nlohmann::json probe;
+        probe["command"] = "/bin/sh";
+        probe["args"] = {"-c", "printf '%s\\n%s' \"$(pwd)\" \"$PROBE_ROOT\" "
+                               "> '${ENTROPIC_WORKSPACE_ROOT}/SPAWNED'"};
+        probe["env"] = {{"PROBE_ROOT", "${ENTROPIC_WORKSPACE_ROOT}"}};
+        GateHandle h(cfg_rooted(host, R"("external_servers":{"probe":)"
+                                          + probe.dump() + "}"));
+        REQUIRE(h.ok);
+
+        WHEN("a workspace is created on another repository") {
+            REQUIRE(entropic_workspace_create(h.h, "repo", repo.c_str()) == ENTROPIC_OK);
+            THEN("the workspace runs its own instance, in that repository") {
+                REQUIRE(spawned(repo / "SPAWNED"));
+                std::this_thread::sleep_for(std::chrono::milliseconds(100));
+                std::ifstream in(repo / "SPAWNED");
+                std::string cwd, env;
+                std::getline(in, cwd);
+                std::getline(in, env);
+                CHECK(fs::equivalent(cwd, repo));
+                CHECK(env == repo.string());
+            }
+            AND_THEN("the base set's instance is still rooted at the host") {
+                CHECK(spawned(host / "SPAWNED"));
+            }
         }
     }
 }

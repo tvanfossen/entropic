@@ -198,6 +198,16 @@ if(TARGET mock-mcp-server)
     target_compile_definitions(test-external-mcp PRIVATE
         MOCK_MCP_SERVER_PATH="$<TARGET_FILE:mock-mcp-server>")
     add_dependencies(test-external-mcp mock-mcp-server)
+
+    # v2.14.1 (decision #87): the EMERGENT multi-turn test for declared
+    # servers per workspace. One declared mock server, two workspaces on one
+    # model, two bound sessions concurrently; each call must be answered by
+    # the instance started in that session's repository.
+    add_model_test(test-v2141-workspace-declared test_v2141_workspace_declared_servers.cpp)
+    target_compile_definitions(test-v2141-workspace-declared PRIVATE
+        MOCK_MCP_SERVER_PATH="$<TARGET_FILE:mock-mcp-server>")
+    add_dependencies(test-v2141-workspace-declared mock-mcp-server)
+    set_tests_properties(model/test-v2141-workspace-declared PROPERTIES TIMEOUT 900)
 endif()
 
 # test-constitutional-validation baseline is ~68s; under parallel load

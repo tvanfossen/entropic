@@ -480,6 +480,12 @@ add_model_test(test-gh204-http-multiclient test_gh204_http_multiclient.cpp)
 target_link_libraries(test-gh204-http-multiclient PRIVATE httplib::httplib)
 set_tests_properties(model/test-gh204-http-multiclient PROPERTIES TIMEOUT 900)
 
+# v2.14.3: the bridge release tool. Load, release over MCP (residency read
+# from the engine), then the same session recalls an earlier turn — the
+# conversation is kept and the next ask reloads the model.
+add_model_test(test-v2143-bridge-release test_v2143_bridge_release.cpp)
+set_tests_properties(model/test-v2143-bridge-release PROPERTIES TIMEOUT 600)
+
 # v2.13.0: the EMERGENT multi-turn test for outside-root approval. A real
 # model reads outside its root under `allow_outside_root: optional`; the
 # host's path approver accepts one file and rejects another, and the tool

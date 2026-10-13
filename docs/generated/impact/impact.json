@@ -4,81 +4,25 @@
     "req_name": "External bridge exposes the engine over a peer-authenticated unix socket",
     "functions": [
       {
-        "name": "stop",
+        "name": "handle_release",
         "file": "src/facade/external_bridge.cpp",
-        "version": "2.14.2"
+        "version": "2.14.3"
       },
       {
-        "name": "accept_loop",
+        "name": "dispatch_tool",
         "file": "src/facade/external_bridge.cpp",
-        "version": "2.14.2"
-      },
-      {
-        "name": "run_async_ask",
-        "file": "src/facade/external_bridge.cpp",
-        "version": "2.14.2"
-      },
-      {
-        "name": "broadcast_notification",
-        "file": "src/facade/external_bridge.cpp",
-        "version": "2.14.2"
+        "version": "2.14.3"
       }
     ]
   },
   {
-    "req_id": "REQ-LOOP-001",
-    "req_name": "Agent state machine with observable, dual-channel transitions",
+    "req_id": "REQ-INFER-019",
+    "req_name": "Model pool dedup and VRAM residency policy govern which tier is resident",
     "functions": [
       {
-        "name": "run_streaming",
-        "file": "src/core/engine.cpp",
-        "version": "2.14.2"
-      },
-      {
-        "name": "run_streaming",
-        "file": "src/core/engine.cpp",
-        "version": "2.14.2"
-      }
-    ]
-  },
-  {
-    "req_id": "REQ-LOOP-008",
-    "req_name": "Family-aware streaming reasoning filter with UTF-8 alignment",
-    "functions": [
-      {
-        "name": "RunStreamScope",
-        "file": "include/entropic/types/run_scope.h",
-        "version": "2.14.2"
-      },
-      {
-        "name": "run_streaming",
-        "file": "src/core/engine.cpp",
-        "version": "2.14.2"
-      },
-      {
-        "name": "run_streaming",
-        "file": "src/core/engine.cpp",
-        "version": "2.14.2"
-      },
-      {
-        "name": "stream_token_callback",
-        "file": "src/core/response_generator.cpp",
-        "version": "2.14.2"
-      },
-      {
-        "name": "emit_to_current_run_stream",
-        "file": "src/types/run_scope.cpp",
-        "version": "2.14.2"
-      },
-      {
-        "name": "RunStreamScope",
-        "file": "src/types/run_scope.cpp",
-        "version": "2.14.2"
-      },
-      {
-        "name": "~RunStreamScope",
-        "file": "src/types/run_scope.cpp",
-        "version": "2.14.2"
+        "name": "handle_release",
+        "file": "src/facade/external_bridge.cpp",
+        "version": "2.14.3"
       }
     ]
   }

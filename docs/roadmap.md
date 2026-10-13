@@ -12,7 +12,7 @@ cite them.
 
 ---
 
-## Current State (v2.14.1 on `main`)
+## Current State (v2.14.2 on `main`)
 
 - C++20 engine, pure C ABI at every `.so` boundary
 - Unit + regression tests (CPU pre-commit gate), ThreadSanitizer preset
@@ -53,7 +53,12 @@ cite them.
 
 ---
 
-## v2.14.2 — concurrent streaming is safe (gh#208)
+## v2.14.3 — the bridge release tool
+
+- `<prefix>.release` unloads every resident model over MCP; sessions kept;
+  refused (retryable) mid-turn; reports what it released (#89).
+
+## v2.14.2 — concurrent streaming is safe (gh#208) (SHIPPED)
 
 - Per-run, thread-scoped stream sink replaces the handle-wide slot (#88).
 - Three bridge races found by a corrected TSan sweep: client-fd shutdown vs

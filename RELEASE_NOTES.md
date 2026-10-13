@@ -2,6 +2,26 @@ _Last 10 releases. Older history: [OLD_NOTES.md](OLD_NOTES.md). Kept short
 because `gh release create --notes-file` hits GitHub's 125,000-char release
 body limit once this file accumulates full project history — see v2.9.3._
 
+# entropic v2.14.3
+
+Patch release — **an MCP client can give the GPU back.**
+
+## New features
+
+- **`<prefix>.release` bridge tool.** Unloads every resident model
+  (`entropic_release_model(h, NULL)`); sessions and conversations are kept and
+  the next ask reloads. Its result names what it released, or says nothing was
+  resident. While a turn is running it returns an `isError` result asking the
+  caller to retry, rather than queueing. Advertised with the other bridge tools
+  under `tool_prefix`. Over `entropic serve` this is the in-band equivalent of
+  SIGUSR1.
+
+## Distribution
+
+- CPU tarball: `entropic-2.14.3-linux-x86_64-cpu.tar.gz` (sha256 in companion file)
+- CUDA tarball: `entropic-2.14.3-linux-x86_64-cuda.tar.gz` (sha256 in companion file)
+- Python wrapper: `pip install entropic-engine==2.14.3` then `entropic install-engine`
+
 # entropic v2.14.2
 
 Patch release — **concurrent streaming is safe.**

@@ -263,7 +263,7 @@ bool ToolExecutor::check_approval(const ToolCall& call) {
  *         tool, logged at warning level.
  * @req REQ-MCP-014
  * @req REQ-MCP-012
- * @version 2.5.2
+ * @version 2.14.4
  */
 std::optional<Message> ToolExecutor::check_tier_allowed(
     const LoopContext& ctx, const ToolCall& call) const {
@@ -277,11 +277,11 @@ std::optional<Message> ToolExecutor::check_tier_allowed(
         return std::nullopt;
     }
     auto it = tier_allowed_tools_->find(ctx.locked_tier);
-    // Authorized when: tier has no allowlist entry, an empty allowlist
-    // (unrestricted), or the call is in the list. Short-circuit eval
-    // guards the `it->second` access against the end() case.
+    // Authorized when the tier has no allowlist entry (its identity declares
+    // no `allowed_tools` key: unrestricted) or the call is in the list.
+    // gh#211 (v2.14.4): a DECLARED empty list means no tools — it used to
+    // read as unrestricted, so `allowed_tools: []` granted everything.
     bool authorized = it == tier_allowed_tools_->end()
-                   || it->second.empty()
                    || std::find(it->second.begin(), it->second.end(),
                                 call.name) != it->second.end();
     if (authorized) {

@@ -34,6 +34,8 @@ add_executable(entropic-config-tests
     config/env_overrides_test.cpp
     prompts/prompt_parse_test.cpp
     prompts/classification_prompt_test.cpp
+    # gh#211 (v2.14.4): a configured identity must load.
+    prompts/identity_validation_test.cpp
 )
 
 target_include_directories(entropic-config-tests PRIVATE
@@ -422,6 +424,8 @@ add_executable(entropic-mcp-tests
     mcp/servers/ignore_matcher_test.cpp
     mcp/servers/bash_test.cpp
     mcp/servers/git_test.cpp
+    # gh#211 (v2.14.4): no git argument reaches a shell.
+    mcp/servers/git_injection_test.cpp
     mcp/servers/diagnostics_test.cpp
     mcp/servers/web_test.cpp
     mcp/servers/entropic_test.cpp
@@ -594,6 +598,8 @@ add_executable(entropic-api-tests
     api/workspace_app_context_test.cpp
     # v2.14.3: the bridge release tool.
     api/bridge_release_tool_test.cpp
+    # gh#211 (v2.14.4): workspace_roots allowlist.
+    api/workspace_roots_test.cpp
 )
 
 # v2.1.1 (#3): serialize_messages_utf8_test.cpp #includes the private

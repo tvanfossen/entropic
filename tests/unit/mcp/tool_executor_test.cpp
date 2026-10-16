@@ -1473,6 +1473,28 @@ TEST_CASE("gh#83: tier with no allowlist entry is unrestricted",
     CHECK(results[0].content.find("ok") != std::string::npos);
 }
 
+TEST_CASE("gh#211: a tier that declares an EMPTY allowlist may call nothing",
+          "[tool_executor][gh83][gh211][2.14.4]") {
+    // `allowed_tools: []` (the bundled compactor, scribe and benchmark_judge)
+    // means "no tools". It was read as "no filter" — unrestricted — at both
+    // staging and dispatch. Only an ABSENT key leaves a tier unrestricted.
+    auto mgr = make_manager();
+    LoopConfig lc; lc.auto_approve_tools = true;
+    EngineCallbacks cb;
+    ToolExecutor executor(mgr, lc, cb);
+
+    std::unordered_map<std::string, std::vector<std::string>> allow;
+    allow["scribe"] = {};  // declared, empty
+    executor.set_tier_allowed_tools(&allow);
+
+    LoopContext ctx;
+    ctx.locked_tier = "scribe";
+    auto results = executor.process_tool_calls(ctx, {make_call("ok.do_thing")});
+
+    REQUIRE(results.size() == 1);
+    CHECK(results[0].metadata.at("result_kind") == "rejected_unauthorized");
+}
+
 TEST_CASE("gh#83: empty locked_tier bypasses enforcement",
           "[tool_executor][gh83]") {
     auto mgr = make_manager();

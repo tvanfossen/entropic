@@ -1,28 +1,136 @@
 [
   {
-    "req_id": "REQ-BRIDGE-001",
-    "req_name": "External bridge exposes the engine over a peer-authenticated unix socket",
+    "req_id": "REQ-CFG-001",
+    "req_name": "Layered configuration resolution with most-specific-layer-wins precedence",
     "functions": [
       {
-        "name": "handle_release",
-        "file": "src/facade/external_bridge.cpp",
-        "version": "2.14.3"
+        "name": "parse_config_file",
+        "file": "src/config/loader.cpp",
+        "version": "2.14.4"
       },
       {
-        "name": "dispatch_tool",
-        "file": "src/facade/external_bridge.cpp",
-        "version": "2.14.3"
+        "name": "parse_config_string",
+        "file": "src/config/loader.cpp",
+        "version": "2.14.4"
+      },
+      {
+        "name": "load_config_from_string",
+        "file": "src/config/loader.cpp",
+        "version": "2.14.4"
       }
     ]
   },
   {
-    "req_id": "REQ-INFER-019",
-    "req_name": "Model pool dedup and VRAM residency policy govern which tier is resident",
+    "req_id": "REQ-CFG-002",
+    "req_name": "Whole-block replace semantics for models and routing across layers",
     "functions": [
       {
-        "name": "handle_release",
-        "file": "src/facade/external_bridge.cpp",
-        "version": "2.14.3"
+        "name": "yaml_has_key",
+        "file": "src/config/loader.cpp",
+        "version": "2.14.4"
+      }
+    ]
+  },
+  {
+    "req_id": "REQ-CFG-003",
+    "req_name": "Bundled model registry resolution \u2014 keys, selectors, and search order",
+    "functions": [
+      {
+        "name": "load",
+        "file": "src/config/bundled_models.cpp",
+        "version": "2.14.4"
+      }
+    ]
+  },
+  {
+    "req_id": "REQ-CFG-006",
+    "req_name": "Fail-loud validation \u2014 reject bad or inert configuration at load time",
+    "functions": [
+      {
+        "name": "parse_config_file",
+        "file": "src/config/loader.cpp",
+        "version": "2.14.4"
+      },
+      {
+        "name": "parse_config_string",
+        "file": "src/config/loader.cpp",
+        "version": "2.14.4"
+      },
+      {
+        "name": "load_config_from_string",
+        "file": "src/config/loader.cpp",
+        "version": "2.14.4"
+      }
+    ]
+  },
+  {
+    "req_id": "REQ-MCP-012",
+    "req_name": "Tool calls pass an ordered precondition pipeline with typed rejection kinds",
+    "functions": [
+      {
+        "name": "check_tier_allowed",
+        "file": "src/mcp/tool_executor.cpp",
+        "version": "2.14.4"
+      }
+    ]
+  },
+  {
+    "req_id": "REQ-MCP-014",
+    "req_name": "A locked tier's allowed_tools list is enforced at dispatch time",
+    "functions": [
+      {
+        "name": "check_tier_allowed",
+        "file": "src/mcp/tool_executor.cpp",
+        "version": "2.14.4"
+      }
+    ]
+  },
+  {
+    "req_id": "REQ-MCP-021",
+    "req_name": "Filesystem tools are root-confined, read-before-write gated, and size-bounded",
+    "functions": [
+      {
+        "name": "parse_absolute_path_list",
+        "file": "src/config/loader.cpp",
+        "version": "2.14.4"
+      }
+    ]
+  },
+  {
+    "req_id": "REQ-MCP-023",
+    "req_name": "Bash and git servers gate on operator approval, not command pattern matching; bash enforces a timeout on the whole process group",
+    "functions": [
+      {
+        "name": "run_git",
+        "file": "src/mcp/servers/git.cpp",
+        "version": "2.14.4"
+      }
+    ]
+  },
+  {
+    "req_id": "REQ-MCP-027",
+    "req_name": "Named workspaces bind a session to its own tool root and servers",
+    "functions": [
+      {
+        "name": "validate_workspace_args",
+        "file": "src/facade/entropic_mcp.cpp",
+        "version": "2.14.4"
+      }
+    ]
+  },
+  {
+    "req_id": "REQ-TYPE-005",
+    "req_name": "Config types declare their own defaults; optional means absent, not default",
+    "functions": [
+      {
+        "name": "parse_config_file",
+        "file": "src/config/loader.cpp",
+        "version": "2.14.4"
+      },
+      {
+        "name": "validate_configured_prompts",
+        "file": "src/prompts/manager.cpp",
+        "version": "2.14.4"
       }
     ]
   }

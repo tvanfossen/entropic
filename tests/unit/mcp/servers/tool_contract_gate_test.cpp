@@ -189,6 +189,8 @@ void drive_git(Gate& g, const fs::path& dir) {
     g.run(git, "git/log", {{"count", 1}});
     g.run(git, "git/branch", json::object());
     g.run(git, "git/checkout", {{"target", "no-such-branch"}});
+    g.run(git, "git/checkout", {{"target", "-x"}});   // gh#211: refused, not an option
+    g.run(git, "git/branch", {{"name", "-x"}});
     g.run(git, "git/reset", json::object());
 }
 

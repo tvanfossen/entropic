@@ -215,7 +215,7 @@ TEST_CASE("Git branch lists branches and creates new ones",
 
     SECTION("create=<name> creates and switches to a new branch") {
         json args;
-        args["create"] = "feature/v2310-coverage";
+        args["name"] = "feature/v2310-coverage";  // v2.14.4: the declared key (was `create`)
         auto out = parse_result(server.execute("branch", args.dump()));
         REQUIRE_FALSE(out.empty());
         // Verify HEAD moved by listing branches and looking for the
@@ -237,7 +237,7 @@ TEST_CASE("Git checkout switches branches",
     // Create a target branch first via the branch tool's create=,
     // then checkout main again.
     json create_args;
-    create_args["create"] = "v2310-target";
+    create_args["name"] = "v2310-target";  // v2.14.4: the declared key
     server.execute("branch", create_args.dump());
 
     // The branch tool's create path also switches; verify we can

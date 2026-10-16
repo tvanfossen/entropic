@@ -12,7 +12,7 @@ cite them.
 
 ---
 
-## Current State (v2.14.2 on `main`)
+## Current State (v2.14.3 on `main`)
 
 - C++20 engine, pure C ABI at every `.so` boundary
 - Unit + regression tests (CPU pre-commit gate), ThreadSanitizer preset
@@ -53,7 +53,13 @@ cite them.
 
 ---
 
-## v2.14.3 — the bridge release tool
+## v2.14.4 — security hardening (gh#211)
+
+- git server: argv execution, `--` before paths, option-shaped refs refused.
+- `mcp.workspace_roots` allowlist; fail-closed identities; `[]` = no tools;
+  malformed YAML returns an error instead of aborting (#90).
+
+## v2.14.3 — the bridge release tool (SHIPPED)
 
 - `<prefix>.release` unloads every resident model over MCP; sessions kept;
   refused (retryable) mid-turn; reports what it released (#89).

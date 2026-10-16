@@ -486,6 +486,12 @@ set_tests_properties(model/test-gh204-http-multiclient PROPERTIES TIMEOUT 900)
 add_model_test(test-v2143-bridge-release test_v2143_bridge_release.cpp)
 set_tests_properties(model/test-v2143-bridge-release PROPERTIES TIMEOUT 600)
 
+# gh#211 (v2.14.4): a real model commits with a message full of shell syntax;
+# the git server's argv path must keep it as text (no marker file, verbatim
+# subject in history).
+add_model_test(test-v2144-git-no-shell test_v2144_git_no_shell.cpp)
+set_tests_properties(model/test-v2144-git-no-shell PROPERTIES TIMEOUT 600)
+
 # v2.13.0: the EMERGENT multi-turn test for outside-root approval. A real
 # model reads outside its root under `allow_outside_root: optional`; the
 # host's path approver accepts one file and rejects another, and the tool

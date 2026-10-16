@@ -7,6 +7,8 @@
  */
 
 #include "yaml_util.h"
+#include <stdexcept>
+#include <mutex>
 
 #include <entropic/types/logging.h>
 #include <cstdlib>
@@ -16,6 +18,51 @@
 static auto s_log = entropic::log::get("config");
 
 namespace entropic::config {
+
+namespace {
+
+/**
+ * @brief ryml error callback: throw, never abort (gh#211).
+ * @param msg Message.
+ * @param len Message length.
+ * @param loc Location in the source.
+ * @param ud Unused.
+ * @dg_internal
+ * @version 2.14.4
+ */
+[[noreturn]] void throw_yaml_error(const char* msg, size_t len,
+                                   ryml::Location loc, void* /*ud*/) {
+    throw std::runtime_error(std::string(msg, len) + " (line "
+                             + std::to_string(loc.line + 1) + ")");
+}
+
+}  // namespace
+
+/**
+ * @brief Parse YAML text, returning an error instead of aborting (gh#211).
+ * @param name Source name for messages.
+ * @param text YAML text.
+ * @param[out] tree Parsed tree.
+ * @return "" on success, else the reason.
+ * @utility
+ * @version 2.14.4
+ */
+std::string parse_yaml(const std::string& name, const std::string& text,
+                       ryml::Tree& tree) {
+    static std::once_flag once;
+    std::call_once(once, [] {
+        ryml::Callbacks cb = ryml::get_callbacks();
+        cb.m_error = throw_yaml_error;
+        ryml::set_callbacks(cb);
+    });
+    std::string err;
+    try {
+        tree = ryml::parse_in_arena(ryml::to_csubstr(name), ryml::to_csubstr(text));
+    } catch (const std::exception& e) {
+        err = name + ": invalid YAML: " + e.what();
+    }
+    return err;
+}
 
 /**
  * @brief Convert ryml csubstr to std::string.

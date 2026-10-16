@@ -13,6 +13,10 @@
 #include <nlohmann/json.hpp>
 
 #include <array>
+#include <vector>
+#include <sstream>
+#include <unistd.h>
+#include <sys/wait.h>
 #include <cstdio>
 #include <string>
 
@@ -23,44 +27,118 @@ namespace entropic {
 // ── shell helper ────────────────────────────────────────────────
 
 /**
- * @brief Run a git command in a given directory via popen.
+ * @brief Start `git -C <repo_dir> <args...>` with stdout+stderr on a pipe.
+ * @param repo_dir Repository root.
+ * @param args Arguments after "-C repo_dir", one element each.
+ * @param[out] read_fd Read end of the child's output pipe (-1 on failure).
+ * @return Child pid, or -1 when the pipe or fork failed.
+ * @utility
+ * @version 2.14.4
+ */
+static pid_t spawn_git(const std::string& repo_dir,
+                       const std::vector<std::string>& args, int& read_fd) {
+    std::vector<std::string> owned = {"git", "-C", repo_dir};
+    owned.insert(owned.end(), args.begin(), args.end());
+    std::vector<char*> argv;
+    for (auto& a : owned) { argv.push_back(a.data()); }
+    argv.push_back(nullptr);
+    int fds[2] = {-1, -1};
+    const pid_t pid = (::pipe(fds) == 0) ? ::fork() : -1;
+    if (pid == 0) {
+        ::dup2(fds[1], STDOUT_FILENO);
+        ::dup2(fds[1], STDERR_FILENO);
+        ::close(fds[0]);
+        ::close(fds[1]);
+        ::execvp("git", argv.data());
+        ::_exit(127);
+    }
+    if (fds[1] >= 0) { ::close(fds[1]); }
+    read_fd = fds[0];
+    return pid;
+}
+
+/**
+ * @brief Read a pipe to EOF and close it.
+ * @param fd Read end (-1 = nothing to read).
+ * @return Everything read.
+ * @utility
+ * @version 2.14.4
+ */
+static std::string drain_and_close(int fd) {
+    std::string output;
+    std::array<char, 4096> buf{};
+    for (ssize_t n; fd >= 0 && (n = ::read(fd, buf.data(), buf.size())) > 0;) {
+        output.append(buf.data(), static_cast<size_t>(n));
+    }
+    if (fd >= 0) { ::close(fd); }
+    return output;
+}
+
+/**
+ * @brief Run `git -C <repo_dir> <args...>` with NO shell (gh#211, v2.14.4).
  *
- * The shared execution path behind all eight git tools: every one is
- * `git -C <repo root> ...`, so no tool can operate outside the repo the
- * server was pointed at, and none carries its own command gating —
- * operator approval is the gate.
+ * The shared execution path behind all eight git tools. Every argument is
+ * one argv element handed to execvp: nothing is parsed by a shell, so a
+ * value carrying `;`, `$(...)`, quotes or spaces is passed to git exactly
+ * as given. Until v2.14.4 this built a command line for popen(), unquoted,
+ * and a model-supplied file name, ref or commit message — or a repository
+ * path with a `;` in it — ran arbitrary commands as the user. Callers put
+ * `--` before path arguments and refuse ref values that start with `-`, so
+ * a value cannot become an option either.
  *
  * @param repo_dir Repository root directory.
- * @param git_args Arguments appended after "git -C repo_dir".
- * @return The combined stdout+stderr text paired with the process exit
- *         code; ("Failed to open git process", -1) when the pipe could
- *         not be opened.
+ * @param args Arguments after "git -C repo_dir", one element each.
+ * @return Combined stdout+stderr and the exit code; (message, -1) when git
+ *         could not be started.
  * @req REQ-MCP-023
- * @version 2.0.0
+ * @version 2.14.4
  */
 static std::pair<std::string, int> run_git(
     const std::string& repo_dir,
-    const std::string& git_args) {
+    const std::vector<std::string>& args) {
+    int fd = -1;
+    const pid_t pid = spawn_git(repo_dir, args, fd);
+    const std::string output = drain_and_close(fd);
+    int status = 0;
+    const bool reaped = pid > 0 && ::waitpid(pid, &status, 0) == pid;
+    const int exit_code = (reaped && WIFEXITED(status)) ? WEXITSTATUS(status) : -1;
+    logger->info("Git: {} arg(s) [{}] exit={}, {} chars", args.size(),
+                 args.empty() ? std::string{} : args.front(), exit_code,
+                 output.size());
+    return reaped ? std::make_pair(output, exit_code)
+                  : std::make_pair(std::string("Failed to open git process"), -1);
+}
 
-    std::string full_cmd =
-        "git -C " + repo_dir + " " + git_args + " 2>&1";
+/**
+ * @brief Split a space-separated `files` argument into argv elements.
+ *
+ * The schemas say space-separated; this honours that without a shell.
+ *
+ * @param s Raw value.
+ * @return One element per whitespace-separated token.
+ * @utility
+ * @version 2.14.4
+ */
+static std::vector<std::string> split_files(const std::string& s) {
+    std::vector<std::string> out;
+    std::istringstream in(s);
+    for (std::string tok; in >> tok;) { out.push_back(tok); }
+    return out;
+}
 
-    FILE* pipe = popen(full_cmd.c_str(), "r");  // NOLINT
-    if (pipe == nullptr) {
-        return {"Failed to open git process", -1};
-    }
-
-    std::string output;
-    std::array<char, 4096> buf{};
-    while (fgets(buf.data(), buf.size(), pipe) != nullptr) {
-        output += buf.data();
-    }
-
-    int status = pclose(pipe);  // NOLINT
-    int exit_code = WEXITSTATUS(status);
-    logger->info("Git: '{}' exit={}, {} chars",
-                 git_args, exit_code, output.size());
-    return {output, exit_code};
+/**
+ * @brief The declared refusal for a ref value that would read as an option.
+ * @param what Argument name.
+ * @param value The value.
+ * @return `{"error":"invalid_args",...}` ServerResponse.
+ * @utility
+ * @version 2.14.4
+ */
+static ServerResponse option_refusal(const std::string& what,
+                                     const std::string& value) {
+    logger->warn("[git] refused {}='{}': starts with '-'", what, value);
+    return {tool_error_json("invalid_args", what + " must not start with '-' (got '"
+                                + value + "')"), {}};
 }
 
 /**
@@ -124,12 +202,12 @@ public:
      * @param args_json Unused.
      * @return ServerResponse with status output.
      * @dg_internal
-     * @version 1.8.5
+     * @version 2.14.4
      */
     ServerResponse execute(const std::string& args_json) override {
         (void)args_json;
         auto [out, rc] = run_git(
-            server_.repo_dir().string(), "status --short");
+            server_.repo_dir().string(), {"status", "--short"});
         logger->info("[git.status] exit={}", rc);
         return make_git_response(out, rc);
     }
@@ -173,16 +251,17 @@ public:
      * @param args_json JSON with optional "staged" and "file".
      * @return ServerResponse with diff output.
      * @dg_internal
-     * @version 1.8.5
+     * @version 2.14.4
      */
     ServerResponse execute(const std::string& args_json) override {
         auto args = nlohmann::json::parse(args_json);
-        std::string cmd = "diff";
+        std::vector<std::string> cmd = {"diff"};
         if (args.value("staged", false)) {
-            cmd += " --staged";
+            cmd.push_back("--staged");
         }
         if (args.contains("file")) {
-            cmd += " " + args["file"].get<std::string>();
+            cmd.push_back("--");  // gh#211: a pathspec, never an option
+            cmd.push_back(args["file"].get<std::string>());
         }
         auto [out, rc] = run_git(server_.repo_dir().string(), cmd);
         logger->info("[git.diff] exit={}", rc);
@@ -228,14 +307,14 @@ public:
      * @param args_json JSON with optional "count" and "oneline".
      * @return ServerResponse with log output.
      * @dg_internal
-     * @version 1.8.5
+     * @version 2.14.4
      */
     ServerResponse execute(const std::string& args_json) override {
         auto args = nlohmann::json::parse(args_json);
         int count = args.value("count", 10);
-        std::string cmd = "log -" + std::to_string(count);
+        std::vector<std::string> cmd = {"log", "-" + std::to_string(count)};
         if (args.value("oneline", false)) {
-            cmd += " --oneline";
+            cmd.push_back("--oneline");
         }
         auto [out, rc] = run_git(server_.repo_dir().string(), cmd);
         logger->info("[git.log] exit={}", rc);
@@ -270,14 +349,14 @@ public:
      * @param args_json JSON with "message" and optional "add_all".
      * @return ServerResponse with commit output.
      * @dg_internal
-     * @version 1.8.5
+     * @version 2.14.4
      */
     ServerResponse execute(const std::string& args_json) override {
         auto args = nlohmann::json::parse(args_json);
         auto repo = server_.repo_dir().string();
 
         if (args.value("add_all", false)) {
-            auto [out, rc] = run_git(repo, "add -A");
+            auto [out, rc] = run_git(repo, {"add", "-A"});
             if (rc != 0) {
                 logger->error("[git.commit] add -A failed: {}", out);
                 return make_git_response(out, rc);
@@ -285,8 +364,9 @@ public:
         }
 
         std::string msg = args.at("message").get<std::string>();
-        std::string cmd = "commit -m \"" + msg + "\"";
-        auto [out, rc] = run_git(repo, cmd);
+        // gh#211: the message is ONE argv element — quotes, $() and
+        // backticks in it are just text.
+        auto [out, rc] = run_git(repo, {"commit", "-m", msg});
         logger->info("[git.commit] exit={}", rc);
         return make_git_response(out, rc);
     }
@@ -319,14 +399,19 @@ public:
      * @param args_json JSON with optional "create" branch name.
      * @return ServerResponse with branch output.
      * @dg_internal
-     * @version 1.8.5
+     * @version 2.14.4
      */
     ServerResponse execute(const std::string& args_json) override {
         auto args = nlohmann::json::parse(args_json);
-        std::string cmd = "branch -a";
-        if (args.contains("create")) {
-            cmd = "checkout -b "
-                + args["create"].get<std::string>();
+        // v2.14.4: `name`, as branch.json has always declared — the code read
+        // `create`, so a model following the schema could never create one.
+        std::vector<std::string> cmd = {"branch", "-a"};
+        if (args.contains("name")) {
+            const auto name = args["name"].get<std::string>();
+            if (!name.empty() && name.front() == '-') {
+                return option_refusal("name", name);  // gh#211
+            }
+            cmd = {"checkout", "-b", name};
         }
         auto [out, rc] = run_git(server_.repo_dir().string(), cmd);
         logger->info("[git.branch] exit={}", rc);
@@ -361,13 +446,15 @@ public:
      * @param args_json JSON with "target".
      * @return ServerResponse with checkout output.
      * @dg_internal
-     * @version 1.8.5
+     * @version 2.14.4
      */
     ServerResponse execute(const std::string& args_json) override {
         auto args = nlohmann::json::parse(args_json);
         std::string target = args.at("target").get<std::string>();
-        std::string cmd = "checkout " + target;
-        auto [out, rc] = run_git(server_.repo_dir().string(), cmd);
+        if (!target.empty() && target.front() == '-') {
+            return option_refusal("target", target);  // gh#211
+        }
+        auto [out, rc] = run_git(server_.repo_dir().string(), {"checkout", target});
         logger->info("[git.checkout] target='{}' exit={}", target, rc);
         return make_git_response(out, rc);
     }
@@ -400,12 +487,13 @@ public:
      * @param args_json JSON with "files" (space-separated string).
      * @return ServerResponse with add output.
      * @dg_internal
-     * @version 1.8.5
+     * @version 2.14.4
      */
     ServerResponse execute(const std::string& args_json) override {
         auto args = nlohmann::json::parse(args_json);
         std::string files = args.at("files").get<std::string>();
-        std::string cmd = "add " + files;
+        std::vector<std::string> cmd = {"add", "--"};  // gh#211: paths only
+        for (auto& f : split_files(files)) { cmd.push_back(std::move(f)); }
         auto [out, rc] = run_git(server_.repo_dir().string(), cmd);
         logger->info("[git.add] files='{}' exit={}", files, rc);
         return make_git_response(out, rc);
@@ -439,13 +527,15 @@ public:
      * @param args_json JSON with optional "files".
      * @return ServerResponse with reset output.
      * @dg_internal
-     * @version 1.8.5
+     * @version 2.14.4
      */
     ServerResponse execute(const std::string& args_json) override {
         auto args = nlohmann::json::parse(args_json);
-        std::string cmd = "reset HEAD";
+        std::vector<std::string> cmd = {"reset", "HEAD", "--"};  // gh#211
         if (args.contains("files")) {
-            cmd += " " + args["files"].get<std::string>();
+            for (auto& f : split_files(args["files"].get<std::string>())) {
+                cmd.push_back(std::move(f));
+            }
         }
         auto [out, rc] = run_git(server_.repo_dir().string(), cmd);
         logger->info("[git.reset] exit={}", rc);

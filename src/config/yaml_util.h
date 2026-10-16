@@ -14,6 +14,7 @@
 
 #pragma once
 
+#include <entropic/entropic_export.h>
 #include <ryml.hpp>
 #include <c4/std/string.hpp>
 #include <filesystem>
@@ -179,6 +180,24 @@ bool extract_string_list_map(
  * @version 1.8.1
  */
 std::filesystem::path expand_home(const std::filesystem::path& p);
+
+/**
+ * @brief Parse YAML text into `tree`, returning an error instead of aborting.
+ *
+ * gh#211 (v2.14.4): every parse in the engine used ryml's default error
+ * handler, which aborts the process — one typo in a config file or an
+ * identity's frontmatter took the host down. This installs (once, process-
+ * wide) an error callback that throws, and converts the throw to a message.
+ *
+ * @param name Source name for messages (file path, "<json>").
+ * @param text YAML text.
+ * @param[out] tree Parsed tree (meaningful only on success).
+ * @return "" on success, else "<name>: invalid YAML: <reason>".
+ * @utility
+ * @version 2.14.4
+ */
+ENTROPIC_EXPORT std::string parse_yaml(const std::string& name,
+                                       const std::string& text, ryml::Tree& tree);
 
 /**
  * @brief Convert ryml csubstr to std::string.

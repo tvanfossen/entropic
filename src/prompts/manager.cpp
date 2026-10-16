@@ -52,7 +52,7 @@ static std::string trim(const std::string& s)
  * @param[out] tree Output ryml tree of frontmatter.
  * @param[out] body Output markdown body after frontmatter.
  * @return Empty string on success, error on failure.
- * @version 1.8.2
+ * @version 2.14.4
  * @dg_internal
  */
 static std::string parse_frontmatter(
@@ -75,11 +75,9 @@ static std::string parse_frontmatter(
     std::string yaml_block = content.substr(3, second_delim - 3);
     body = trim(content.substr(second_delim + 3));
 
-    tree = ryml::parse_in_arena(
-        ryml::to_csubstr(path.string()),
-        ryml::to_csubstr(yaml_block));
-
-    return "";
+    // gh#211 (v2.14.4): malformed frontmatter is a returned error — it used
+    // to abort the process inside ryml.
+    return entropic::config::parse_yaml(path.string(), yaml_block, tree);
 }
 
 /**
@@ -668,12 +666,58 @@ static std::string check_app_context_source(
 }
 
 /**
+ * @brief Why a tier's identity cannot be loaded, or "" (gh#211, v2.14.4).
+ *
+ * Resolved exactly as the facade resolves it (an explicit `identity:` path,
+ * else the bundled `identity_<tier>.md`). A tier's `allowed_tools` lives in
+ * that file, and an identity skipped for being missing or unparseable left
+ * the tier with no allowlist — which dispatch reads as unrestricted. An
+ * explicitly named identity must exist and parse; a bundled one, when
+ * present, must parse. (No bundled file is fine: that tier has no identity.)
+ *
+ * @param config Parsed engine config.
+ * @param data_dir Bundled data directory.
+ * @return Empty string when every tier's identity loads, else the reason.
+ * @dg_internal
+ * @version 2.14.4
+ */
+static std::string check_identity_sources(
+    const entropic::ParsedConfig& config,
+    const std::filesystem::path& data_dir)
+{
+    std::string err;
+    for (const auto& [name, tier] : config.models.tiers) {
+        if (!err.empty() || tier.identity_disabled) { continue; }
+        const bool named = tier.identity.has_value();
+        const auto path = named ? tier.identity.value()
+            : data_dir / "prompts" / ("identity_" + name + ".md");
+        ParsedIdentity id;
+        if (!std::filesystem::exists(path)) {
+            err = named ? "tier '" + name + "': identity " + path.string()
+                          + " does not exist" : std::string{};
+        } else if (auto why = load_identity(path, id); !why.empty()) {
+            err = "tier '" + name + "': identity " + path.string()
+                + " failed to load (" + why + ") — refusing to run the tier "
+                  "without the allowed_tools it declares";
+        }
+    }
+    return err;
+}
+
+/**
  * @brief Check every configured prompt source can be loaded.
+ *
+ * gh#156: a consumer who names a path wanted that document. Silently
+ * running with a smaller system prompt is not acceptable, so an
+ * unreadable / unparseable constitution or app_context path is a config
+ * error. v2.14.4 (gh#211): so is a tier identity that is named but missing,
+ * or present but unparseable — its loss also dropped the tier's allowlist.
+ *
  * @param config Parsed engine config.
  * @param data_dir Bundled data directory.
  * @return Empty string on success, an actionable message otherwise.
  * @req REQ-TYPE-005
- * @version 2.13.0
+ * @version 2.14.4
  */
 std::string validate_configured_prompts(
     const entropic::ParsedConfig& config,
@@ -682,6 +726,9 @@ std::string validate_configured_prompts(
     std::string err = check_constitution_source(config, data_dir);
     if (err.empty()) {
         err = check_app_context_source(config, data_dir);
+    }
+    if (err.empty()) {
+        err = check_identity_sources(config, data_dir);
     }
     return err;
 }

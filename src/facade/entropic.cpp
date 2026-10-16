@@ -316,52 +316,51 @@ entropic_error_t entropic_create(entropic_handle_t* handle) {
 // ── Tool prompt injection (v2.0.4) ─────────────────────────
 
 /**
- * @brief Resolve allowed_tools list for a tier.
+ * @brief Resolve the allowed_tools list for a tier.
  *
- * Checks identity config first, then model config fallback.
- * Empty result means all tools are allowed (no filter).
+ * gh#211 (v2.14.4): tri-state. nullopt = the tier declares no allowlist
+ * (unrestricted); an EMPTY list = it declared `allowed_tools: []`, which
+ * means no tools. The two were collapsed into one empty vector, so the
+ * bundled compactor, scribe and benchmark_judge were offered every tool.
  *
  * @param h Engine handle.
  * @param tier Tier name.
- * @return Allowed tool names (empty = all allowed).
+ * @return The declared list, or nullopt when none is declared.
  * @utility
- * @version 2.0.4
+ * @version 2.14.4
  */
-static std::vector<std::string> resolve_allowed_tools(
+static std::optional<std::vector<std::string>> resolve_allowed_tools(
     entropic_engine* h, const std::string& tier) {
-    // Primary: cached from identity frontmatter (v2.0.4)
+    std::optional<std::vector<std::string>> out;
     auto cached = h->tier_allowed_tools.find(tier);
     if (cached != h->tier_allowed_tools.end()) {
-        return cached->second;
-    }
-    // Fallback: dynamic identity or model config
-    if (h->identity_manager) {
+        out = cached->second;  // primary: identity frontmatter (v2.0.4)
+    } else if (h->identity_manager) {
+        // Fallback: a dynamic identity's list (empty there = not declared).
         auto* cfg = h->identity_manager->get(tier);
-        if (cfg && !cfg->allowed_tools.empty()) {
-            return cfg->allowed_tools;
-        }
+        if (cfg && !cfg->allowed_tools.empty()) { out = cfg->allowed_tools; }
     }
-    return {};
+    return out;
 }
 
 /**
- * @brief Filter tool definitions by allowed list.
- *
+ * @brief Filter tool definitions by a tier's allowlist.
  * @param all_tools Parsed JSON array of all tool definitions.
- * @param allowed Allowed tool names (empty = no filter).
+ * @param allowed Declared allowlist; nullopt = no filter (gh#211: an
+ *        empty list now filters out everything, as declared).
  * @return JSON strings of matching tools.
  * @utility
- * @version 2.0.4
+ * @version 2.14.4
  */
 static std::vector<std::string> filter_tools(
     const nlohmann::json& all_tools,
-    const std::vector<std::string>& allowed) {
+    const std::optional<std::vector<std::string>>& allowed) {
     std::vector<std::string> result;
     for (const auto& tool : all_tools) {
         std::string name = tool.value("name", "");
-        bool pass = allowed.empty()
-            || std::find(allowed.begin(), allowed.end(), name)
-               != allowed.end();
+        bool pass = !allowed.has_value()
+            || std::find(allowed->begin(), allowed->end(), name)
+               != allowed->end();
         if (pass) { result.push_back(tool.dump()); }
     }
     return result;
@@ -400,7 +399,7 @@ static std::string tool_defs_array(
  * @param user_data Engine handle.
  * @return 0 on success, non-zero if no tools available.
  * @callback
- * @version 2.13.0
+ * @version 2.14.4
  */
 static int facade_get_tool_prompt(const char* tier, char** result,
                                   void* user_data) {
@@ -562,7 +561,7 @@ static void rewire_observers(entropic_handle_t h) {
  * @param data_dir Resolved data directory for identity files.
  * @param shared_prefix Prefix assembled from constitution + app context.
  * @utility
- * @version 2.9.20
+ * @version 2.14.4
  */
 static void populate_tier_info(entropic_handle_t h,
                                const std::filesystem::path& data_dir,
@@ -584,7 +583,8 @@ static void populate_tier_info(entropic_handle_t h,
             parsed.frontmatter.max_tool_calls_per_turn;
         info.max_consecutive_empty_turns_override =
             parsed.frontmatter.max_consecutive_empty_turns;
-        info.allowed_tools = resolve_allowed_tools(h, name);  // gh#121
+        info.allowed_tools = resolve_allowed_tools(h, name)  // gh#121
+            .value_or(std::vector<std::string>{});
         h->engine->set_tier_info(name, info);
     }
 }

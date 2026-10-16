@@ -90,7 +90,7 @@ static std::string parse_bundled_entry(ryml::ConstNodeRef child,
  * @param path Path to bundled_models.yaml.
  * @return Empty string on success, error message on failure.
  * @req REQ-CFG-003
- * @version 2.3.7
+ * @version 2.14.4
  */
 std::string BundledModels::load(const std::filesystem::path& path)
 {
@@ -99,15 +99,15 @@ std::string BundledModels::load(const std::filesystem::path& path)
         return "cannot read " + path.string();
     }
 
-    ryml::Tree tree = ryml::parse_in_arena(
-        ryml::to_csubstr(path.string()),
-        ryml::to_csubstr(content));
-    ryml::ConstNodeRef root = tree.rootref();
-    if (!root.is_map()) {
-        return "bundled_models.yaml root is not a mapping";
+    ryml::Tree tree;
+    std::string err = parse_yaml(path.string(), content, tree);  // gh#211
+    ryml::ConstNodeRef root;
+    if (err.empty()) { root = tree.rootref(); }
+    if (err.empty() && !root.is_map()) {
+        err = "bundled_models.yaml root is not a mapping";
     }
+    if (!err.empty()) { return err; }
 
-    std::string err;
     for (auto child : root) {
         BundledModelEntry entry;
         err = parse_bundled_entry(child, entry);

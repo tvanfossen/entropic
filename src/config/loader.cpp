@@ -484,23 +484,26 @@ static std::string parse_outside_root_access(
 }
 
 /**
- * @brief Parse one outside-root path list (`outside_root_allow`/`_deny`).
+ * @brief Parse a list of ABSOLUTE paths (outside-root lists, workspace_roots).
  *
  * Entries are `~`-expanded like every other config path, and must then be
- * ABSOLUTE: a relative entry has no defensible anchor (the process cwd?
- * the root it is supposed to lie outside of?), so it is refused rather
- * than guessed. A present key replaces the list, like every other list
- * key, so a project layer can narrow what the global layer granted.
+ * absolute: a relative entry has no defensible anchor, so it is refused
+ * rather than guessed. A present key replaces the list, like every other
+ * list key, so a project layer can narrow what the global layer granted.
+ * v2.14.4: shared by `mcp.workspace_roots` (gh#211), hence the section
+ * name in the error.
  *
- * @param node YAML node for the "filesystem" section.
+ * @param node YAML node holding the key.
+ * @param section Dotted section name, for the error ("mcp.filesystem").
  * @param key List key.
  * @param[out] out Output list; untouched when the key is absent.
  * @return Empty string on success, error message naming the bad entry.
  * @req REQ-MCP-021
- * @version 2.13.0
+ * @version 2.14.4
  */
-static std::string parse_outside_root_list(
+static std::string parse_absolute_path_list(
     ryml::ConstNodeRef node,
+    const std::string& section,
     c4::csubstr key,
     std::vector<std::filesystem::path>& out)
 {
@@ -511,7 +514,7 @@ static std::string parse_outside_root_list(
     for (const auto& entry : raw) {
         auto p = expand_home(std::filesystem::path(entry));
         if (!p.is_absolute() && err.empty()) {
-            err = "mcp.filesystem." + to_string(key) + ": entry '" + entry
+            err = section + "." + to_string(key) + ": entry '" + entry
                 + "' is not an absolute path";
         }
         paths.push_back(std::move(p));
@@ -528,7 +531,7 @@ static std::string parse_outside_root_list(
  *         the outside-root keys can now fail, and a bad value there must
  *         reach the operator rather than fall back.
  * @dg_internal
- * @version 2.13.0 [reviewed]
+ * @version 2.14.4
  */
 static std::string parse_filesystem_config(
     ryml::ConstNodeRef node,
@@ -547,11 +550,11 @@ static std::string parse_filesystem_config(
 
     auto err = parse_outside_root_access(node, config);
     if (err.empty()) {
-        err = parse_outside_root_list(node, "outside_root_allow",
+        err = parse_absolute_path_list(node, "mcp.filesystem", "outside_root_allow",
                                       config.outside_root_allow);
     }
     if (err.empty()) {
-        err = parse_outside_root_list(node, "outside_root_deny",
+        err = parse_absolute_path_list(node, "mcp.filesystem", "outside_root_deny",
                                       config.outside_root_deny);
     }
     return err;
@@ -786,7 +789,7 @@ static std::string parse_mcp_sections(
  *         propagates the filesystem section's error, which used to be
  *         dropped here, and the bash section's.
  * @dg_internal
- * @version 2.14.0
+ * @version 2.14.4
  */
 static std::string parse_mcp_config(
     ryml::ConstNodeRef node,
@@ -811,7 +814,12 @@ static std::string parse_mcp_config(
         }
     }
     auto err = parse_mcp_sections(node, config);
-    return err.empty() ? validate_server_timeout(config) : err;
+    if (err.empty()) { err = validate_server_timeout(config); }
+    if (err.empty()) {  // gh#211 (v2.14.4)
+        err = parse_absolute_path_list(node, "mcp", "workspace_roots",
+                                       config.workspace_roots);
+    }
+    return err;
 }
 
 /**
@@ -1133,7 +1141,7 @@ static std::string parse_top_sections(
  * @req REQ-CFG-001
  * @req REQ-CFG-006
  * @req REQ-TYPE-005
- * @version 2.3.7
+ * @version 2.14.4
  */
 std::string parse_config_file(
     const std::filesystem::path& path,
@@ -1145,15 +1153,12 @@ std::string parse_config_file(
         return "cannot read config file: " + path.string();
     }
 
-    ryml::Tree tree = ryml::parse_in_arena(
-        ryml::to_csubstr(path.string()),
-        ryml::to_csubstr(content));
-    ryml::ConstNodeRef root = tree.rootref();
-    if (!root.is_map()) {
-        return "config file root is not a YAML mapping: " + path.string();
+    ryml::Tree tree;
+    auto err = parse_yaml(path.string(), content, tree);  // gh#211
+    if (err.empty() && !tree.rootref().is_map()) {
+        err = "config file root is not a YAML mapping: " + path.string();
     }
-
-    return parse_top_sections(root, registry, config);
+    return err.empty() ? parse_top_sections(tree.rootref(), registry, config) : err;
 }
 
 /**
@@ -1390,15 +1395,14 @@ static std::filesystem::path resolve_consumer_defaults(
  * @param key Key to look for.
  * @return true if the file parses and has the key at root level.
  * @req REQ-CFG-002
- * @version 2.0.6
+ * @version 2.14.4
  */
 static bool yaml_has_key(const std::filesystem::path& path,
                          const char* key) {
     auto content = read_file(path);
     if (content.empty()) { return false; }
-    auto tree = ryml::parse_in_arena(
-        ryml::to_csubstr(path.string()),
-        ryml::to_csubstr(content));
+    ryml::Tree tree;
+    if (!parse_yaml(path.string(), content, tree).empty()) { return false; }  // gh#211
     auto root = tree.rootref();
     return root.is_map() && root.has_child(ryml::to_csubstr(key));
 }
@@ -1576,7 +1580,7 @@ std::string load_layered(
  * @return Empty string on success, error message on failure.
  * @req REQ-CFG-001
  * @req REQ-CFG-006
- * @version 2.13.0
+ * @version 2.14.4
  */
 static std::string parse_config_string(
     const std::string& content,
@@ -1587,13 +1591,13 @@ static std::string parse_config_string(
         return "config string is empty";
     }
 
-    ryml::Tree tree = ryml::parse_in_arena(
-        ryml::to_csubstr("<json>"),
-        ryml::to_csubstr(content));
-    auto root = tree.rootref();
-    if (!root.is_map()) {
-        return "config string root is not a mapping";
+    ryml::Tree tree;
+    auto perr = parse_yaml("<config string>", content, tree);  // gh#211
+    if (perr.empty() && !tree.rootref().is_map()) {
+        perr = "config string root is not a mapping";
     }
+    if (!perr.empty()) { return perr; }
+    auto root = tree.rootref();
 
     std::string err;
     if (root.has_child("models")) {
@@ -1616,7 +1620,7 @@ static std::string parse_config_string(
  * @return Empty string on success, error message on failure.
  * @req REQ-CFG-001
  * @req REQ-CFG-006
- * @version 2.0.0
+ * @version 2.14.4
  */
 std::string load_config_from_string(
     const std::string& content,

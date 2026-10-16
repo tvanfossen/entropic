@@ -1000,6 +1000,17 @@ struct MCPConfig {
     /// @version 2.14.1
     std::unordered_map<std::string, ExternalServerEntry> external_servers;
 
+    /// @brief Directories a workspace root may lie inside (gh#211, v2.14.4).
+    ///
+    /// A workspace root is a tool root — the filesystem tools are confined to
+    /// it and declared servers launch in it — and a bridge client names it by
+    /// absolute path. Empty (the default) = unrestricted, the pre-2.14.4
+    /// behaviour. When set, a root must resolve (symlinks followed, `..`
+    /// collapsed) inside one entry, or workspace creation is refused. Entries
+    /// must be absolute.
+    /// @version 2.14.4
+    std::vector<std::filesystem::path> workspace_roots;
+
     /* ── v2.14.0: .mcp.json discovery, Claude-Code style ─── */
     /// @brief `.mcp.json` servers pre-approved by name (gh#199).
     ///

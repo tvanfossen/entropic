@@ -409,19 +409,49 @@ static std::unique_ptr<EntropicWorkspace> build_workspace(
 }
 
 /**
+ * @brief Why `root` may not be a workspace under `mcp.workspace_roots`.
+ *
+ * gh#211 (v2.14.4): compared on CANONICAL paths, so neither a symlink that
+ * leads out of an allowed root nor a `..` that climbs out passes.
+ *
+ * @param roots Allowed roots (empty = unrestricted).
+ * @param root Candidate workspace root.
+ * @return "" when allowed, else the reason.
+ * @utility
+ * @version 2.14.4
+ */
+static std::string workspace_root_refusal(
+    const std::vector<std::filesystem::path>& roots,
+    const std::filesystem::path& root) {
+    namespace fs = std::filesystem;
+    std::error_code ec;
+    const auto canon = fs::weakly_canonical(root, ec);
+    bool inside = roots.empty();
+    for (const auto& r : roots) {
+        const auto base = fs::weakly_canonical(r, ec);
+        const auto rel = canon.lexically_relative(base);
+        inside = inside || (!rel.empty() && *rel.begin() != "..");
+    }
+    return inside ? std::string{}
+        : "workspace dir " + canon.string()
+          + " is outside every mcp.workspace_roots entry";
+}
+
+/**
  * @brief Validate workspace-create arguments and resolve the root.
  *
- * Extracted to keep `entropic_workspace_create` inside the knots returns
- * gate; sets `handle->last_error` with the specific reason.
+ * Extracted to keep entropic_workspace_create inside the knots returns
+ * gate; sets handle->last_error with the specific reason. v2.14.4
+ * (gh#211): the root must also lie inside `mcp.workspace_roots` when set.
  *
  * @param handle Engine handle.
  * @param name Requested workspace name.
  * @param dir Requested root directory.
- * @param[out] root Absolute, validated root on success.
+ * @param root Absolute, validated root on success.
  * @return ENTROPIC_OK, or ENTROPIC_ERROR_INVALID_ARGUMENT with a reason.
  * @utility
  * @req REQ-MCP-027
- * @version 2.13.0
+ * @version 2.14.4
  */
 static entropic_error_t validate_workspace_args(
     entropic_handle_t handle, const char* name, const char* dir,
@@ -436,12 +466,16 @@ static entropic_error_t validate_workspace_args(
     if (ec || !std::filesystem::is_directory(root, ec)) {
         err = std::string("workspace dir is not a directory: ") + dir;
     } else {
+        err = workspace_root_refusal(handle->config.mcp.workspace_roots, root);
+    }
+    if (err.empty()) {
         std::lock_guard<std::mutex> guard(handle->workspace_mutex);
         if (handle->workspaces.count(name) > 0) {
             err = std::string("workspace already exists: ") + name;
         }
     }
     if (!err.empty()) {
+        logger->warn("workspace '{}' refused: {}", name, err);
         handle->last_error = err;
         return ENTROPIC_ERROR_INVALID_ARGUMENT;
     }

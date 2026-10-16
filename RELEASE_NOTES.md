@@ -2,6 +2,41 @@ _Last 10 releases. Older history: [OLD_NOTES.md](OLD_NOTES.md). Kept short
 because `gh release create --notes-file` hits GitHub's 125,000-char release
 body limit once this file accumulates full project history — see v2.9.3._
 
+# entropic v2.14.4
+
+Security patch — **reported privately by a consumer's audit (gh#211).**
+
+## Read this first
+
+- **The git MCP server could run arbitrary shell commands** (it is enabled by
+  default). Tool arguments — `diff` file, `checkout` target, `add`/`reset`
+  files, `branch` name, `commit` message — and the repository path were
+  spliced into a shell command line. git now runs from an argument vector with
+  no shell; paths follow `--`; a ref starting with `-` is refused with
+  `invalid_args`. Upgrade if your models can reach git tools.
+- **`allowed_tools: []` now means no tools.** It meant "unrestricted" at both
+  the tool menu and dispatch — including the bundled `compactor`, `scribe` and
+  `benchmark_judge` tiers. Only an identity with no `allowed_tools` key is
+  unrestricted.
+- **A named identity that is missing or fails to parse fails configure**
+  (`ENTROPIC_ERROR_INVALID_CONFIG`). It used to be skipped silently, leaving the
+  tier with every tool.
+- **Malformed YAML is an error, not a crash.** A config file, bundled model
+  list or identity frontmatter that does not parse used to abort the process.
+- **`git.branch` reads `name`**, as its schema always declared (it read
+  `create`, so a schema-following model could not create a branch).
+
+## New features
+
+- `mcp.workspace_roots`: when set, a workspace root (including one a bridge
+  client names by path) must resolve inside one listed directory.
+
+## Distribution
+
+- CPU tarball: `entropic-2.14.4-linux-x86_64-cpu.tar.gz` (sha256 in companion file)
+- CUDA tarball: `entropic-2.14.4-linux-x86_64-cuda.tar.gz` (sha256 in companion file)
+- Python wrapper: `pip install entropic-engine==2.14.4` then `entropic install-engine`
+
 # entropic v2.14.3
 
 Patch release — **an MCP client can give the GPU back.**

@@ -71,6 +71,7 @@ static const char* const s_error_names[] = {
     "ENTROPIC_ERROR_TIER_MODEL_TOO_LARGE",          // 53 (v2.2.4, gh#57)
     "ENTROPIC_ERROR_SPECULATIVE_INCOMPATIBLE_CONFIG", // 54 (v2.9.1, gh#108)
     "ENTROPIC_ERROR_MLOCK_LIMIT_EXCEEDED",            // 55 (v2.13.0, gh#148)
+    "ENTROPIC_ERROR_TURN_FAILED",                     // 56 (v2.14.5, gh#209/gh#212)
 };
 
 static constexpr int s_error_count =

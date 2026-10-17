@@ -2,6 +2,43 @@ _Last 10 releases. Older history: [OLD_NOTES.md](OLD_NOTES.md). Kept short
 because `gh release create --notes-file` hits GitHub's 125,000-char release
 body limit once this file accumulates full project history — see v2.9.3._
 
+# entropic v2.14.5
+
+A failed turn is reported as a failure (gh#209, gh#212).
+
+## Read this first
+
+- **New return code `ENTROPIC_ERROR_TURN_FAILED` (56, appended).** When the
+  engine fails a turn (explicit-completion retries exhausted, or the prompt
+  does not fit the tier), every run entry point that drives the agent loop
+  (all but `entropic_run_batch`) now returns it instead of
+  `ENTROPIC_OK`. `entropic_last_error()` gives the reason and, when the turn
+  wrote something before failing, that text marked as unconfirmed. Callers
+  that treat any non-OK code as "no result" will now see these turns as
+  errors; that is intended.
+- **A failed turn is removed from the session.** Its prompt, the engine's
+  nudges, the model's replies and its tool results are rolled back, so the
+  next turn starts from the history before it. Ask again to retry.
+- **Bridge `ask`:** a failed turn is `isError: true` with
+  `error: turn failed — <reason>`. Other ask errors are now `isError: true`
+  too.
+
+## Engine bug fixes
+
+- gh#209: a turn with no answer of its own returned the previous turn's
+  answer. Answer selection now stops at the turn's own prompt.
+- gh#212: a completion call the model wrote as text (`{"action":"complete"}`,
+  or just a tool name such as `entropic.inspect`) was returned as the answer,
+  and the real answer was lost. Such text is never selected.
+- The explicit-completion nudge now says the call must be an actual tool
+  call, not text or JSON in the reply.
+
+## Distribution
+
+- CPU tarball: `entropic-2.14.5-linux-x86_64-cpu.tar.gz` (sha256 in companion file)
+- CUDA tarball: `entropic-2.14.5-linux-x86_64-cuda.tar.gz` (sha256 in companion file)
+- Python wrapper: `pip install entropic-engine==2.14.5` then `entropic install-engine`
+
 # entropic v2.14.4
 
 Security patch — **reported privately by a consumer's audit (gh#211).**

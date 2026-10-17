@@ -538,20 +538,119 @@ void AgentEngine::init_session_conversation(LoopContext& ctx) {
 }
 
 /**
+ * @brief Describe a failed top-level turn for its caller (gh#209/#212).
+ *
+ * Reads the reason the loop recorded when it entered ERROR. The two reasons
+ * that end a turn in ERROR today get a sentence a caller can act on; any
+ * other is reported by name.
+ *
+ * @param ctx Finished loop context.
+ * @return "" unless the run ended in ERROR.
+ * @utility
+ * @version 2.14.5
+ */
+static std::string describe_turn_failure(const LoopContext& ctx) {
+    std::string why;
+    if (ctx.state == AgentState::ERROR) {
+        auto meta = [&ctx](const char* key) {
+            auto it = ctx.metadata.find(key);
+            return it == ctx.metadata.end() ? std::string{} : it->second;
+        };
+        const auto reason = meta("failure_reason");
+        why = (reason.empty() ? std::string("unknown") : reason)
+            + " (tier '" + meta("failure_tier") + "')";
+        if (reason == "zero_tool_calls_with_explicit_completion") {
+            why += ": the tier must end every turn with a tool call "
+                   "(explicit_completion), and it answered without one "
+                   "through every retry";
+        } else if (reason == "context_overflow") {
+            why += ": the prompt does not fit the tier's context window";
+        }
+    }
+    return why;
+}
+
+/**
  * @brief Fold a finished run's metrics into the per-tier totals.
  *
  * gh#158 (v2.13.0): both halves under `metrics_mutex_`.
+ * gh#209/#212 (v2.14.5): also records whether the turn FAILED, keyed by the
+ * run's session, for last_turn_failure().
  *
  * @param ctx Loop context (with completed metrics).
  * @dg_internal
- * @version 2.13.0
+ * @version 2.14.5
  */
 void AgentEngine::accumulate_run_metrics(LoopContext& ctx) {
+    auto failure = describe_turn_failure(ctx);
+    if (!failure.empty()) {
+        logger->error("[turn] session '{}' turn failed: {}",
+                      ctx.session_key, failure);
+    }
     {
         std::lock_guard<std::mutex> guard(metrics_mutex_);
         last_metrics_ = ctx.metrics;  // P2-15: snapshot for entropic_status
+        turn_failures_[ctx.session_key] = std::move(failure);
     }
     accumulate_per_tier(ctx);
+}
+
+/**
+ * @brief Why the active session's last turn failed — see header.
+ * @return The recorded failure, or "".
+ * @utility
+ * @version 2.14.5
+ */
+std::string AgentEngine::last_turn_failure() const {
+    const auto key = active_session_key();
+    std::lock_guard<std::mutex> guard(metrics_mutex_);
+    auto it = turn_failures_.find(key);
+    return it == turn_failures_.end() ? std::string{} : it->second;
+}
+
+/**
+ * @brief The active session's last failed turn — see header.
+ * @return Its messages, or empty.
+ * @utility
+ * @version 2.14.5
+ */
+std::vector<Message> AgentEngine::last_failed_turn() const {
+    const auto key = active_session_key();
+    std::lock_guard<std::mutex> guard(metrics_mutex_);
+    auto it = failed_turns_.find(key);
+    return it == failed_turns_.end() ? std::vector<Message>{} : it->second;
+}
+
+/**
+ * @brief Keep a finished turn, or roll a failed one back — see header.
+ * @param convo Session conversation.
+ * @param result Run's full message list.
+ * @param turn_begin Session size before the turn's user message(s).
+ * @param sent_len Session size after them.
+ * @return true when kept.
+ * @dg_internal
+ * @version 2.14.5
+ */
+bool AgentEngine::settle_turn(ConversationState& convo,
+                              const std::vector<Message>& result,
+                              size_t turn_begin, size_t sent_len) {
+    const bool failed = !last_turn_failure().empty();
+    if (failed) {
+        const size_t from = std::min(turn_begin, result.size());
+        std::vector<Message> turn(result.begin() + static_cast<long>(from),
+                                  result.end());
+        logger->warn("[turn] session '{}': failed turn rolled back — {} "
+                     "message(s) removed, session back to {}",
+                     active_session_key(), turn.size(), turn_begin);
+        convo.messages.resize(std::min(turn_begin, convo.messages.size()));
+        std::lock_guard<std::mutex> guard(metrics_mutex_);
+        failed_turns_[active_session_key()] = std::move(turn);
+    } else {
+        for (size_t i = sent_len; i < result.size(); ++i) {
+            convo.messages.push_back(result[i]);
+        }
+    }
+    return !failed;
 }
 
 /**
@@ -1058,7 +1157,7 @@ bool AgentEngine::handle_terminal_finish_reasons(
  * @param finish_reason Generation finish reason (for logging).
  * @return true if the failure was recorded and state transitioned.
  * @req REQ-LOOP-004
- * @version 2.9.20
+ * @version 2.14.5
  */
 bool AgentEngine::record_explicit_completion_failure(
     LoopContext& ctx, const std::string& finish_reason) {
@@ -1102,7 +1201,8 @@ bool AgentEngine::record_explicit_completion_failure(
     correction.content =
         "[SYSTEM] Your previous response contained no tool call. "
         "You must end every turn with exactly one tool call "
-        + tools_hint + ". Retry.";
+        + tools_hint + ". Make it an actual tool call, not as text or "
+        "JSON in your reply. Retry.";
     ctx.messages.push_back(std::move(correction));
     retries = std::to_string(n + 1);
     set_state(ctx, AgentState::EXECUTING);
@@ -3949,7 +4049,7 @@ void AgentEngine::seed_system_prompt_for_tier(const std::string& tier) {
  * @param tier_override Tier to lock the run to ("" = route).
  * @return Result messages from the final turn.
  * @dg_internal
- * @version 2.12.0
+ * @version 2.14.5
  */
 std::vector<Message> AgentEngine::run_drain_loop(
     std::string pending, const std::string& tier_override) {
@@ -3959,14 +4059,15 @@ std::vector<Message> AgentEngine::run_drain_loop(
         usr.role = "user";
         usr.content = pending;
         auto& convo = active_conversation();
+        const size_t turn_begin = convo.messages.size();
         convo.messages.push_back(std::move(usr));
 
         size_t sent_len = convo.messages.size();
         // copy — run() may mutate
         result = run(convo.messages, tier_override);
-        for (size_t i = sent_len; i < result.size(); ++i) {
-            convo.messages.push_back(result[i]);
-        }
+        // gh#209/#212: a failed turn is rolled back, and the queue waits —
+        // draining on would bury the failure under the next turn's result.
+        if (!settle_turn(convo, result, turn_begin, sent_len)) { break; }
         auto next = pop_queued_user_message();
         if (!next.has_value()) { break; }
         fire_queue_consumed(*next, user_message_queue_depth());
@@ -4038,7 +4139,7 @@ bool AgentEngine::prepare_next_turn(std::vector<Message>& pending) {
  * @param new_messages Messages to add this turn.
  * @return Full result messages from the engine loop.
  * @req REQ-LOOP-001
- * @version 2.12.0-rc1
+ * @version 2.14.5
  */
 std::vector<Message> AgentEngine::run_turn(std::vector<Message> new_messages) {
     // gh#40 (v2.1.10): mirror the single-string overload's drain
@@ -4052,15 +4153,15 @@ std::vector<Message> AgentEngine::run_turn(std::vector<Message> new_messages) {
     std::vector<Message> pending = std::move(new_messages);
     std::vector<Message> result;
     while (true) {
+        const size_t turn_begin = convo.messages.size();
         for (auto& m : pending) {
             convo.messages.push_back(std::move(m));
         }
         size_t sent_len = convo.messages.size();
         result = run(convo.messages);
-        for (size_t i = sent_len; i < result.size(); ++i) {
-            convo.messages.push_back(result[i]);
-        }
-        if (!prepare_next_turn(pending)) { break; }
+        // gh#209/#212: see run_drain_loop.
+        if (!settle_turn(convo, result, turn_begin, sent_len)
+            || !prepare_next_turn(pending)) { break; }
     }
     if (owns_turn) { end_turn(); }
     return result;

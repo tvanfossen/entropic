@@ -104,6 +104,7 @@ class EntropicError(enum.IntEnum):
     TIER_MODEL_TOO_LARGE = 53
     SPECULATIVE_INCOMPATIBLE_CONFIG = 54
     MLOCK_LIMIT_EXCEEDED = 55
+    TURN_FAILED = 56
 
 class AgentState(enum.IntEnum):
     """Mirrors ``entropic_agent_state_t`` from the C header."""

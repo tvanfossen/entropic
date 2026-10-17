@@ -425,6 +425,126 @@ SCENARIO("tier_requires_explicit_completion honours tier resolver",
     }
 }
 
+// ── gh#209 / gh#212 (v2.14.5): a failed turn is reported, not hidden ─
+
+SCENARIO("gh#209/#212: a turn that ends in ERROR records why, for the caller",
+         "[engine][gh209][gh212][2.14.5]")
+{
+    // The loop failed the turn (State: ERROR) and the facade still answered
+    // ENTROPIC_OK with a well-formed conversation: the reason lived only in
+    // ctx.metadata, which no caller can read. The engine now records it per
+    // session for the facade to surface.
+    GIVEN("a lead tier that owes explicit completion and never calls a tool") {
+        MockInference mock;
+        mock.response = "Here is my answer in prose.";
+        mock.tier = "lead";
+        mock.finish_reason = "stop";
+        mock.is_complete = false;
+        auto iface = make_mock_interface(mock);
+        LoopConfig lc;
+        lc.max_iterations = 15;
+        CompactionConfig cc;
+        AgentEngine engine(iface, lc, cc);
+        TierResolutionInterface tri{};
+        tri.get_tier_param = [](const std::string& tier,
+                                const std::string& param,
+                                void* /*ud*/) -> std::string {
+            return (tier == "lead" && param == "explicit_completion")
+                ? "true" : "";
+        };
+        engine.set_tier_resolution(tri);
+
+        WHEN("the turn runs out of retries") {
+            auto out = engine.run(make_messages());
+            THEN("the failure names the reason and the tier") {
+                auto why = engine.last_turn_failure();
+                INFO(why);
+                CHECK(why.find("zero_tool_calls_with_explicit_completion")
+                      != std::string::npos);
+                CHECK(why.find("lead") != std::string::npos);
+            }
+            AND_THEN("the nudge asks for a real tool call, not text") {
+                bool found = false;
+                for (const auto& m : out) {
+                    found = found || (m.content.find("contained no tool call")
+                                          != std::string::npos
+                                      && m.content.find("not as text")
+                                          != std::string::npos);
+                }
+                CHECK(found);
+            }
+        }
+    }
+
+    GIVEN("a tier with no completion contract") {
+        MockInference mock;
+        mock.response = "Fine.";
+        mock.tier = "lead";
+        mock.finish_reason = "stop";
+        mock.is_complete = false;
+        auto iface = make_mock_interface(mock);
+        LoopConfig lc;
+        lc.max_iterations = 3;
+        CompactionConfig cc;
+        AgentEngine engine(iface, lc, cc);
+        WHEN("the turn runs") {
+            engine.run(make_messages());
+            THEN("no failure is recorded") {
+                CHECK(engine.last_turn_failure().empty());
+            }
+        }
+    }
+}
+
+SCENARIO("gh#209/#212: a failed turn is rolled out of the session",
+         "[engine][gh209][gh212][2.14.5]")
+{
+    // v2.14.5 gate: a failed turn's nudges and its non-answers stayed in the
+    // session, and the NEXT healthy turn copied them — it answered
+    // "entropic.complete" instead of the word it was asked to recall. A
+    // failed turn is now removed from the conversation; its messages go to
+    // the caller with the failure instead.
+    GIVEN("a session holding one good exchange, then a turn that fails") {
+        MockInference mock;
+        mock.response = "Prose, no tool call.";
+        mock.tier = "lead";
+        mock.finish_reason = "stop";
+        mock.is_complete = false;
+        auto iface = make_mock_interface(mock);
+        LoopConfig lc;
+        lc.max_iterations = 15;
+        CompactionConfig cc;
+        AgentEngine engine(iface, lc, cc);
+        static bool strict = false;
+        strict = false;
+        TierResolutionInterface tri{};
+        tri.get_tier_param = [](const std::string& tier,
+                                const std::string& param,
+                                void* /*ud*/) -> std::string {
+            return (strict && tier == "lead" && param == "explicit_completion")
+                ? "true" : "";
+        };
+        engine.set_tier_resolution(tri);
+        engine.run_turn("first question");
+        const size_t before = engine.message_count();
+        strict = true;
+
+        WHEN("the failing turn runs") {
+            engine.run_turn("second question");
+            THEN("the conversation is exactly what it was before the turn") {
+                CHECK(engine.message_count() == before);
+                CHECK_FALSE(engine.last_turn_failure().empty());
+            }
+            AND_THEN("the failed turn's messages are kept for the caller") {
+                auto turn = engine.last_failed_turn();
+                REQUIRE_FALSE(turn.empty());
+                CHECK(turn.front().content == "second question");
+                CHECK(turn.size() > 1);
+            }
+        }
+    }
+}
+
 // ── P1-6 regression: zero-tool-call loop bounded (2.0.6-rc16.2) ─
 
 SCENARIO("zero-tool-call with explicit_completion halts within retry cap",

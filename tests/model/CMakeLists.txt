@@ -606,3 +606,5 @@ set_tests_properties(
     model/test-gh164-release-reload-c2
     model/test-gh164-release-reload-c3
     PROPERTIES TIMEOUT 600)
+add_model_test(test-v2145-failed-turn test_v2145_failed_turn.cpp)
+set_tests_properties(model/test-v2145-failed-turn PROPERTIES TIMEOUT 600)

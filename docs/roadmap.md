@@ -12,7 +12,7 @@ cite them.
 
 ---
 
-## Current State (v2.14.3 on `main`)
+## Current State (v2.14.4 on `main`)
 
 - C++20 engine, pure C ABI at every `.so` boundary
 - Unit + regression tests (CPU pre-commit gate), ThreadSanitizer preset
@@ -53,7 +53,13 @@ cite them.
 
 ---
 
-## v2.14.4 — security hardening (gh#211)
+## v2.14.5 — failed turns are failures (gh#209, gh#212)
+
+- `ENTROPIC_ERROR_TURN_FAILED`; reason + unconfirmed text in last_error;
+  failed turn rolled out of the session; turn-bounded answer selection that
+  skips tool calls written as text (#91).
+
+## v2.14.4 — security hardening (gh#211) (SHIPPED)
 
 - git server: argv execution, `--` before paths, option-shaped refs refused.
 - `mcp.workspace_roots` allowlist; fail-closed identities; `[]` = no tools;

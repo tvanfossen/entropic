@@ -449,6 +449,39 @@ public:
     LoopMetrics last_loop_metrics() const;
 
     /**
+     * @brief Why the active session's most recent turn FAILED, or "".
+     *
+     * gh#209/#212 (v2.14.5). A turn the loop ends in `AgentState::ERROR`
+     * (explicit-completion retries exhausted, a prompt that does not fit)
+     * used to come back from run_turn as an ordinary conversation, and the
+     * facade answered ENTROPIC_OK: the reason lived only in the run's
+     * metadata, which no caller can read. run() records it here, keyed by
+     * session, and clears it when that session's next turn starts. The
+     * facade reads it on the same thread, after the turn, to return
+     * ENTROPIC_ERROR_TURN_FAILED.
+     *
+     * @return "<reason> (tier '<tier>'): <explanation>", or "" when the
+     *         session's last turn did not fail.
+     * @threadsafety Thread-safe (under `metrics_mutex_`).
+     * @version 2.14.5
+     */
+    std::string last_turn_failure() const;
+
+    /**
+     * @brief The messages of the active session's last FAILED turn.
+     *
+     * gh#209/#212 (v2.14.5). A failed turn is rolled out of the session —
+     * its nudges and non-answers poisoned the next turn when they stayed —
+     * so these are kept here, from the turn's user prompt on, for the
+     * facade to report. Overwritten by the session's next failed turn.
+     *
+     * @return The failed turn's messages; empty when there is none.
+     * @threadsafety Thread-safe (under `metrics_mutex_`).
+     * @version 2.14.5
+     */
+    std::vector<Message> last_failed_turn() const;
+
+    /**
      * @brief Per-tier aggregated metrics since engine start.
      *
      * Keys are tier names ("lead", "eng", etc.). Values accumulate
@@ -564,6 +597,26 @@ public:
      */
     std::vector<Message> run_drain_loop(std::string pending,
                                         const std::string& tier_override);
+
+    /**
+     * @brief Keep a finished turn in the session, or roll a failed one back.
+     *
+     * gh#209/#212 (v2.14.5). A turn that succeeded has its new messages
+     * appended to the session, as before. A turn the loop FAILED is removed
+     * — the session is truncated back to `turn_begin` — and its messages
+     * are kept for last_failed_turn().
+     *
+     * @param convo The session's conversation.
+     * @param result The run's full message list.
+     * @param turn_begin Session size before this turn's user message(s).
+     * @param sent_len Session size after them (the run's input length).
+     * @return true when the turn was kept; false when it was rolled back.
+     * @dg_internal
+     * @version 2.14.5
+     */
+    bool settle_turn(ConversationState& convo,
+                     const std::vector<Message>& result,
+                     size_t turn_begin, size_t sent_len);
 
     /**
      * @brief Seed a tier's system prompt on an empty conversation (gh#99).
@@ -2011,6 +2064,8 @@ private:
 
     // ── Members ──────────────────────────────────────────
     LoopMetrics last_metrics_;                           ///< P2-15: last run metrics
+    std::unordered_map<std::string, std::string> turn_failures_; ///< gh#209: session -> failure of its last turn
+    std::unordered_map<std::string, std::vector<Message>> failed_turns_; ///< gh#209: session -> messages of its last failed turn
     std::unordered_map<std::string, LoopMetrics>
         per_tier_metrics_;                               ///< P2-15: per-tier accumulator (2.0.6-rc16.2)
     InferenceInterface inference_;                       ///< Inference contract

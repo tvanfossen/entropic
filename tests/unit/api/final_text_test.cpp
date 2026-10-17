@@ -294,3 +294,118 @@ SCENARIO("gh#165 a recall assertion must read the answer, not the transcript",
         }
     }
 }
+
+// ── gh#209 / gh#212 (v2.14.5) ────────────────────────────────────────────
+
+SCENARIO("gh#209: the answer is read from THIS turn, never an earlier one",
+         "[facade][external_bridge][gh209][2.14.5]")
+{
+    // The consumer's report: a turn that produced only empty assistant
+    // messages returned the previous turn's answer, byte for byte, as its
+    // own. The backwards scan had no notion of where this turn began.
+    GIVEN("a previous answered turn and a current turn with no content") {
+        const char* convo = R"JSON([
+            {"role":"user","content":"Where is host() defined?"},
+            {"role":"assistant","content":"host() is on line 12."},
+            {"role":"user","content":"Where is serve() defined?"},
+            {"role":"assistant","content":""}
+        ])JSON";
+        THEN("bounded to this turn's prompt, there is no answer") {
+            CHECK(extract_final_text(convo, "Where is serve() defined?").empty());
+            CHECK(final_text_or_reason(convo, "Where is serve() defined?")
+                      .rfind("(no response", 0) == 0);
+        }
+        THEN("this turn's own answer is still found when it exists") {
+            const char* answered = R"JSON([
+                {"role":"user","content":"Q1"},
+                {"role":"assistant","content":"A1"},
+                {"role":"user","content":"Q2"},
+                {"role":"assistant","content":"A2"}
+            ])JSON";
+            CHECK(extract_final_text(answered, "Q2") == "A2");
+        }
+    }
+}
+
+SCENARIO("gh#212: a completion call written as text is never the answer",
+         "[facade][external_bridge][gh212][2.14.5]")
+{
+    // The model answered in prose, was nudged to call entropic.complete,
+    // and wrote the call as a fenced JSON block instead. The scan returned
+    // that block and the real answer two messages earlier was lost.
+    GIVEN("a prose answer followed by a text imitation of complete") {
+        const char* convo = R"JSON([
+            {"role":"user","content":"What changed in the last commit?"},
+            {"role":"assistant","content":"The last commit locked down git."},
+            {"role":"user","content":"[SYSTEM] Your previous response contained no tool call."},
+            {"role":"assistant","content":"```json\n{\n  \"action\": \"complete\",\n  \"summary\": \"I retrieved the commit.\"\n}\n```"}
+        ])JSON";
+        THEN("the prose answer is selected") {
+            CHECK(extract_final_text(convo, "What changed in the last commit?")
+                  == "The last commit locked down git.");
+        }
+        THEN("an unfenced imitation is skipped too") {
+            CHECK(facade_text::is_completion_imitation(
+                R"({"action":"complete","summary":"x"})"));
+            CHECK_FALSE(facade_text::is_completion_imitation(
+                "The action was complete."));
+            CHECK_FALSE(facade_text::is_completion_imitation(
+                R"({"action":"read","path":"x"})"));
+        }
+    }
+}
+
+SCENARIO("gh#212: a tool name written as the whole reply is not an answer",
+         "[facade][external_bridge][gh212][2.14.5]")
+{
+    // v2.14.5 gate: nudged, the model replied with just `entropic.inspect`.
+    const facade_text::ToolNames names = facade_text::tool_names_of(
+        R"([{"name":"entropic.inspect"},{"name":"git.log"}])");
+    const char* convo = R"JSON([
+        {"role":"user","content":"Name one primary colour."},
+        {"role":"assistant","content":"Red"},
+        {"role":"user","content":"[SYSTEM] Your previous response contained no tool call."},
+        {"role":"assistant","content":"entropic.inspect"}
+    ])JSON";
+    THEN("with the registered names, the real reply is selected") {
+        CHECK(extract_final_text(convo, nullptr, &names) == "Red");
+    }
+    THEN("only an EXACT registered name matches") {
+        CHECK(facade_text::is_completion_imitation("git.log", &names));
+        CHECK_FALSE(facade_text::is_completion_imitation(
+            "Run git.log to see it.", &names));
+        CHECK_FALSE(facade_text::is_completion_imitation("git.status", &names));
+    }
+}
+
+SCENARIO("gh#209/#212: a failed turn's detail is its reason and a labelled draft",
+         "[facade][external_bridge][gh209][gh212][2.14.5]")
+{
+    // The failed turn's own messages: it is rolled out of the session, so
+    // these travel to the caller in entropic_last_error().
+    WHEN("the turn produced a substantive draft") {
+        const char* turn = R"JSON([
+            {"role":"user","content":"Q2"},
+            {"role":"assistant","content":"draft answer to Q2"},
+            {"role":"assistant","content":"{\"action\":\"complete\",\"summary\":\"s\"}"}
+        ])JSON";
+        auto text = facade_text::failure_detail("REASON", turn, nullptr);
+        THEN("the reason leads and the draft is marked unconfirmed") {
+            INFO(text);
+            CHECK(text.rfind("REASON", 0) == 0);
+            CHECK(text.find("did not complete") != std::string::npos);
+            CHECK(text.find("draft answer to Q2") != std::string::npos);
+            CHECK(text.find("\"action\"") == std::string::npos);
+        }
+    }
+    WHEN("the turn produced nothing substantive") {
+        const char* turn = R"JSON([
+            {"role":"user","content":"Q3"},
+            {"role":"assistant","content":""}
+        ])JSON";
+        auto text = facade_text::failure_detail("REASON", turn, nullptr);
+        THEN("only the reason is returned") {
+            CHECK(text == "REASON");
+        }
+    }
+}

@@ -1,136 +1,233 @@
 [
   {
-    "req_id": "REQ-CFG-001",
-    "req_name": "Layered configuration resolution with most-specific-layer-wins precedence",
+    "req_id": "REQ-ABI-001",
+    "req_name": "Pure C at every .so boundary \u2014 opaque handles and explicit ownership",
     "functions": [
       {
-        "name": "parse_config_file",
-        "file": "src/config/loader.cpp",
-        "version": "2.14.4"
+        "name": "entropic_seconds_since_last_activity",
+        "file": "src/facade/entropic.cpp",
+        "version": "2.3.0"
       },
       {
-        "name": "parse_config_string",
-        "file": "src/config/loader.cpp",
-        "version": "2.14.4"
+        "name": "entropic_alloc",
+        "file": "src/facade/entropic.cpp",
+        "version": "1.8.0"
       },
       {
-        "name": "load_config_from_string",
-        "file": "src/config/loader.cpp",
-        "version": "2.14.4"
+        "name": "entropic_free",
+        "file": "src/facade/entropic.cpp",
+        "version": "1.8.0"
       }
     ]
   },
   {
-    "req_id": "REQ-CFG-002",
-    "req_name": "Whole-block replace semantics for models and routing across layers",
+    "req_id": "REQ-ABI-002",
+    "req_name": "C++ exceptions never cross any .so boundary",
     "functions": [
       {
-        "name": "yaml_has_key",
-        "file": "src/config/loader.cpp",
-        "version": "2.14.4"
-      }
-    ]
-  },
-  {
-    "req_id": "REQ-CFG-003",
-    "req_name": "Bundled model registry resolution \u2014 keys, selectors, and search order",
-    "functions": [
-      {
-        "name": "load",
-        "file": "src/config/bundled_models.cpp",
-        "version": "2.14.4"
-      }
-    ]
-  },
-  {
-    "req_id": "REQ-CFG-006",
-    "req_name": "Fail-loud validation \u2014 reject bad or inert configuration at load time",
-    "functions": [
-      {
-        "name": "parse_config_file",
-        "file": "src/config/loader.cpp",
-        "version": "2.14.4"
+        "name": "entropic_run",
+        "file": "src/facade/entropic.cpp",
+        "version": "2.14.5"
       },
       {
-        "name": "parse_config_string",
-        "file": "src/config/loader.cpp",
-        "version": "2.14.4"
+        "name": "entropic_run_batch",
+        "file": "src/facade/entropic.cpp",
+        "version": "2.13.0"
       },
       {
-        "name": "load_config_from_string",
-        "file": "src/config/loader.cpp",
-        "version": "2.14.4"
-      }
-    ]
-  },
-  {
-    "req_id": "REQ-MCP-012",
-    "req_name": "Tool calls pass an ordered precondition pipeline with typed rejection kinds",
-    "functions": [
-      {
-        "name": "check_tier_allowed",
-        "file": "src/mcp/tool_executor.cpp",
-        "version": "2.14.4"
-      }
-    ]
-  },
-  {
-    "req_id": "REQ-MCP-014",
-    "req_name": "A locked tier's allowed_tools list is enforced at dispatch time",
-    "functions": [
-      {
-        "name": "check_tier_allowed",
-        "file": "src/mcp/tool_executor.cpp",
-        "version": "2.14.4"
-      }
-    ]
-  },
-  {
-    "req_id": "REQ-MCP-021",
-    "req_name": "Filesystem tools are root-confined, read-before-write gated, and size-bounded",
-    "functions": [
-      {
-        "name": "parse_absolute_path_list",
-        "file": "src/config/loader.cpp",
-        "version": "2.14.4"
-      }
-    ]
-  },
-  {
-    "req_id": "REQ-MCP-023",
-    "req_name": "Bash and git servers gate on operator approval, not command pattern matching; bash enforces a timeout on the whole process group",
-    "functions": [
-      {
-        "name": "run_git",
-        "file": "src/mcp/servers/git.cpp",
-        "version": "2.14.4"
-      }
-    ]
-  },
-  {
-    "req_id": "REQ-MCP-027",
-    "req_name": "Named workspaces bind a session to its own tool root and servers",
-    "functions": [
-      {
-        "name": "validate_workspace_args",
-        "file": "src/facade/entropic_mcp.cpp",
-        "version": "2.14.4"
-      }
-    ]
-  },
-  {
-    "req_id": "REQ-TYPE-005",
-    "req_name": "Config types declare their own defaults; optional means absent, not default",
-    "functions": [
-      {
-        "name": "parse_config_file",
-        "file": "src/config/loader.cpp",
-        "version": "2.14.4"
+        "name": "entropic_run_streaming",
+        "file": "src/facade/entropic.cpp",
+        "version": "2.14.5"
       },
       {
-        "name": "validate_configured_prompts",
+        "name": "entropic_run_messages",
+        "file": "src/facade/entropic.cpp",
+        "version": "2.12.0"
+      }
+    ]
+  },
+  {
+    "req_id": "REQ-API-002",
+    "req_name": "Handle lifecycle \u2014 create, configure, destroy, NULL-safe teardown",
+    "functions": [
+      {
+        "name": "entropic_run",
+        "file": "src/facade/entropic.cpp",
+        "version": "2.14.5"
+      }
+    ]
+  },
+  {
+    "req_id": "REQ-API-005",
+    "req_name": "Uniform precondition guard on every exported entry point",
+    "functions": [
+      {
+        "name": "entropic_seconds_since_last_activity",
+        "file": "src/facade/entropic.cpp",
+        "version": "2.3.0"
+      },
+      {
+        "name": "entropic_run",
+        "file": "src/facade/entropic.cpp",
+        "version": "2.14.5"
+      },
+      {
+        "name": "entropic_run_batch",
+        "file": "src/facade/entropic.cpp",
+        "version": "2.13.0"
+      },
+      {
+        "name": "entropic_run_streaming",
+        "file": "src/facade/entropic.cpp",
+        "version": "2.14.5"
+      },
+      {
+        "name": "entropic_run_messages",
+        "file": "src/facade/entropic.cpp",
+        "version": "2.12.0"
+      },
+      {
+        "name": "entropic_context_get",
+        "file": "src/facade/entropic.cpp",
+        "version": "2.12.0"
+      }
+    ]
+  },
+  {
+    "req_id": "REQ-API-008",
+    "req_name": "Single cross-boundary allocator pair and explicit ownership transfer",
+    "functions": [
+      {
+        "name": "entropic_alloc",
+        "file": "src/facade/entropic.cpp",
+        "version": "1.8.0"
+      },
+      {
+        "name": "entropic_free",
+        "file": "src/facade/entropic.cpp",
+        "version": "1.8.0"
+      },
+      {
+        "name": "entropic_run",
+        "file": "src/facade/entropic.cpp",
+        "version": "2.14.5"
+      },
+      {
+        "name": "entropic_run_batch",
+        "file": "src/facade/entropic.cpp",
+        "version": "2.13.0"
+      },
+      {
+        "name": "entropic_run_messages",
+        "file": "src/facade/entropic.cpp",
+        "version": "2.12.0"
+      },
+      {
+        "name": "entropic_context_get",
+        "file": "src/facade/entropic.cpp",
+        "version": "2.12.0"
+      }
+    ]
+  },
+  {
+    "req_id": "REQ-API-009",
+    "req_name": "Run entry-point family, result contract, and cross-thread interruptibility",
+    "functions": [
+      {
+        "name": "entropic_run",
+        "file": "src/facade/entropic.cpp",
+        "version": "2.14.5"
+      },
+      {
+        "name": "entropic_run_batch",
+        "file": "src/facade/entropic.cpp",
+        "version": "2.13.0"
+      },
+      {
+        "name": "entropic_run_streaming",
+        "file": "src/facade/entropic.cpp",
+        "version": "2.14.5"
+      },
+      {
+        "name": "entropic_run_messages",
+        "file": "src/facade/entropic.cpp",
+        "version": "2.12.0"
+      },
+      {
+        "name": "entropic_run_session",
+        "file": "src/facade/entropic.cpp",
+        "version": "2.14.5"
+      }
+    ]
+  },
+  {
+    "req_id": "REQ-API-010",
+    "req_name": "Observer and callback slots survive configure and fire uniformly",
+    "functions": [
+      {
+        "name": "entropic_run",
+        "file": "src/facade/entropic.cpp",
+        "version": "2.14.5"
+      },
+      {
+        "name": "entropic_run_streaming",
+        "file": "src/facade/entropic.cpp",
+        "version": "2.14.5"
+      }
+    ]
+  },
+  {
+    "req_id": "REQ-IDEN-001",
+    "req_name": "Tier resolution contract and per-tier loop overrides",
+    "functions": [
+      {
+        "name": "derive_explicit_completion",
         "file": "src/prompts/manager.cpp",
-        "version": "2.14.4"
+        "version": "2.14.5"
+      }
+    ]
+  },
+  {
+    "req_id": "REQ-INFER-018",
+    "req_name": "Same-prefix batch generation is gated, per-request-constrained and seq-safe",
+    "functions": [
+      {
+        "name": "entropic_run_batch",
+        "file": "src/facade/entropic.cpp",
+        "version": "2.13.0"
+      }
+    ]
+  },
+  {
+    "req_id": "REQ-INFER-025",
+    "req_name": "Multimodal input is bounded, tier-gated and degrades gracefully",
+    "functions": [
+      {
+        "name": "entropic_run_messages",
+        "file": "src/facade/entropic.cpp",
+        "version": "2.12.0"
+      }
+    ]
+  },
+  {
+    "req_id": "REQ-LOOP-001",
+    "req_name": "Agent state machine with observable, dual-channel transitions",
+    "functions": [
+      {
+        "name": "entropic_run_session",
+        "file": "src/facade/entropic.cpp",
+        "version": "2.14.5"
+      }
+    ]
+  },
+  {
+    "req_id": "REQ-SAFE-001",
+    "req_name": "Untrusted bytes are sanitized at ingress, never at egress",
+    "functions": [
+      {
+        "name": "entropic_context_get",
+        "file": "src/facade/entropic.cpp",
+        "version": "2.12.0"
       }
     ]
   }

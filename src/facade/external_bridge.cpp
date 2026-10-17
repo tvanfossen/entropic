@@ -102,6 +102,19 @@ static json tool_text(const std::string& text) {
     return {{"content", json::array({{{"type", "text"}, {"text", text}}})}};
 }
 
+/**
+ * @brief Wrap text in an MCP tool result flagged `isError: true`.
+ * @param text Error text.
+ * @return MCP tool result JSON.
+ * @utility
+ * @version 2.14.5
+ */
+static json tool_error(const std::string& text) {
+    auto result = tool_text(text);
+    result["isError"] = true;
+    return result;
+}
+
 // ── Tool definitions ─────────────────────────────────────
 
 /**
@@ -352,6 +365,55 @@ static void send_progress(int fd, const std::string& token_text,
 }
 
 /**
+ * @brief The tool names a session's turns can see (gh#212 bare-name rule).
+ * @param handle Engine handle.
+ * @param session_key Session key.
+ * @return Registered `<server>.<tool>` names for the session's workspace.
+ * @utility
+ * @version 2.14.5
+ */
+static facade_text::ToolNames session_tool_names(entropic_handle_t handle,
+                                                 const std::string& session_key) {
+    auto* servers = entropic::workspace_servers(handle, session_key);
+    return servers != nullptr ? facade_text::tool_names_of(servers->list_tools())
+                              : facade_text::ToolNames{};
+}
+
+/**
+ * @brief Render a finished turn as the ask tool result.
+ *
+ * gh#209/#212 (v2.14.5): the answer is selected from THIS turn only (bounded
+ * by `prompt`), never a tool call written as text; and a turn the engine
+ * FAILED is an `isError` result built from `entropic_last_error()`, which
+ * carries the reason and any unconfirmed text — the failed turn itself has
+ * been rolled out of the session. Shared by every ask path so the rule
+ * cannot drift between them.
+ *
+ * @param handle Engine handle.
+ * @param session_key Session the turn ran in.
+ * @param err The run's return code: ENTROPIC_OK or ENTROPIC_ERROR_TURN_FAILED.
+ * @param convo Serialized conversation (unused for a failed turn; may be null).
+ * @param prompt The prompt that started the turn.
+ * @return MCP tool result JSON.
+ * @req REQ-API-012
+ * @req REQ-BRIDGE-001
+ * @utility
+ * @version 2.14.5
+ */
+static json render_turn(entropic_handle_t handle, const std::string& session_key,
+                        entropic_error_t err, const char* convo,
+                        const std::string& prompt) {
+    if (err == ENTROPIC_ERROR_TURN_FAILED) {
+        const char* msg = entropic_last_error(handle);
+        return tool_error(std::string("error: turn failed — ")
+                          + (msg ? msg : "unknown"));
+    }
+    const auto names = session_tool_names(handle, session_key);
+    return tool_text(
+        facade_text::final_text_or_reason(convo, prompt.c_str(), &names));
+}
+
+/**
  * @brief Read the live conversation and render the operator-visible answer.
  *
  * gh#130 (v2.10.2): shared by both ask paths so the answer-vs-diagnostic rule
@@ -363,18 +425,22 @@ static void send_progress(int fd, const std::string& token_text,
  *
  * @param handle Engine handle.
  * @param session_key Session whose answer to render.
+ * @param err The run's return code (OK or TURN_FAILED).
+ * @param prompt The prompt that started the turn (gh#209, v2.14.5).
  * @return MCP tool result JSON.
  * @req REQ-API-012
  * @req REQ-BRIDGE-001
- * @version 2.12.0
+ * @version 2.14.5
  */
 static json final_answer_from_context(entropic_handle_t handle,
-                                      const std::string& session_key) {
+                                      const std::string& session_key,
+                                      entropic_error_t err,
+                                      const std::string& prompt) {
     char* msgs_json = nullptr;
     entropic_session_context_get(handle, session_key.c_str(), &msgs_json);
-    auto answer = facade_text::final_text_or_reason(msgs_json);
+    auto result = render_turn(handle, session_key, err, msgs_json, prompt);
     entropic_free(msgs_json);
-    return tool_text(answer);
+    return result;
 }
 
 /**
@@ -437,7 +503,7 @@ static entropic_error_t run_stream_turn(
  * @return MCP tool result JSON (final clean text from entropic_run).
  * @req REQ-API-012
  * @req REQ-BRIDGE-001
- * @version 2.14.0
+ * @version 2.14.5
  */
 static json handle_ask_plain(entropic_handle_t handle, const json& args,
                              const std::string& session_key) {
@@ -446,18 +512,20 @@ static json handle_ask_plain(entropic_handle_t handle, const json& args,
         return tool_text("error: missing 'prompt' argument");
     }
     char* result_json = nullptr;
+    const auto prompt = it->get<std::string>();
     auto err = run_plain_turn(handle, session_key,
                               args.value("tier", std::string{}),  // gh#205
-                              it->get<std::string>(), &result_json);
-    if (err != ENTROPIC_OK) {
+                              prompt, &result_json);
+    json out;
+    if (err == ENTROPIC_OK || err == ENTROPIC_ERROR_TURN_FAILED) {
+        // Resolve before the free — render_turn reads that buffer.
+        out = render_turn(handle, session_key, err, result_json, prompt);
+    } else {
         const char* msg = entropic_last_error(handle);
-        entropic_free(result_json);
-        return tool_text(std::string("error: ") + (msg ? msg : "unknown"));
+        out = tool_error(std::string("error: ") + (msg ? msg : "unknown"));
     }
-    // Resolve before the free — final_text_or_reason reads that buffer.
-    auto answer = facade_text::final_text_or_reason(result_json);
     entropic_free(result_json);
-    return tool_text(answer);
+    return out;
 }
 
 /**
@@ -475,7 +543,7 @@ static json handle_ask_plain(entropic_handle_t handle, const json& args,
  * @return MCP tool result JSON (final clean text).
  * @req REQ-API-012
  * @req REQ-BRIDGE-001
- * @version 2.10.2
+ * @version 2.14.5
  */
 static json handle_ask(entropic_handle_t handle, const json& args,
                        const std::string& session_key,
@@ -497,12 +565,11 @@ static json handle_ask(entropic_handle_t handle, const json& args,
     auto err = run_stream_turn(handle, session_key,
                                args.value("tier", std::string{}), prompt,
                                on_token, &sctx);
-    if (err != ENTROPIC_OK) {
+    if (err != ENTROPIC_OK && err != ENTROPIC_ERROR_TURN_FAILED) {
         const char* msg = entropic_last_error(handle);
-        return tool_text(std::string("error: ") + (msg ? msg : "unknown"));
+        return tool_error(std::string("error: ") + (msg ? msg : "unknown"));
     }
-
-    return final_answer_from_context(handle, session_key);
+    return final_answer_from_context(handle, session_key, err, prompt);
 }
 
 /**
@@ -595,37 +662,41 @@ struct AsyncFinalState {
  *
  * @param handle Engine handle (for last-error lookup).
  * @param err Return code from entropic_run.
- * @param result_json JSON result (owned; freed on success, else NULL).
+ * @param result_json JSON result (owned; always freed here).
+ * @param prompt The prompt that started the turn (gh#209, v2.14.5).
+ * @param session_key Session the turn ran in (gh#212 tool names).
  * @return AsyncFinalState ready to be stored on the task.
  * @req REQ-BRIDGE-001
- * @version 2.10.2
+ * @version 2.14.5
  */
 static AsyncFinalState derive_async_final_state(
     entropic_handle_t handle,
     entropic_error_t err,
-    char* result_json) {
-    AsyncFinalState s;
+    char* result_json,
+    const std::string& prompt,
+    const std::string& session_key) {
+    AsyncFinalState s{"error", "failed", ""};
+    const char* msg = entropic_last_error(handle);
     if (err == ENTROPIC_ERROR_CANCELLED
         || err == ENTROPIC_ERROR_INTERRUPTED) {
-        const char* msg = entropic_last_error(handle);
-        s.text = msg ? msg : "cancelled";
-        s.status = "cancelled";
-        s.phase = "cancelled";
+        s = {"cancelled", "cancelled", msg ? msg : "cancelled"};
+    } else if (err == ENTROPIC_ERROR_TURN_FAILED) {
+        // gh#209/#212 (v2.14.5): the turn ran and the engine failed it.
+        // last_error carries the reason and any unconfirmed text.
+        s.text = std::string("error: turn failed — ") + (msg ? msg : "unknown");
     } else if (err != ENTROPIC_OK) {
-        const char* msg = entropic_last_error(handle);
         s.text = msg ? msg : "unknown error";
-        s.status = "error";
-        s.phase = "failed";
     } else {
         // gh#130 (v2.10.2): same selection rule as the sync paths. This one
         // had no fallback at all, so a stalled async ask reported
         // status="done" with empty text — even less diagnosable than the
-        // sync path's "(no response)".
-        s.text = facade_text::final_text_or_reason(result_json);
-        entropic_free(result_json);
-        s.status = "done";
-        s.phase = "done";
+        // sync path's "(no response)". gh#209: bounded to this turn.
+        const auto names = session_tool_names(handle, session_key);
+        s = {"done", "done",
+             facade_text::final_text_or_reason(result_json, prompt.c_str(),
+                                               &names)};
     }
+    entropic_free(result_json);
     return s;
 }
 
@@ -2041,7 +2112,7 @@ void ExternalBridge::join_async_workers() {
  * @param session_key Session key.
  * @param tier Tier or identity; "" routes as usual.
  * @req REQ-BRIDGE-001
- * @version 2.14.0
+ * @version 2.14.5
  */
 void ExternalBridge::async_worker(const std::string& prompt,
                                   const std::string& task_id, int client_fd,
@@ -2060,7 +2131,8 @@ void ExternalBridge::async_worker(const std::string& prompt,
     detach_phase_observer();
     end_turn_wait(session_key);
 
-    auto final_state = derive_async_final_state(handle_, err, result_json);
+    auto final_state = derive_async_final_state(handle_, err, result_json,
+                                                prompt, session_key);
     commit_async_final_state(task_id, final_state.status,
                              final_state.phase, final_state.text);
     notify_client(client_fd,

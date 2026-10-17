@@ -117,3 +117,13 @@ SCENARIO("gh#148: the mlock refusal has a stable name and a fresh slot",
         }
     }
 }
+
+SCENARIO("gh#209/#212: a failed turn has its own code, appended",
+         "[api][error][gh209][gh212][2.14.5]") {
+    THEN("it names itself and no existing code moved") {
+        REQUIRE(std::string(entropic_error_name(ENTROPIC_ERROR_TURN_FAILED))
+                == "ENTROPIC_ERROR_TURN_FAILED");
+        REQUIRE(static_cast<int>(ENTROPIC_ERROR_TURN_FAILED) == 56);
+        REQUIRE(static_cast<int>(ENTROPIC_ERROR_MLOCK_LIMIT_EXCEEDED) == 55);
+    }
+}

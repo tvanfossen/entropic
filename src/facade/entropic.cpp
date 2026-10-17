@@ -11,6 +11,7 @@
  */
 
 #include "engine_handle.h"
+#include "final_text.h"  // gh#209/#212 (v2.14.5)
 
 #include <entropic/config/loader.h>
 #include <entropic/config/validate.h>  // gh#154: configure-time grammar check
@@ -551,6 +552,32 @@ static void rewire_observers(entropic_handle_t h) {
 }
 
 /**
+ * @brief Warn when a tier-config grammar meets an identity that owes completion.
+ *
+ * v2.14.5. Across two sources this is allowed (gh#154 requires it to
+ * configure), but every turn of the tier will be nudged and then fail with
+ * ENTROPIC_ERROR_TURN_FAILED — the operator should hear that at configure.
+ *
+ * @param name Tier name.
+ * @param tier Tier configuration.
+ * @param fm The tier's identity frontmatter.
+ * @utility
+ * @version 2.14.5
+ */
+static void warn_grammar_completion(const std::string& name,
+                                    const entropic::TierConfig& tier,
+                                    const entropic::prompts::IdentityFrontmatter& fm) {
+    if (tier.grammar.has_value() && fm.explicit_completion.value_or(false)) {
+        s_log->warn("tier '{}': config grammar '{}' on an identity with "
+                    "explicit_completion: true — a grammar-constrained tier "
+                    "cannot make the completing tool call, so every turn "
+                    "will fail (ENTROPIC_ERROR_TURN_FAILED); set "
+                    "explicit_completion: false in the identity",
+                    name, tier.grammar->string());
+    }
+}
+
+/**
  * @brief Register per-tier ChildContextInfo with the engine.
  *
  * Extracted from configure_common to keep that function under the
@@ -561,7 +588,7 @@ static void rewire_observers(entropic_handle_t h) {
  * @param data_dir Resolved data directory for identity files.
  * @param shared_prefix Prefix assembled from constitution + app context.
  * @utility
- * @version 2.14.4
+ * @version 2.14.5
  */
 static void populate_tier_info(entropic_handle_t h,
                                const std::filesystem::path& data_dir,
@@ -572,8 +599,10 @@ static void populate_tier_info(entropic_handle_t h,
         auto parsed = entropic::prompts::resolve_tier_identity_full(
             tier, name, data_dir);
         info.system_prompt = shared_prefix + parsed.body;
-        info.explicit_completion = parsed.frontmatter.explicit_completion
-            .value_or(!tier.auto_chain.has_value());
+        // v2.14.5: a grammar-bound tier no longer owes one by default.
+        info.explicit_completion = entropic::prompts::derive_explicit_completion(
+            tier, parsed.frontmatter);
+        warn_grammar_completion(name, tier, parsed.frontmatter);
         // E6 (2.0.6-rc18): propagate per-identity caps from frontmatter
         // so AgentEngine::tri_get_tier_param surfaces them to the loop
         // and tool executor. -1 = "use global loop_config default".
@@ -2363,6 +2392,48 @@ void entropic_free(void* ptr) {
 }
 
 /**
+ * @brief The return code for a turn that ran to its end (gh#209/#212).
+ *
+ * A turn the loop FAILED — explicit-completion retries exhausted, a prompt
+ * that does not fit — used to return ENTROPIC_OK with an ordinary-looking
+ * conversation, and a caller had no way to tell it from an answer. It now
+ * returns ENTROPIC_ERROR_TURN_FAILED. last_error carries the reason and,
+ * when the turn wrote something substantive, that text labelled as
+ * unconfirmed (facade_text::failure_detail). The engine has rolled the
+ * failed turn out of the session; result_json, where the entry point has
+ * one, still holds the run's conversation as evidence.
+ *
+ * Read on the run's own thread, after the turn — the engine keys the
+ * failure by the session that thread is bound to.
+ *
+ * @param handle Engine handle (engine already validated).
+ * @return ENTROPIC_OK, or ENTROPIC_ERROR_TURN_FAILED.
+ * @utility
+ * @version 2.14.5
+ */
+static entropic_error_t turn_outcome(entropic_handle_t handle) {
+    auto failure = handle->engine->last_turn_failure();
+    if (!failure.empty()) {
+        // The failed turn is no longer in the session (it was rolled back),
+        // so its unconfirmed text travels here — the only channel the
+        // streaming entry points have.
+        const auto turn = facade_json::serialize_messages(
+            handle->engine->last_failed_turn());
+        auto* servers = entropic::workspace_servers(
+            handle, handle->engine->active_session_key());
+        const auto names = servers != nullptr
+            ? facade_text::tool_names_of(servers->list_tools())
+            : facade_text::ToolNames{};
+        auto detail = facade_text::failure_detail(failure, turn.c_str(), &names);
+        // Under the same lock entropic_last_error() reads it with: runs on
+        // other sessions may be finishing concurrently.
+        entropic::HandleApiLock lock(handle);
+        handle->last_error = std::move(detail);
+    }
+    return failure.empty() ? ENTROPIC_OK : ENTROPIC_ERROR_TURN_FAILED;
+}
+
+/**
  * @brief Single-turn blocking agentic run.
  *
  * Appends the user input to the conversation, runs the engine loop
@@ -2381,7 +2452,7 @@ void entropic_free(void* ptr) {
  * @req REQ-API-008
  * @req REQ-API-005
  * @req REQ-ABI-002
- * @version 2.12.0
+ * @version 2.14.5
  */
 entropic_error_t entropic_run(
     entropic_handle_t handle,
@@ -2413,7 +2484,7 @@ entropic_error_t entropic_run(
             handle->stream_observer(
                 "", 0, handle->stream_observer_data);
         }
-        return ENTROPIC_OK;
+        return turn_outcome(handle);  // gh#209/#212
     } catch (const std::exception& e) {
         handle->last_error = e.what();
         s_log->error("run: {}", handle->last_error);
@@ -2437,7 +2508,7 @@ entropic_error_t entropic_run(
  * Extracted so entropic_run_as stays within the knots returns gate.
  * @utility
  * @return ENTROPIC_OK or ENTROPIC_ERROR_GENERATE_FAILED.
- * @version 2.8.0
+ * @version 2.14.5
  */
 static entropic_error_t run_as_inner(
     entropic_handle_t handle, const char* tier, const char* input,
@@ -2449,7 +2520,7 @@ static entropic_error_t run_as_inner(
         if (handle->stream_observer != nullptr) {
             handle->stream_observer("", 0, handle->stream_observer_data);
         }
-        return ENTROPIC_OK;
+        return turn_outcome(handle);  // gh#209/#212
     } catch (const std::exception& e) {
         handle->last_error = e.what();
         s_log->error("run_as: {}", handle->last_error);
@@ -2661,7 +2732,7 @@ entropic_error_t entropic_run_batch(
  * @req REQ-API-010
  * @req REQ-API-005
  * @req REQ-ABI-002
- * @version 2.12.0
+ * @version 2.14.5
  */
 entropic_error_t entropic_run_streaming(
     entropic_handle_t handle,
@@ -2695,7 +2766,7 @@ entropic_error_t entropic_run_streaming(
             handle->stream_observer(
                 "", 0, handle->stream_observer_data);
         }
-        return code == 1 ? ENTROPIC_ERROR_CANCELLED : ENTROPIC_OK;
+        return code == 1 ? ENTROPIC_ERROR_CANCELLED : turn_outcome(handle);
     } catch (const std::exception& e) {
         handle->last_error = e.what();
         s_log->error("run_streaming: {}", handle->last_error);
@@ -2752,7 +2823,7 @@ static std::vector<entropic::Message> parse_and_check_vision(
  * entropic_error_t status — single exit.
  *
  * @dg_internal
- * @version 2.1.8
+ * @version 2.14.5
  */
 static entropic_error_t run_messages_inner(
     entropic_handle_t handle,
@@ -2768,7 +2839,7 @@ static entropic_error_t run_messages_inner(
         handle->stream_observer(
             "", 0, handle->stream_observer_data);
     }
-    return ENTROPIC_OK;
+    return turn_outcome(handle);  // gh#209/#212
 }
 
 /**
@@ -2826,7 +2897,7 @@ entropic_error_t entropic_run_messages(
 /**
  * @brief Inner streaming dispatch — no front validation (gh#37).
  * @dg_internal
- * @version 2.1.8
+ * @version 2.14.5
  */
 static entropic_error_t run_messages_stream_inner(
     entropic_handle_t handle,
@@ -2843,7 +2914,7 @@ static entropic_error_t run_messages_stream_inner(
         handle->stream_observer(
             "", 0, handle->stream_observer_data);
     }
-    return code == 1 ? ENTROPIC_ERROR_CANCELLED : ENTROPIC_OK;
+    return code == 1 ? ENTROPIC_ERROR_CANCELLED : turn_outcome(handle);
 }
 
 /**
@@ -3311,7 +3382,7 @@ entropic_error_t entropic_context_get(
  *         already in flight on this handle.
  * @req REQ-API-009
  * @req REQ-LOOP-001
- * @version 2.13.0
+ * @version 2.14.5
  */
 entropic_error_t entropic_run_session(
     entropic_handle_t handle,
@@ -3335,7 +3406,7 @@ entropic_error_t entropic_run_session(
         if (handle->stream_observer != nullptr) {
             handle->stream_observer("", 0, handle->stream_observer_data);
         }
-        return ENTROPIC_OK;
+        return turn_outcome(handle);  // gh#209/#212
     } catch (const std::exception& e) {
         handle->last_error = e.what();
         s_log->error("run_session: {}", handle->last_error);
@@ -3416,7 +3487,7 @@ static entropic_error_t check_stream_args(
  * @param cancel_flag Optional cancel flag.
  * @return ENTROPIC_OK, CANCELLED, or GENERATE_FAILED.
  * @dg_internal
- * @version 2.14.0
+ * @version 2.14.5
  */
 static entropic_error_t stream_session_turn(
     entropic_handle_t handle, const char* session_key, const std::string& tier,
@@ -3429,7 +3500,7 @@ static entropic_error_t stream_session_turn(
         if (handle->stream_observer != nullptr) {
             handle->stream_observer("", 0, handle->stream_observer_data);
         }
-        return code == 1 ? ENTROPIC_ERROR_CANCELLED : ENTROPIC_OK;
+        return code == 1 ? ENTROPIC_ERROR_CANCELLED : turn_outcome(handle);
     } catch (const std::exception& e) {
         handle->last_error = e.what();
         s_log->error("run_session_streaming: {}", handle->last_error);

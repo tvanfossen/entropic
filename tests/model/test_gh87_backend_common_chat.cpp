@@ -40,7 +40,7 @@ std::filesystem::path gemma4_a4b_path() {
     const char* home = std::getenv("HOME");
     if (home == nullptr || home[0] == '\0') { return {}; }
     return std::filesystem::path(home) / ".entropic" / "models"
-         / "gemma-4-26B-A4B-it-UD-IQ4_XS.gguf";
+         / "gemma-4-26B-A4B-it-qat-UD-Q4_K_XL.gguf";
 }
 
 entropic::ModelConfig make_a4b_config(const std::filesystem::path& gguf) {

@@ -26,7 +26,7 @@
 
 #include "v219_family_test_helpers.h"
 
-namespace { constexpr char K_GEMMA4_A4B[] = "gemma4_a4b"; }
+namespace { constexpr char K_GEMMA4_A4B[] = "gemma4_a4b_qat"; }
 CATCH_REGISTER_LISTENER(V219FamilyListener<K_GEMMA4_A4B>)
 
 // ── First-token smoke ──────────────────────────────────────
@@ -35,7 +35,7 @@ SCENARIO("Gemma 4 A4B GGUF loads and generates first token",
          "[model][v219][gemma4][a4b][smoke]")
 {
     if (!g_ctx.initialized) {
-        SKIP(skip_reason_or_default("gemma4_a4b"));
+        SKIP(skip_reason_or_default("gemma4_a4b_qat"));
     }
     GIVEN("an engine with gemma4_a4b loaded via Gemma4Adapter") {
         start_test_log("v219_gemma4_a4b_smoke");

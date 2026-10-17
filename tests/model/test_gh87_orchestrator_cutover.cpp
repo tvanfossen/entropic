@@ -19,14 +19,14 @@
 
 #include <entropic/types/tool_call.h>
 
-namespace { constexpr char K_GEMMA4_A4B[] = "gemma4_a4b"; }
+namespace { constexpr char K_GEMMA4_A4B[] = "gemma4_a4b_qat"; }
 CATCH_REGISTER_LISTENER(V219FamilyListener<K_GEMMA4_A4B>)
 
 SCENARIO("gh#87 cutover: params.tools drives common_chat through the orchestrator",
          "[model][gh87][cutover]")
 {
     if (!g_ctx.initialized) {
-        SKIP(skip_reason_or_default("gemma4_a4b"));
+        SKIP(skip_reason_or_default("gemma4_a4b_qat"));
     }
     GIVEN("a read_file tool supplied via params.tools (no system-msg injection)") {
         start_test_log("gh87_orchestrator_cutover");

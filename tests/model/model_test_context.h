@@ -54,6 +54,7 @@
 #include <chrono>
 #include <thread>
 #include <fstream>
+#include <stdexcept>
 #include <string>
 #include <vector>
 
@@ -263,19 +264,24 @@ inline bool load_harness_inputs(ModelTestContext& ctx,
  * generic-test harness.
  *
  * @param ctx Test context (config tiers mutated in place).
+ * @throws std::runtime_error when the small model is not on disk (v2.14.6).
  * @utility
- * @version 2.7.0
+ * @version 2.14.6
  */
 inline void use_small_default_model(ModelTestContext& ctx) {
     constexpr uintmax_t LARGE_GGUF_BYTES = 10ULL * 1024 * 1024 * 1024;
-    const std::string small_key = "qwen3_5_4b";
+    // v2.14.6: the pared model set's workhorse (user, 2026-10-17). It was
+    // qwen3_5_4b, which left the set; and a missing small model now FAILS
+    // the run instead of falling back to the configured (large) model — that
+    // fallback is how a deleted file turned engine-logic tests into a 13 GB
+    // load on a busy host.
+    const std::string small_key = "gemma4_e4b_qat";
     const auto* entry = ctx.registry.get(small_key);
     auto small_path = ctx.registry.resolve(small_key);
     if (entry == nullptr || !fs::is_regular_file(small_path)) {
-        spdlog::warn("Small test model '{}' unavailable at {} — generic tests "
-                     "fall back to the configured model.",
-                     small_key, small_path.string());
-        return;
+        throw std::runtime_error("generic model tests need '" + small_key
+            + "' at " + small_path.string() + " — run `entropic download "
+            + small_key + "`");
     }
     for (auto& [name, tier] : ctx.config.models.tiers) {
         std::error_code size_ec;

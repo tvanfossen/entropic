@@ -1,14 +1,18 @@
 // SPDX-License-Identifier: Apache-2.0
 /**
  * @file test_gh100_q8_kv.cpp
- * @brief gh#100: validate q8_0 KV-cache (cache_type_k/v) on the Gemma-4 E2B-Q4
+ * @brief gh#100: validate q8_0 KV-cache (cache_type_k/v) on the Gemma-4 E4B QAT Q4
  *        NPC tier under flash_attn — does it ~halve per-context KV (→ ~2x more
  *        #98 batch slots) WITHOUT the activation breakage that pinned E4B-Q4 to
  *        f16 KV? Backend-direct GPU test. Stochastic-safe: asserts grammar
  *        conformance + a bounded verb set, NEVER byte-exact q8==f16 (q8 is
  *        lossy and changes logits). E4B-Q4 is the documented negative anchor.
  *
- * @version 2.8.0 (gh#100)
+ * v2.14.6: retargeted to the model-test workhorse, gemma-4-E4B QAT Q4 — the
+ * pared model set (user, 2026-10-17) keeps one Q4 Gemma. The E4B-Q4 (non-QAT)
+ * negative-anchor scenario went with its model.
+ *
+ * @version 2.14.6
  */
 
 #include <catch2/catch_test_macros.hpp>
@@ -47,7 +51,7 @@ KvProbe run_probe(const fs::path& gguf, const char* k, const char* v,
     cfg.path = gguf;
     cfg.adapter = "gemma4";
     cfg.context_length = 4096;
-    cfg.gpu_layers = 99;          // E2B-Q4 is ~3 GB — fits fully on 11 GB
+    cfg.gpu_layers = 99;          // E4B QAT Q4 is ~4 GB — fits fully on 11 GB
     cfg.flash_attn = flash;
     cfg.cache_type_k = k;
     cfg.cache_type_v = v;
@@ -83,13 +87,13 @@ bool is_valid_verb(const std::string& s) {
 
 }  // namespace
 
-// ── A + B: the win + grammar equivalence on E2B-Q4 + flash_attn ──
+// ── A + B: the win + grammar equivalence on E4B QAT Q4 + flash_attn ──
 SCENARIO("gh#100: q8_0 KV halves per-seq bytes and stays valid on "
-         "Gemma-4 E2B-Q4 + flash_attn", "[model][gh100]") {
-  GIVEN("Gemma-4 E2B-Q4 (UD-Q4_K_XL) on disk") {
-    fs::path gguf = model_path("gemma-4-E2B-it-UD-Q4_K_XL.gguf");
+         "Gemma-4 E4B QAT Q4 + flash_attn", "[model][gh100]") {
+  GIVEN("Gemma-4 E4B QAT Q4 (UD-Q4_K_XL) on disk") {
+    fs::path gguf = model_path("gemma-4-E4B-it-qat-UD-Q4_K_XL.gguf");
     if (!fs::is_regular_file(gguf)) {
-        SKIP("E2B-Q4 GGUF not present: " + gguf.string());
+        SKIP("E4B QAT Q4 GGUF not present: " + gguf.string());
     }
 
     WHEN("generating the same verb prompt under f16 KV then q8_0 KV (FA on)") {
@@ -119,49 +123,18 @@ SCENARIO("gh#100: q8_0 KV halves per-seq bytes and stays valid on "
   }
 }
 
-// ── D: floor — default f16 KV path on E2B-Q4 is unchanged (additive) ──
-SCENARIO("gh#100 floor: default f16 KV path on E2B-Q4 is unchanged",
+// ── D: floor — default f16 KV path on E4B QAT Q4 is unchanged (additive) ──
+SCENARIO("gh#100 floor: default f16 KV path on E4B QAT Q4 is unchanged",
          "[model][gh100]") {
-  GIVEN("Gemma-4 E2B-Q4 on disk") {
-    fs::path gguf = model_path("gemma-4-E2B-it-UD-Q4_K_XL.gguf");
-    if (!fs::is_regular_file(gguf)) { SKIP("E2B-Q4 GGUF not present"); }
+  GIVEN("Gemma-4 E4B QAT Q4 on disk") {
+    fs::path gguf = model_path("gemma-4-E4B-it-qat-UD-Q4_K_XL.gguf");
+    if (!fs::is_regular_file(gguf)) { SKIP("E4B QAT Q4 GGUF not present"); }
     WHEN("running the default (f16) KV path with q8 OFF") {
       auto f16 = run_probe(gguf, "f16", "f16", /*flash=*/true);
       THEN("it produces a valid verb with a populated KV cache") {
         REQUIRE(f16.ok);
         CHECK(is_valid_verb(f16.out));
         CHECK(f16.kv_bytes > 0);
-      }
-    }
-  }
-}
-
-// ── C: negative reference — E4B-Q4 is the known-breakage anchor ──
-// Documents the arch/quant boundary. NON-FATAL on q8: if q8 breaks E4B-Q4
-// (garbage/empty) we record it as the documented negative; if a future
-// llama.cpp pin fixes it, the WARN can be upgraded to a CHECK.
-SCENARIO("gh#100 negative ref: E4B-Q4 + q8 KV breakage boundary",
-         "[model][gh100]") {
-  GIVEN("Gemma-4 E4B-Q4 (UD-Q4_K_XL) on disk") {
-    fs::path gguf = model_path("gemma-4-E4B-it-UD-Q4_K_XL.gguf");
-    if (!fs::is_regular_file(gguf)) { SKIP("E4B-Q4 GGUF not present"); }
-    WHEN("generating under f16 then q8 KV (FA on)") {
-      auto f16 = run_probe(gguf, "f16",  "f16",  true);
-      auto q8  = run_probe(gguf, "q8_0", "q8_0", true);
-      THEN("f16 is valid; q8 result recorded as the documented boundary") {
-        INFO("E4B f16_out=[" << f16.out << "] q8_out=[" << q8.out << "]");
-        REQUIRE(f16.ok);
-        CHECK(is_valid_verb(f16.out));
-        // q8 on E4B-Q4 + FA is the KNOWN-breakage anchor (docs/ENTROPIC_NPC_
-        // INFERENCE.md). Record it; do NOT FAIL the suite on a known-unsafe
-        // pin. Flip this WARN to a CHECK if a future pin fixes it.
-        if (!q8.ok || !is_valid_verb(q8.out)) {
-            WARN("E4B-Q4 + q8 KV produced no valid verb (documented "
-                 "boundary, expected at this pin): [" + q8.out + "]");
-        } else {
-            WARN("E4B-Q4 + q8 KV produced a valid verb — the breakage "
-                 "boundary may have shifted at this pin: [" + q8.out + "]");
-        }
       }
     }
   }

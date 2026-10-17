@@ -37,7 +37,7 @@
 #include <entropic/core/constitutional_validator.h>
 #include <entropic/core/hook_registry.h>
 
-namespace { constexpr char K_GEMMA4_E4B[] = "gemma4_e4b"; }
+namespace { constexpr char K_GEMMA4_E4B[] = "gemma4_e4b_qat"; }
 CATCH_REGISTER_LISTENER(V219FamilyListener<K_GEMMA4_E4B>)
 
 SCENARIO("gh#105: constitutional validator's toolless render must NOT clobber "
@@ -45,7 +45,7 @@ SCENARIO("gh#105: constitutional validator's toolless render must NOT clobber "
          "[model][gh105]")
 {
     if (!g_ctx.initialized) {
-        SKIP(skip_reason_or_default("gemma4_e4b"));
+        SKIP(skip_reason_or_default("gemma4_e4b_qat"));
     }
     GIVEN("an engine with tools staged + constitutional validation ENABLED") {
         start_test_log("gh105_validator_clobbers");

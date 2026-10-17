@@ -66,7 +66,7 @@ fs::path test_gguf() {
     const char* home = std::getenv("HOME");
     if (home == nullptr) { return {}; }
     return fs::path(home) / ".entropic" / "models"
-           / "gemma-4-E2B-it-qat-UD-Q4_K_XL.gguf";
+           / "gemma-4-E4B-it-qat-UD-Q4_K_XL.gguf";
 }
 
 /// @brief Fixed-size filler so each turn grows history by a constant.

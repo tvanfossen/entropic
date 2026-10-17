@@ -43,7 +43,7 @@ std::filesystem::path gemma4_model_path() {
     // native format". A 26B even at IQ4_XS formats reliably enough to
     // isolate the architecture from quant. CPU-offloaded on an 11GB GPU.
     return std::filesystem::path(home) / ".entropic" / "models"
-         / "gemma-4-26B-A4B-it-UD-IQ4_XS.gguf";
+         / "gemma-4-26B-A4B-it-qat-UD-Q4_K_XL.gguf";
 }
 
 std::vector<llama_token> tokenize(const llama_vocab* vocab,

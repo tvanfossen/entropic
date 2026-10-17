@@ -12,7 +12,7 @@
  * - gh#217: release while another session decodes unloaded the model under
  *   the decode — a CUDA error that killed `entropic serve`.
  *
- * Requires: GPU, gemma-4-E2B QAT GGUF on disk.
+ * Requires: GPU, gemma-4-E4B QAT GGUF on disk.
  * Run: inv test --model --model-only --filter v2146
  *
  * @version 2.14.6
@@ -41,7 +41,7 @@ using entropic::test::facade::TierSpec;
 TierSpec lead_tier() {
     TierSpec t;
     t.name = "lead";
-    t.gguf_key = "gemma4_e2b_qat";
+    t.gguf_key = "gemma4_e4b_qat";
     t.adapter = "gemma4";
     t.identity_body = "You are a terse assistant.";
     t.context_length = 4096;
@@ -51,7 +51,7 @@ TierSpec lead_tier() {
 
 /// @brief Skip unless the model is on disk.
 bool have_model() {
-    auto gguf = entropic::test::facade::model_gguf("gemma-4-E2B-it-qat-UD-Q4_K_XL.gguf");
+    auto gguf = entropic::test::facade::model_gguf("gemma-4-E4B-it-qat-UD-Q4_K_XL.gguf");
     return !gguf.empty() && fs::is_regular_file(gguf);
 }
 
@@ -59,7 +59,7 @@ bool have_model() {
 
 SCENARIO("gh#214: a prompt that does not fit fails the turn, typed",
          "[model][v2146][gh214]") {
-    if (!have_model()) { SKIP("gemma-4-E2B QAT GGUF not present"); }
+    if (!have_model()) { SKIP("gemma-4-E4B QAT GGUF not present"); }
     FacadeProject project("v2146_overflow");
     auto tier = lead_tier();
     tier.context_length = 2048;  // every tool staged (~5 K tokens) cannot fit
@@ -79,7 +79,7 @@ SCENARIO("gh#214: a prompt that does not fit fails the turn, typed",
 
 SCENARIO("gh#216: multi-byte text at the history cut does not poison later turns",
          "[model][v2146][gh216]") {
-    if (!have_model()) { SKIP("gemma-4-E2B QAT GGUF not present"); }
+    if (!have_model()) { SKIP("gemma-4-E4B QAT GGUF not present"); }
     FacadeProject project("v2146_utf8_history");
     // Three files, offset by 0/1/2 ASCII bytes before a run of U+2014 (3
     // bytes each): whatever the tool's own framing adds, at least two of
@@ -111,7 +111,7 @@ SCENARIO("gh#216: multi-byte text at the history cut does not poison later turns
 
 SCENARIO("gh#217: release is refused while another session is decoding",
          "[model][v2146][gh217]") {
-    if (!have_model()) { SKIP("gemma-4-E2B QAT GGUF not present"); }
+    if (!have_model()) { SKIP("gemma-4-E4B QAT GGUF not present"); }
     FacadeProject project("v2146_release_mid_decode");
     auto tier = lead_tier();
     tier.allowed_tools = {"entropic.complete"};

@@ -34,7 +34,7 @@
  * a global file auto-created from a pre-2.13 bundled default says `true`,
  * which would serve both files without ever asking the approver.
  *
- * Requires: GPU, gemma-4-E2B QAT GGUF on disk.
+ * Requires: GPU, gemma-4-E4B QAT GGUF on disk.
  * Run: ctest -L model -R outside-root-approval
  *
  * @version 2.13.0
@@ -116,9 +116,9 @@ SCENARIO("outside-root optional: a real model's reads outside its root "
     GIVEN("a project root, two files outside it, and an approver that "
           "accepts one") {
         auto gguf = entropic::test::facade::model_gguf(
-            "gemma-4-E2B-it-qat-UD-Q4_K_XL.gguf");
+            "gemma-4-E4B-it-qat-UD-Q4_K_XL.gguf");
         if (gguf.empty() || !fs::is_regular_file(gguf)) {
-            SKIP("gemma-4-E2B QAT GGUF not present at " + gguf.string());
+            SKIP("gemma-4-E4B QAT GGUF not present at " + gguf.string());
         }
 
         auto outside = fs::weakly_canonical(fs::temp_directory_path()) /
@@ -138,7 +138,7 @@ SCENARIO("outside-root optional: a real model's reads outside its root "
 
         entropic::test::facade::TierSpec lead;
         lead.name = "lead";
-        lead.gguf_key = "gemma4_e2b_qat";
+        lead.gguf_key = "gemma4_e4b_qat";
         lead.adapter = "gemma4";
         lead.identity_body =
             "You are a terse assistant with a filesystem.read_file tool. "

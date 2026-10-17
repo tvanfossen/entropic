@@ -40,11 +40,11 @@
  *
  * SIZING (v2.13.0). The first three arms carried the defect that broke the
  * gh#166 scenarios: the skip guard looked for the E4B **QAT** file while the
- * tier loaded `gguf_key = "gemma4_e4b"` — `gemma-4-E4B-it-Q8_0.gguf`, 7.6
+ * tier loaded `gguf_key = "gemma4_e4b_qat"` — `gemma-4-E4B-it-qat-UD-Q4_K_XL.gguf`, 7.6
  * GiB. Present-and-unchecked is not the same file as absent, so the guard
  * could not skip what the tier then failed to fit; it passed G3 only because
  * VRAM happened to be free. Guard and tier now name ONE model, the
- * registry's explicitly floor-safe entry (`gemma4_e2b_qat`, 2.44 GiB).
+ * registry's explicitly floor-safe entry (`gemma4_e4b_qat`, 2.44 GiB).
  *
  * They also ran `context_length: 2048` with the DEFAULT tool menu — all 27
  * registered tools, 18,594 bytes, ~5,000 prompt tokens — which is what
@@ -68,7 +68,7 @@
  * for B. Each arm now sets `explicit_completion = false`, and FacadeProject
  * writes `permissions.auto_approve: true`.
  *
- * Requires: GPU + gemma-4-E2B QAT GGUF (arms 1-4) and Qwen3.6-35B-A3B
+ * Requires: GPU + gemma-4-E4B QAT GGUF (arms 1-4) and Qwen3.6-35B-A3B
  * (arm 5). Run: ctest -L model -R gh158
  *
  * @version 2.13.0
@@ -151,15 +151,15 @@ SCENARIO("gh#158: two concurrent sessions do not bleed into each other",
 {
     GIVEN("one handle with concurrent_sessions enabled") {
         auto gguf = entropic::test::facade::model_gguf(
-            "gemma-4-E2B-it-qat-UD-Q4_K_XL.gguf");
+            "gemma-4-E4B-it-qat-UD-Q4_K_XL.gguf");
         if (gguf.empty() || !fs::is_regular_file(gguf)) {
-            SKIP("gemma-4-E2B QAT GGUF not present at " + gguf.string());
+            SKIP("gemma-4-E4B QAT GGUF not present at " + gguf.string());
         }
 
         entropic::test::facade::FacadeProject project("gh158_concurrent");
         entropic::test::facade::TierSpec lead;
         lead.name = "lead";
-        lead.gguf_key = "gemma4_e2b_qat";
+        lead.gguf_key = "gemma4_e4b_qat";
         lead.adapter = "gemma4";
         lead.identity_body =
             "You are a terse assistant. Answer in one short sentence.";
@@ -229,15 +229,15 @@ SCENARIO("gh#158: interrupting one session leaves the other running",
 {
     GIVEN("one handle with concurrent_sessions enabled") {
         auto gguf = entropic::test::facade::model_gguf(
-            "gemma-4-E2B-it-qat-UD-Q4_K_XL.gguf");
+            "gemma-4-E4B-it-qat-UD-Q4_K_XL.gguf");
         if (gguf.empty() || !fs::is_regular_file(gguf)) {
-            SKIP("gemma-4-E2B QAT GGUF not present at " + gguf.string());
+            SKIP("gemma-4-E4B QAT GGUF not present at " + gguf.string());
         }
 
         entropic::test::facade::FacadeProject project("gh158_interrupt");
         entropic::test::facade::TierSpec lead;
         lead.name = "lead";
-        lead.gguf_key = "gemma4_e2b_qat";
+        lead.gguf_key = "gemma4_e4b_qat";
         lead.adapter = "gemma4";
         lead.context_length = 4096;
         // See the first arm: one tool so the prompt fits, no completion
@@ -308,15 +308,15 @@ SCENARIO("gh#158: metrics and context reads are safe during live runs",
         // `entropic_context_usage` (which is exactly what a TUI status line
         // does, every frame) while two real decodes are in flight.
         auto gguf = entropic::test::facade::model_gguf(
-            "gemma-4-E2B-it-qat-UD-Q4_K_XL.gguf");
+            "gemma-4-E4B-it-qat-UD-Q4_K_XL.gguf");
         if (gguf.empty() || !fs::is_regular_file(gguf)) {
-            SKIP("gemma-4-E2B QAT GGUF not present at " + gguf.string());
+            SKIP("gemma-4-E4B QAT GGUF not present at " + gguf.string());
         }
 
         entropic::test::facade::FacadeProject project("gh158_metrics");
         entropic::test::facade::TierSpec lead;
         lead.name = "lead";
-        lead.gguf_key = "gemma4_e2b_qat";
+        lead.gguf_key = "gemma4_e4b_qat";
         lead.adapter = "gemma4";
         lead.context_length = 4096;
         // See the first arm. The poller needs two real decodes IN FLIGHT;
@@ -394,9 +394,9 @@ SCENARIO("gh#158: a batch does not wipe another session's resident KV",
 {
     GIVEN("a backend with a session pool and one resident session") {
         auto gguf = entropic::test::facade::model_gguf(
-            "gemma-4-E2B-it-qat-UD-Q4_K_XL.gguf");
+            "gemma-4-E4B-it-qat-UD-Q4_K_XL.gguf");
         if (gguf.empty() || !fs::is_regular_file(gguf)) {
-            SKIP("gemma-4-E2B QAT GGUF not present at " + gguf.string());
+            SKIP("gemma-4-E4B QAT GGUF not present at " + gguf.string());
         }
 
         entropic::LlamaCppBackend backend;

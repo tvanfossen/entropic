@@ -272,7 +272,8 @@ TEST_CASE("gh#108 MTP + flash + q4 KV succeeds on E4B Q2-mobile "
     // requires flash in llama.cpp, so this also exercises the KV-quant unlock
     // that the flash fix (upstream #25148) recovers, not just the flash path
     // alone.
-    auto target = gh87verify::model_path("gemma-4-E4B-it-qat-UD-Q2_K_XL.gguf");
+    // v2.14.6: E4B QAT Q4 — the Q2-mobile trunk left the pared model set.
+    auto target = gh87verify::model_path("gemma-4-E4B-it-qat-UD-Q4_K_XL.gguf");
     auto head = gh87verify::model_path("mtp-gemma-4-E4B-it.gguf");
     if (!std::filesystem::is_regular_file(target) ||
         !std::filesystem::is_regular_file(head)) {

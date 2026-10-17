@@ -210,9 +210,9 @@ SCENARIO("auto records WHICH lever it spent on a model that cannot fit",
     // deferred, not made. Changing the policy turns this red, which is the
     // point — the next person to touch it has to say so out loud.
     GIVEN("the 26B-A4B at IQ4_XS, which cannot fit at any ubatch") {
-        const auto path = model_file("gemma-4-26B-A4B-it-UD-IQ4_XS.gguf");
+        const auto path = model_file("gemma-4-26B-A4B-it-qat-UD-Q4_K_XL.gguf");
         if (path.empty()) {
-            SKIP("gemma-4-26B-A4B-it-UD-IQ4_XS.gguf not present");
+            SKIP("gemma-4-26B-A4B-it-qat-UD-Q4_K_XL.gguf not present");
         }
         const GgufShape shape = read_gguf_shape(path.string());
         REQUIRE(shape.known);

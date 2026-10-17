@@ -63,9 +63,9 @@ SCENARIO("gh#198: a deferred handle holds no GPU memory until it runs",
          "[model][gh198][2.14.0]") {
     GIVEN("a configured defer_load handle on a small model") {
         auto gguf = entropic::test::facade::model_gguf(
-            "gemma-4-E2B-it-qat-UD-Q4_K_XL.gguf");
+            "gemma-4-E4B-it-qat-UD-Q4_K_XL.gguf");
         if (gguf.empty() || !fs::is_regular_file(gguf)) {
-            SKIP("gemma-4-E2B QAT GGUF not present at " + gguf.string());
+            SKIP("gemma-4-E4B QAT GGUF not present at " + gguf.string());
         }
         if (this_process_gpu_mib() < 0) {
             SKIP("nvidia-smi unavailable — cannot observe per-process VRAM");
@@ -75,7 +75,7 @@ SCENARIO("gh#198: a deferred handle holds no GPU memory until it runs",
         project.defer_load = true;
         entropic::test::facade::TierSpec lead;
         lead.name = "lead";
-        lead.gguf_key = "gemma4_e2b_qat";
+        lead.gguf_key = "gemma4_e4b_qat";
         lead.adapter = "gemma4";
         lead.identity_body = "Answer in one short sentence.";
         lead.context_length = 2048;

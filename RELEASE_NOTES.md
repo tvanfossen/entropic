@@ -41,6 +41,11 @@ Three ways one turn could take down a served host (gh#214, gh#216, gh#217).
 
 ## Engine bug fixes
 
+- gh#220 (security, low): the `serve` HTTP listener bound with
+  `SO_REUSEPORT` (cpp-httplib's default), so a second process could bind the
+  same port. That process rewrote the token file and received a share of
+  the bearer-authenticated requests. The listener is now exclusive, and a
+  second `serve` on a held port fails with `ENTROPIC_ERROR_IO`.
 - gh#216: a tool result with a multi-byte character at the 200-byte summary
   cut made every later turn on the host fail with `type_error.316` until
   restart. The cut now lands on a character boundary, and the history can

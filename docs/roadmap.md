@@ -1423,6 +1423,9 @@ the current llama.cpp pin: `hexagon` (Qualcomm NPU), `openvino` (Intel NPU),
 | Intel NPU, Ascend, Mali/Adreno | ggml backends IN TREE | compile-time variant |
 | **RKNN** (Rockchip), **DRP-AI** (Renesas), **EdgeTPU** | NOT ggml, do not run GGUF — vendor toolchains, pre-compiled models | one backend each, behind the plugin boundary |
 
+Open questions (per-runtime capabilities, capability negotiation,
+multi-artifact registry, first target) are tracked in gh#215.
+
 Prove the boundary with **one** non-ggml backend. RKNN is the most tractable:
 RK3588 is already in this repo's test vocabulary, and the board is
 obtainable.

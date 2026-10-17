@@ -12,7 +12,7 @@ cite them.
 
 ---
 
-## Current State (v2.14.4 on `main`)
+## Current State (v2.14.5 on `main`)
 
 - C++20 engine, pure C ABI at every `.so` boundary
 - Unit + regression tests (CPU pre-commit gate), ThreadSanitizer preset
@@ -53,7 +53,12 @@ cite them.
 
 ---
 
-## v2.14.5 — failed turns are failures (gh#209, gh#212)
+## v2.14.6 — one turn cannot take down the host (gh#214, gh#216, gh#217)
+
+- Inference wrappers return the typed error; UTF-8-safe tool history that
+  cannot fail to serialize; exclusive release (#92). Follow-up gh#218.
+
+## v2.14.5 — failed turns are failures (gh#209, gh#212) (SHIPPED)
 
 - `ENTROPIC_ERROR_TURN_FAILED`; reason + unconfirmed text in last_error;
   failed turn rolled out of the session; turn-bounded answer selection that

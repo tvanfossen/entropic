@@ -168,8 +168,14 @@ static char* dup(const std::string& s) {
 
 /**
  * @brief Generate via orchestrator.
+ *
+ * gh#214 (v2.14.6): returns the result's error_code. All three generate
+ * wrappers returned 0 unconditionally, so a typed failure (a prompt that
+ * does not fit, a failed MTP decode, a residency refusal) reached the loop
+ * as an empty successful turn.
+ *
  * @callback
- * @version 2.0.1
+ * @version 2.14.6
  */
 static int iface_generate(const char* msgs_json,
                           const char* params_json,
@@ -184,7 +190,7 @@ static int iface_generate(const char* msgs_json,
     auto& out = result.raw_content.empty()
         ? result.content : result.raw_content;
     *result_json = dup(out);
-    return 0;
+    return static_cast<int>(result.error_code);  // gh#214
 }
 
 /**
@@ -200,7 +206,7 @@ static int iface_generate(const char* msgs_json,
  * the atomic but the atomic stayed false.
  *
  * @callback
- * @version 2.4.2
+ * @version 2.14.6
  */
 static int iface_generate_stream(
     const char* msgs_json, const char* params_json,
@@ -218,9 +224,9 @@ static int iface_generate_stream(
         }
     };
     auto tier = extract_tier(params_json, ctx->default_tier);
-    ctx->orchestrator->generate_streaming(
+    auto result = ctx->orchestrator->generate_streaming(
         messages, params, cb, cancel_flag, tier);
-    return 0;
+    return static_cast<int>(result.error_code);  // gh#214
 }
 
 /**
@@ -232,7 +238,7 @@ static int iface_generate_stream(
  * small poller thread (no per-token hook in the batch contract).
  *
  * @callback
- * @version 2.4.2
+ * @version 2.14.6
  */
 static int iface_generate_with_cancel(
     const char* msgs_json, const char* params_json,
@@ -267,7 +273,7 @@ static int iface_generate_with_cancel(
     auto& out = result.raw_content.empty()
         ? result.content : result.raw_content;
     *result_json = dup(out);
-    return 0;
+    return static_cast<int>(result.error_code);  // gh#214
 }
 
 /**

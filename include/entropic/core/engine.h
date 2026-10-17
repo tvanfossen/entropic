@@ -795,15 +795,22 @@ public:
      * thrown the guard is handle-exclusive again and v2.12.0 semantics hold
      * byte for byte.
      *
+     * @par Exclusive claims (gh#217, v2.14.6)
+     * `exclusive` is for operations that must not overlap ANY decode —
+     * model release frees the llama context every session's decode runs on.
+     * It is refused while any run is in flight on any key, and while it is
+     * held every other claim is refused, whatever `concurrent_sessions` says.
+     *
      * @param key Session key to claim; `""` is the default session.
+     * @param exclusive Claim the whole engine, not just `key` (gh#217).
      * @return true when this caller now owns the turn and MUST call
      *         `end_turn(key)`; false when the claim is refused, in which case
      *         the caller owns nothing and must not release.
      * @req REQ-API-009
      * @req REQ-LOOP-009
-     * @version 2.13.0 [reviewed]
+     * @version 2.14.6
      */
-    bool try_begin_turn(const std::string& key);
+    bool try_begin_turn(const std::string& key, bool exclusive = false);
 
     /**
      * @brief Claim a turn for the session bound to THIS thread (gh#158).
@@ -2221,6 +2228,7 @@ private:
 
     /// @brief gh#158: the runs currently in flight, keyed by session.
     std::unordered_map<std::string, std::shared_ptr<RunState>> active_runs_;
+    bool exclusive_turn_ = false; ///< gh#217: an exclusive claim (release) is held; under runs_mutex_
 
     /// @brief gh#158: may DIFFERENT keys run together? Default YES since the
     /// decision-#66 audit completed; `false` is the kill switch.

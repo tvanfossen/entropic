@@ -2,6 +2,40 @@ _Last 10 releases. Older history: [OLD_NOTES.md](OLD_NOTES.md). Kept short
 because `gh release create --notes-file` hits GitHub's 125,000-char release
 body limit once this file accumulates full project history — see v2.9.3._
 
+# entropic v2.14.6
+
+Three ways one turn could take down a served host (gh#214, gh#216, gh#217).
+
+## Read this first
+
+- **Generation failures are now reported as failures.** A prompt that does
+  not fit the tier's context, a failed speculative/MTP decode, and a model
+  that cannot be made resident all used to come back as an empty,
+  successful turn. The inference wrappers dropped the error code, so
+  v2.13.0's context-overflow refusal never actually worked in production.
+  Now the turn fails with `ENTROPIC_ERROR_TURN_FAILED` and a reason such as
+  `context_overflow (tier 'x')`.
+- **`release` is refused while any session is decoding** and returns
+  `ENTROPIC_ERROR_ALREADY_RUNNING`, or an `isError` result over MCP, so
+  retry it. While a release runs, no session can start a turn. It used to
+  unload the model under another session's decode, which crashed the host.
+
+## Engine bug fixes
+
+- gh#216: a tool result with a multi-byte character at the 200-byte summary
+  cut made every later turn on the host fail with `type_error.316` until
+  restart. The cut now lands on a character boundary, and the history can
+  no longer fail to serialize.
+- gh#217: see above. Cancelling a turn when its client disconnects is
+  gh#218.
+- gh#214: see above.
+
+## Distribution
+
+- CPU tarball: `entropic-2.14.6-linux-x86_64-cpu.tar.gz` (sha256 in companion file)
+- CUDA tarball: `entropic-2.14.6-linux-x86_64-cuda.tar.gz` (sha256 in companion file)
+- Python wrapper: `pip install entropic-engine==2.14.6` then `entropic install-engine`
+
 # entropic v2.14.5
 
 A failed turn is reported as a failure (gh#209, gh#212).

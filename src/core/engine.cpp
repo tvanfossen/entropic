@@ -3711,16 +3711,20 @@ void AgentEngine::set_active_session(const std::string& key) {
  * @dg_internal
  * @version 2.13.0
  */
-bool AgentEngine::try_begin_turn(const std::string& key) {
+bool AgentEngine::try_begin_turn(const std::string& key, bool exclusive) {
     {
         std::lock_guard<std::mutex> guard(runs_mutex_);
         // Same key twice is a genuine conflict whatever the configuration:
         // the two runs share one conversation. A DIFFERENT key is refused
         // only while per-session concurrency is off, which is the shipped
         // default and reproduces v2.12.0 exactly.
-        const bool blocked = active_runs_.count(key) > 0
-            || (!concurrent_sessions_ && !active_runs_.empty());
+        // gh#217 (v2.14.6): an EXCLUSIVE claim (model release) needs no run
+        // in flight on ANY key, and while held refuses every other claim —
+        // unloading frees the context a decode in another session is using.
+        const bool blocked = active_runs_.count(key) > 0 || exclusive_turn_
+            || ((exclusive || !concurrent_sessions_) && !active_runs_.empty());
         if (blocked) { return false; }
+        exclusive_turn_ = exclusive;
         auto claimed = std::make_shared<RunState>();
         claimed->key = key;
         active_runs_[key] = claimed;
@@ -3741,13 +3745,16 @@ bool AgentEngine::try_begin_turn(const std::string& key) {
  * @brief Release a turn claimed for a named session — see header.
  * @param key Session key that was claimed.
  * @dg_internal
- * @version 2.13.0
+ * @version 2.14.6
  */
 void AgentEngine::end_turn(const std::string& key) {
     {
         std::lock_guard<std::mutex> guard(runs_mutex_);
         active_runs_.erase(key);
         running_flag_.store(!active_runs_.empty());
+        // gh#217: an exclusive claim admits no other run, so the engine is
+        // empty exactly when the exclusive holder releases.
+        if (active_runs_.empty()) { exclusive_turn_ = false; }
     }
     // Releasing the claim releases the binding with it — see try_begin_turn.
     // Guarded on the key so a nested release cannot unbind an outer run.

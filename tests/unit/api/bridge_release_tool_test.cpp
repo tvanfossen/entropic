@@ -105,3 +105,37 @@ SCENARIO("v2.14.3: the bridge offers a release tool that frees the models",
         }
     }
 }
+
+SCENARIO("gh#217: release is refused while ANY session is decoding",
+         "[api][bridge][release][gh217][2.14.6]") {
+    // serve runs with per-session concurrency. release claimed only the
+    // DEFAULT session's turn, so with session "s" mid-decode the claim
+    // succeeded and the model was unloaded under the stream: CUDA error,
+    // host dead. The v2.14.3 test above claimed "" — the one key the guard
+    // did cover.
+    BridgeHandle b;
+    REQUIRE(b.h->engine->concurrent_sessions());
+    WHEN("another session holds a turn") {
+        REQUIRE(b.h->engine->try_begin_turn("s"));
+        auto reply = b.call("tools/call", {{"name", "entropic.release"},
+                                           {"arguments", json::object()}});
+        const auto rc = entropic_release_model(b.h, nullptr);
+        b.h->engine->end_turn("s");
+        THEN("both the tool and the C API refuse") {
+            INFO(reply.dump());
+            CHECK(reply["result"].value("isError", false));
+            CHECK(rc == ENTROPIC_ERROR_ALREADY_RUNNING);
+        }
+    }
+    WHEN("a release holds the engine") {
+        REQUIRE(b.h->engine->try_begin_turn("", /*exclusive=*/true));
+        const bool other = b.h->engine->try_begin_turn("s");
+        if (other) { b.h->engine->end_turn("s"); }
+        b.h->engine->end_turn("");
+        THEN("no session can start a turn until it is done") {
+            CHECK_FALSE(other);
+            REQUIRE(b.h->engine->try_begin_turn("s"));
+            b.h->engine->end_turn("s");
+        }
+    }
+}

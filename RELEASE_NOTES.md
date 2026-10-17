@@ -20,6 +20,17 @@ Three ways one turn could take down a served host (gh#214, gh#216, gh#217).
   retry it. While a release runs, no session can start a turn. It used to
   unload the model under another session's decode, which crashed the host.
 
+## New features
+
+- **`<prefix>.shutdown` bridge tool (opt-in):** stops `entropic serve`
+  over MCP, for operators who deny `kill`. It exists only when serve is
+  started with `--allow-shutdown` (config `mcp.external.allow_shutdown`).
+  It takes the same exclusive claim as `release`: refused with a
+  retryable error while any session is decoding, and no turn can start
+  once it is accepted. It replies "stopping", then the host runs its normal
+  SIGTERM shutdown. Any client holding the token can stop a host started
+  with the flag.
+
 ## Engine bug fixes
 
 - gh#216: a tool result with a multi-byte character at the 200-byte summary

@@ -876,6 +876,16 @@ struct ExternalMCPConfig {
     /// cannot be served, configure fails with ENTROPIC_ERROR_IO.
     int http_port = 0;
 
+    /// @brief Advertise `<prefix>.shutdown`, which stops the host (v2.14.6).
+    ///
+    /// false (default): the tool does not exist. The bridge is library code
+    /// that embedders run inside their own process, so a tool that signals
+    /// that process must be an explicit host decision. `entropic serve
+    /// --allow-shutdown` sets it. When accepted, shutdown takes the same
+    /// exclusive claim as release (refused while any session is decoding;
+    /// no turn starts after), replies, then raises SIGTERM on the process.
+    bool allow_shutdown = false;
+
     /// @brief Namespace for the tools this bridge advertises (gh#145).
     ///
     /// The engine is a substrate, not the product: `librentropic.so` is

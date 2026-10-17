@@ -37,6 +37,7 @@ namespace {
 struct ServeArgs {
     std::string config;  ///< --config FILE
     std::string port;    ///< --port N
+    bool allow_shutdown = false;  ///< --allow-shutdown (v2.14.6)
 };
 
 /**
@@ -46,14 +47,16 @@ struct ServeArgs {
  * @param[out] out Parsed arguments.
  * @return true when both were given and nothing unknown was.
  * @utility
- * @version 2.14.0
+ * @version 2.14.6
  */
 bool parse_args(int argc, char* argv[], ServeArgs& out) {
     bool ok = true;
     for (int i = 1; i < argc && ok; ++i) {
         const std::string flag = argv[i];
         const bool has_value = i + 1 < argc;
-        if (flag == "--config" && has_value) {
+        if (flag == "--allow-shutdown") {
+            out.allow_shutdown = true;
+        } else if (flag == "--config" && has_value) {
             out.config = argv[++i];
         } else if (flag == "--port" && has_value) {
             out.port = argv[++i];
@@ -109,7 +112,7 @@ int serve_until_stopped(entropic_handle_t handle, const sigset_t& set) {
  * @param[out] handle Created handle (destroy it even on failure).
  * @return ENTROPIC_OK, or the configure error.
  * @utility
- * @version 2.14.0
+ * @version 2.14.6
  */
 entropic_error_t configure_host(const ServeArgs& args,
                                 entropic_handle_t* handle) {
@@ -117,6 +120,9 @@ entropic_error_t configure_host(const ServeArgs& args,
     // wins over whatever the file says without a second config format.
     setenv("ENTROPIC_MCP__EXTERNAL__ENABLED", "true", 1);
     setenv("ENTROPIC_MCP__EXTERNAL__HTTP_PORT", args.port.c_str(), 1);
+    if (args.allow_shutdown) {  // v2.14.6: <prefix>.shutdown stops this host
+        setenv("ENTROPIC_MCP__EXTERNAL__ALLOW_SHUTDOWN", "true", 1);
+    }
     entropic_error_t rc = entropic_create(handle);
     if (rc == ENTROPIC_OK) {
         rc = entropic_configure_from_file(*handle, args.config.c_str());
@@ -127,18 +133,20 @@ entropic_error_t configure_host(const ServeArgs& args,
 /**
  * @brief Print usage for `serve`.
  * @utility
- * @version 2.14.1
+ * @version 2.14.6
  */
 void print_usage() {
     std::fprintf(stderr,
-        "usage: entropic serve --config FILE --port N\n"
+        "usage: entropic serve --config FILE --port N [--allow-shutdown]\n"
         "\n"
         "Serve the engine to every MCP client at http://127.0.0.1:N/mcp.\n"
         "Clients send 'Authorization: Bearer <token>', the token being the\n"
         "contents of ~/.entropic/serve/N.token (regenerated each start).\n"
         "Loopback only; for remote use, tunnel: ssh -L N:127.0.0.1:N host.\n"
         "Runs until SIGINT or SIGTERM. SIGUSR1 releases the loaded models\n"
-        "(the next request reloads) and keeps serving.\n");
+        "(the next request reloads) and keeps serving.\n"
+        "--allow-shutdown adds the <prefix>.shutdown MCP tool, which stops\n"
+        "this host in-band (refused while a turn is running).\n");
 }
 
 }  // namespace

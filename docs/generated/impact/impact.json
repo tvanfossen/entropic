@@ -1,49 +1,22 @@
 [
   {
-    "req_id": "REQ-API-005",
-    "req_name": "Uniform precondition guard on every exported entry point",
+    "req_id": "REQ-BRIDGE-001",
+    "req_name": "External bridge exposes the engine over a peer-authenticated unix socket",
     "functions": [
       {
-        "name": "entropic_release_model",
-        "file": "src/facade/entropic.cpp",
+        "name": "handle_shutdown",
+        "file": "src/facade/external_bridge.cpp",
         "version": "2.14.6"
       }
     ]
   },
   {
-    "req_id": "REQ-API-009",
-    "req_name": "Run entry-point family, result contract, and cross-thread interruptibility",
+    "req_id": "REQ-CFG-001",
+    "req_name": "Layered configuration resolution with most-specific-layer-wins precedence",
     "functions": [
       {
-        "name": "claim_exclusive",
-        "file": "src/facade/engine_handle.h",
-        "version": "2.14.6"
-      }
-    ]
-  },
-  {
-    "req_id": "REQ-INFER-019",
-    "req_name": "Model pool dedup and VRAM residency policy govern which tier is resident",
-    "functions": [
-      {
-        "name": "entropic_release_model",
-        "file": "src/facade/entropic.cpp",
-        "version": "2.14.6"
-      }
-    ]
-  },
-  {
-    "req_id": "REQ-MCP-020",
-    "req_name": "A bounded, thread-safe ring buffer retains recent tool calls for introspection",
-    "functions": [
-      {
-        "name": "to_json",
-        "file": "src/mcp/tool_call_history.cpp",
-        "version": "2.14.6"
-      },
-      {
-        "name": "truncate_result",
-        "file": "src/mcp/tool_call_history.cpp",
+        "name": "apply_mcp_external_env",
+        "file": "src/config/env_overrides.cpp",
         "version": "2.14.6"
       }
     ]

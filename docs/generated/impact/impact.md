@@ -2,9 +2,7 @@
 
 | REQ | Name | Functions Changed |
 |-----|------|-------------------|
-| REQ-API-005 | Uniform precondition guard on every exported entry point | entropic_release_model |
-| REQ-API-009 | Run entry-point family, result contract, and cross-thread interruptibility | claim_exclusive |
-| REQ-INFER-019 | Model pool dedup and VRAM residency policy govern which tier is resident | entropic_release_model |
-| REQ-MCP-020 | A bounded, thread-safe ring buffer retains recent tool calls for introspection | to_json, truncate_result |
+| REQ-BRIDGE-001 | External bridge exposes the engine over a peer-authenticated unix socket | handle_shutdown |
+| REQ-CFG-001 | Layered configuration resolution with most-specific-layer-wins precedence | apply_mcp_external_env |
 
-**Total: 4 requirement(s) affected, 5 function(s) changed**
+**Total: 2 requirement(s) affected, 2 function(s) changed**

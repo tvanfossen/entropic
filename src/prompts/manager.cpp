@@ -666,6 +666,47 @@ static std::string check_app_context_source(
 }
 
 /**
+ * @brief Whether a tier owes an explicit completion call — see header.
+ * @param tier Tier configuration.
+ * @param fm Identity frontmatter.
+ * @return true when the tier must end each turn with a tool call.
+ * @req REQ-IDEN-001
+ * @version 2.14.5
+ */
+bool derive_explicit_completion(const entropic::TierConfig& tier,
+                                const IdentityFrontmatter& fm) {
+    const bool grammar_bound = tier.grammar.has_value() || fm.grammar.has_value();
+    return fm.explicit_completion.value_or(
+        !tier.auto_chain.has_value() && !grammar_bound);
+}
+
+/**
+ * @brief Refuse an identity that sets both `grammar:` and
+ *        `explicit_completion: true` (v2.14.5).
+ *
+ * The tier would owe a tool call its grammar cannot emit: every turn would
+ * be nudged and then failed. Written in ONE file, that is the author
+ * contradicting themselves — a configure error. Across sources (a tier
+ * config `grammar` on an identity that says `true`, as every bundled
+ * agentic identity does) it is NOT refused: gh#154 requires that to
+ * configure. The facade warns instead, and each turn fails loudly.
+ *
+ * @param name Tier name.
+ * @param fm Identity frontmatter.
+ * @return Empty, or the configure error.
+ * @utility
+ * @version 2.14.5
+ */
+static std::string grammar_completion_conflict(
+    const std::string& name, const IdentityFrontmatter& fm) {
+    return (fm.grammar.has_value() && fm.explicit_completion.value_or(false))
+        ? "tier '" + name + "': explicit_completion: true with a grammar — a "
+          "grammar-constrained tier cannot make the tool call that completes "
+          "a turn, so every turn would fail; drop one of the two"
+        : std::string{};
+}
+
+/**
  * @brief Why a tier's identity cannot be loaded, or "" (gh#211, v2.14.4).
  *
  * Resolved exactly as the facade resolves it (an explicit `identity:` path,
@@ -679,7 +720,7 @@ static std::string check_app_context_source(
  * @param data_dir Bundled data directory.
  * @return Empty string when every tier's identity loads, else the reason.
  * @dg_internal
- * @version 2.14.4
+ * @version 2.14.5
  */
 static std::string check_identity_sources(
     const entropic::ParsedConfig& config,
@@ -699,6 +740,8 @@ static std::string check_identity_sources(
             err = "tier '" + name + "': identity " + path.string()
                 + " failed to load (" + why + ") — refusing to run the tier "
                   "without the allowed_tools it declares";
+        } else {
+            err = grammar_completion_conflict(name, id.frontmatter);
         }
     }
     return err;

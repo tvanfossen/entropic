@@ -267,6 +267,25 @@ ENTROPIC_EXPORT void load_shared_prompt_sources(
     std::string& app_context);
 
 /**
+ * @brief Whether a tier owes an explicit completion call (gh#212 follow-up).
+ *
+ * v2.14.5. The identity's `explicit_completion` wins when set. Otherwise a
+ * tier owes one unless it auto-chains (gh#117) — or, new in 2.14.5, unless
+ * it binds a GRAMMAR (tier config `grammar` or identity `grammar:`). A
+ * grammar-constrained tier emits only what its grammar admits and cannot
+ * make the tool call that completes a turn, so the old default nudged every
+ * such call three times and failed it; that cost was invisible until
+ * v2.14.5 began reporting failed turns.
+ *
+ * @param tier Tier configuration.
+ * @param fm The tier's identity frontmatter.
+ * @return true when the tier must end each turn with a tool call.
+ * @version 2.14.5
+ */
+ENTROPIC_EXPORT bool derive_explicit_completion(
+    const entropic::TierConfig& tier, const IdentityFrontmatter& fm);
+
+/**
  * @brief Check that every CONFIGURED prompt source can actually be loaded.
  *
  * gh#156: a consumer who names a path wanted that document. Silently

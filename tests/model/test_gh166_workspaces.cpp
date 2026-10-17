@@ -186,6 +186,12 @@ SCENARIO("gh#166: two workspaces on one handle do not read each other's "
         lead.allowed_tools = {"filesystem.read_file",
                               "filesystem.list_directory",
                               "entropic.complete"};
+        // v2.14.5: even with entropic.complete on the menu the model often
+        // answers in prose, and those turns were failing under the contract
+        // — hidden by ENTROPIC_OK, now reported (gh#209/#212) and rolled
+        // back. Workspaces are the subject here, not completion, so drop
+        // the contract (TierSpec::explicit_completion's documented rule).
+        lead.explicit_completion = false;
         auto* h = project.setup({lead});
         INFO("setup: " << project.setup_failure());
         REQUIRE(h != nullptr);

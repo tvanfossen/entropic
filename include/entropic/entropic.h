@@ -325,6 +325,14 @@ ENTROPIC_EXPORT void entropic_free(void* ptr);
  *         - ENTROPIC_ERROR_GENERATE_FAILED — inference error.
  *         - ENTROPIC_ERROR_ALREADY_RUNNING — another run in progress.
  *         - ENTROPIC_ERROR_INTERRUPTED — cancelled via entropic_interrupt().
+ *         - ENTROPIC_ERROR_TURN_FAILED — the turn ran but the engine failed
+ *           it (v2.14.5, gh#209/gh#212): explicit-completion retries
+ *           exhausted, or the prompt does not fit the tier. The conversation
+ *           is still delivered (result_json, or the session context for the
+ *           streaming entry points); entropic_last_error() says why. Text in
+ *           it is NOT an answer the turn confirmed. This applies to every
+ *           run entry point that drives the agent loop, including the
+ *           _as, _session and _messages variants.
  *
  * @threadsafety NOT serialized. gh#109 removed api_mutex from every run
  *   entry point so a long turn cannot block entropic_interrupt() from another
@@ -460,6 +468,14 @@ ENTROPIC_EXPORT entropic_error_t entropic_run_batch(
  *         - ENTROPIC_ERROR_ALREADY_RUNNING — another run in progress.
  *         - ENTROPIC_ERROR_CANCELLED — cancelled via cancel_flag.
  *         - ENTROPIC_ERROR_INTERRUPTED — cancelled via entropic_interrupt().
+ *         - ENTROPIC_ERROR_TURN_FAILED — the turn ran but the engine failed
+ *           it (v2.14.5, gh#209/gh#212): explicit-completion retries
+ *           exhausted, or the prompt does not fit the tier. The conversation
+ *           is still delivered (result_json, or the session context for the
+ *           streaming entry points); entropic_last_error() says why. Text in
+ *           it is NOT an answer the turn confirmed. This applies to every
+ *           run entry point that drives the agent loop, including the
+ *           _as, _session and _messages variants.
  *
  * @threadsafety NOT serialized. gh#109 removed api_mutex from every run
  *   entry point so a long turn cannot block entropic_interrupt() from another

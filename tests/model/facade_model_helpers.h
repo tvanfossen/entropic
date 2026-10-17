@@ -152,6 +152,15 @@ struct TierSpec {
     /// the run first.
     /// @version 2.13.0
     int max_consecutive_empty_turns = -1;
+
+    /// @brief Write `allowed_tools: []` — the tier may call NOTHING.
+    ///
+    /// Distinct from an empty `allowed_tools`, which omits the key and so
+    /// leaves the tier unrestricted. Since v2.14.4 (gh#211) a declared empty
+    /// list denies every tool, entropic.complete included, which makes a
+    /// tier that owes explicit completion fail its turn deterministically.
+    /// @version 2.14.5
+    bool no_tools = false;
 };
 
 /**
@@ -383,7 +392,9 @@ private:
             fm += "max_consecutive_empty_turns: "
                 + std::to_string(t.max_consecutive_empty_turns) + "\n";
         }
-        if (!t.allowed_tools.empty()) {
+        if (t.no_tools) {
+            fm += "allowed_tools: []\n";
+        } else if (!t.allowed_tools.empty()) {
             fm += "allowed_tools:\n";
             for (const auto& tool : t.allowed_tools) {
                 fm += "  - " + tool + "\n";

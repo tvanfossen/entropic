@@ -57,6 +57,10 @@ struct MockInference {
     /// "this prompt cannot fit the tier context") had no CPU coverage at all.
     int generate_rc = 0;
 
+    /// @brief v2.14.6: every messages_json the generate callbacks received,
+    /// in order — what the model was actually shown.
+    std::vector<std::string> seen_messages;
+
     /// @brief gh#208 (v2.14.2): sleep this long before each streamed token,
     ///        so two concurrent streaming runs overlap deterministically.
     int token_delay_ms = 0;
@@ -108,13 +112,14 @@ inline void mock_free(void* ptr) {
  * @version 1.10.1
  */
 inline int mock_generate(
-    const char* /*messages_json*/,
+    const char* messages_json,
     const char* /*params_json*/,
     char** result_json,
     void* user_data) {
     auto* mock = static_cast<MockInference*>(user_data);
     std::lock_guard<std::mutex> lock(mock->mutex);
     mock->generate_call_count++;
+    mock->seen_messages.emplace_back(messages_json != nullptr ? messages_json : "");
     if (!mock->response_queue.empty()) {
         *result_json = mock_strdup(mock->response_queue.front());
         mock->response_queue.erase(mock->response_queue.begin());
@@ -137,7 +142,7 @@ inline int mock_generate(
  * @version 1.10.1
  */
 inline int mock_generate_stream(
-    const char* /*messages_json*/,
+    const char* messages_json,
     const char* /*params_json*/,
     void (*on_token)(const char*, size_t, void*),
     void* token_ud,
@@ -155,6 +160,7 @@ inline int mock_generate_stream(
     {
         std::lock_guard<std::mutex> lock(mock->mutex);
         mock->generate_call_count++;
+        mock->seen_messages.emplace_back(messages_json != nullptr ? messages_json : "");
         rc = mock->generate_rc;
         resp = mock->response_queue.empty()
             ? mock->response

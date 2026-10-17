@@ -892,11 +892,27 @@ void AgentEngine::execute_iteration(LoopContext& ctx) {
 }
 
 /**
+ * @brief A turn's parsed tool calls as the JSON the prompt carries (v2.14.6).
+ * @param calls Parsed calls.
+ * @return JSON array text: [{id, name, arguments}], arguments as JSON text.
+ * @utility
+ * @version 2.14.6
+ */
+static std::string tool_calls_to_json(const std::vector<ToolCall>& calls) {
+    auto arr = nlohmann::json::array();
+    for (const auto& c : calls) {
+        arr.push_back({{"id", c.id}, {"name", c.name},
+                       {"arguments", c.arguments_json.empty() ? "{}" : c.arguments_json}});
+    }
+    return arr.dump(-1, ' ', false, nlohmann::json::error_handler_t::replace);
+}
+
+/**
  * @brief Turn a generation result into the next loop state.
  * @param ctx Loop context.
  * @param result Generation result.
  * @req REQ-LOOP-003
- * @version 2.9.19
+ * @version 2.14.6
  */
 void AgentEngine::process_generation_result(LoopContext& ctx,
                                             GenerateResult& result) {
@@ -905,6 +921,16 @@ void AgentEngine::process_generation_result(LoopContext& ctx,
                  result.finish_reason, tool_calls.size(),
                  cleaned.size());
     Message assistant_msg{"assistant", cleaned};
+    // v2.14.6: keep the model's own call for the prompt it is shown next.
+    // Only the cleaned text was stored, so the history read "question, empty
+    // reply, result" — results with no call — and the model began writing
+    // result-shaped prose ("Error: not_found") instead of calling the tool.
+    // `content` stays clean for consumers, storage and answer selection;
+    // ResponseGenerator::serialize_messages renders this instead.
+    if (!tool_calls.empty()) {
+        assistant_msg.metadata[tool_meta::kCallText] = result.content;
+        assistant_msg.metadata[tool_meta::kCalls] = tool_calls_to_json(tool_calls);
+    }
     ctx.messages.push_back(std::move(assistant_msg));
 
     bool made_tool_call =

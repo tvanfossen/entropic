@@ -793,6 +793,34 @@ static void serialize_content_parts(
 }
 
 /**
+ * @brief Append a message's tool-use fields to its prompt JSON (v2.14.6).
+ *
+ * The model never saw its own tool calls: only role + content travelled, so
+ * the history read "question, empty reply, result" and the model learned to
+ * write result-shaped prose instead of calling (test-outside-root-approval).
+ * These fields let the backend render the template's native tool turns.
+ *
+ * @param m Message.
+ * @param json Output being built (one object, before its closing brace).
+ * @utility
+ * @version 2.14.6
+ */
+static void append_tool_fields(const Message& m, std::string& json) {
+    const auto& md = m.metadata;
+    const auto calls = md.find(tool_meta::kCalls);
+    if (calls != md.end()) {
+        json += ",\"" + std::string(tool_meta::kCalls) + "\":" + calls->second;
+    }
+    for (const char* key : {tool_meta::kCallText, tool_meta::kCallId, tool_meta::kName}) {
+        const auto it = md.find(key);
+        if (it == md.end()) { continue; }
+        json += ",\"" + std::string(key) + "\":\"";
+        json_escape_into(it->second, json);
+        json += '"';
+    }
+}
+
+/**
  * @brief Serialize a message list to the engine-canonical JSON wire shape.
  *
  * Hand-rolled — core has no nlohmann/json dependency (design rule
@@ -804,7 +832,7 @@ static void serialize_content_parts(
  * @param messages Message vector to serialize.
  * @return JSON array string ready for entropic_inference_generate.
  * @dg_internal
- * @version 2.1.8
+ * @version 2.14.6
  */
 std::string ResponseGenerator::serialize_messages(
     const std::vector<Message>& messages) {
@@ -819,6 +847,7 @@ std::string ResponseGenerator::serialize_messages(
         } else {
             serialize_content_parts(messages[i].content_parts, json);
         }
+        append_tool_fields(messages[i], json);  // v2.14.6
         json += '}';
     }
     json += ']';

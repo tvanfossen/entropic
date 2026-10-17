@@ -116,20 +116,18 @@ inline void verify_family_common_chat(const std::string& gguf,
         // operator's deliberate allowance was recorded as a machine that ran
         // out of memory, with measured numbers that made it look verified.
         // Same defect the v2.1.9 family helper carried; same fix, same text.
+        // v2.14.6: only an explicit operator waiver skips — the load is
+        // auto-sized to this host (see v219_family_test_helpers.h).
         const bool waived = entropic::large_model_tests_waived(file_bytes);
-        const bool fits =
-            entropic::host_can_hold_warm_load(file_bytes, avail);
-        if (!sz_ec && (waived || !fits)) {
+        if (!sz_ec && waived) {
             entropic::test::SkipFacts facts;
             facts.key = gguf;
             facts.path = path.string();
             facts.file_bytes = file_bytes;
             facts.available_bytes = avail;
-            facts.needed_bytes = file_bytes + (2ull * 1024 * 1024 * 1024);
+            facts.needed_bytes = entropic::warm_load_needed_bytes(file_bytes);  // v2.14.6: the deciding number
             SKIP(entropic::test::skip_reason_text(
-                waived ? entropic::test::SkipCause::kLargeModelWaived
-                       : entropic::test::SkipCause::kHostRamInsufficient,
-                facts));
+                entropic::test::SkipCause::kLargeModelWaived, facts));
         }
     }
 

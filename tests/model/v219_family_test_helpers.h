@@ -167,19 +167,26 @@ inline bool init_orchestrator_for_v219_family(ModelTestContext& ctx,
     if (!size_ec && file_size > LARGE_GGUF_BYTES
         && entry->adapter == "qwen36") {
         facts.available_bytes = host_available_bytes();
-        facts.needed_bytes = file_size + (2ULL * 1024 * 1024 * 1024);
+        facts.needed_bytes = entropic::warm_load_needed_bytes(file_size);  // v2.14.6: the deciding number
         // gh#149: these are TWO rules, and until v2.13.0 both logged the RAM
         // text — so an explicit operator allowance was recorded as a host
         // that had run out of memory. An allowance is a decision someone
         // made; a shortfall is a measurement. They read differently now.
+        //
+        // v2.14.6: the host-RAM shortfall no longer SKIPS. The load below is
+        // auto-sized to this machine (gpu_layers: auto against free VRAM, mlock
+        // off so the CPU-side weights stay pageable), so a test that can run
+        // here must run here; the RAM estimate is logged as a measurement.
+        // Only an operator's explicit waiver still skips.
         const bool waived = entropic::large_model_tests_waived(file_size);
-        const bool fits = entropic::host_can_hold_warm_load(
-            file_size, facts.available_bytes);
-        if (waived || !fits) {
+        spdlog::info("v2.1.9 family: '{}' host MemAvailable {} MiB vs a "
+                     "conservative WARM estimate of {} MiB — loading "
+                     "auto-sized (not gated)", key,
+                     facts.available_bytes / (1024ULL * 1024),
+                     facts.needed_bytes / (1024ULL * 1024));
+        if (waived) {
             ctx.skip_reason = entropic::test::skip_reason_text(
-                waived ? entropic::test::SkipCause::kLargeModelWaived
-                       : entropic::test::SkipCause::kHostRamInsufficient,
-                facts);
+                entropic::test::SkipCause::kLargeModelWaived, facts);
             // One string, logged and reported — they cannot drift apart.
             spdlog::warn("v2.1.9 family: SKIPPING — {}", ctx.skip_reason);
             return false;

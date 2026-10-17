@@ -20,6 +20,14 @@ Three ways one turn could take down a served host (gh#214, gh#216, gh#217).
   retry it. While a release runs, no session can start a turn. It used to
   unload the model under another session's decode, which crashed the host.
 
+- **The model now sees its own tool calls.** After a tool call the stored
+  history kept only the cleaned text, so the model was shown a question, an
+  empty reply and then a result, never the call. On later turns it learned
+  to write result-shaped prose ("Error: not_found") instead of calling the
+  tool. Calls and results are now passed to the chat template as its native
+  tool-call and tool-response turns. Message `content`, as returned by
+  `entropic_session_context_get` and stored, is unchanged.
+
 ## New features
 
 - **`<prefix>.shutdown` bridge tool (opt-in):** stops `entropic serve`

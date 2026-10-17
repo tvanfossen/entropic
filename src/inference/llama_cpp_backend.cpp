@@ -1309,19 +1309,64 @@ float LlamaCppBackend::extract_token_logprob(
 
 /**
  * @brief Convert engine messages to llama_chat_message views.
+ *
+ * v2.14.6: the template-less path has no tool turns, so an assistant turn
+ * that made a call shows the call text the model wrote rather than its
+ * (empty) cleaned content.
+ *
  * @param messages Source messages (must outlive the returned views).
  * @return Vector of {role, content} c_str pointers into `messages`.
  * @utility
- * @version 2.3.7
+ * @version 2.14.6
  */
 static std::vector<llama_chat_message> to_llama_chat(
     const std::vector<Message>& messages) {
     std::vector<llama_chat_message> chat_msgs;
     chat_msgs.reserve(messages.size());
     for (const auto& msg : messages) {
-        chat_msgs.push_back({msg.role.c_str(), msg.content.c_str()});
+        const auto call = msg.metadata.find(tool_meta::kCallText);
+        chat_msgs.push_back({msg.role.c_str(), call != msg.metadata.end()
+                                 ? call->second.c_str() : msg.content.c_str()});
     }
     return chat_msgs;
+}
+
+/**
+ * @brief One engine message as a common_chat_msg, tool turns native (v2.14.6).
+ *
+ * An assistant turn that made calls carries them as `tool_calls`; a tool
+ * result becomes role "tool" with its call id and tool name. The template
+ * then renders its own tool-call and tool-response turns (gemma4:
+ * `<|tool_call>` / `<|tool_response>`). Before v2.14.6 the call vanished and
+ * the result was a bare user message, so the model learned that results
+ * arrive without calls and began writing them itself.
+ *
+ * @param msg Engine message.
+ * @return The converted message.
+ * @utility
+ * @version 2.14.6
+ */
+static common_chat_msg to_common_chat_msg(const Message& msg) {
+    common_chat_msg cm;
+    cm.role = msg.role;
+    cm.content = msg.content;
+    const auto calls = msg.metadata.find(tool_meta::kCalls);
+    auto arr = calls != msg.metadata.end()
+        ? nlohmann::json::parse(calls->second, nullptr, false) : nlohmann::json();
+    const size_t n = arr.is_array() ? arr.size() : 0;
+    for (size_t i = 0; n > i; ++i) {
+        cm.tool_calls.push_back({arr[i].value("name", ""),
+                                 arr[i].value("arguments", "{}"),
+                                 arr[i].value("id", "")});
+    }
+    const auto id = msg.metadata.find(tool_meta::kCallId);
+    if (id != msg.metadata.end()) {
+        cm.role = "tool";
+        cm.tool_call_id = id->second;
+        const auto name = msg.metadata.find(tool_meta::kName);
+        cm.tool_name = name != msg.metadata.end() ? name->second : std::string();
+    }
+    return cm;
 }
 
 /**
@@ -1335,17 +1380,22 @@ static std::vector<llama_chat_message> to_llama_chat(
  * @param messages Source messages.
  * @return Vector of common_chat_msg.
  * @utility
- * @version 2.6.1
+ * @version 2.14.6
  */
 static std::vector<common_chat_msg> to_common_chat(
     const std::vector<Message>& messages) {
     std::vector<common_chat_msg> out;
     out.reserve(messages.size());
+    size_t calls = 0;
+    size_t responses = 0;
     for (const auto& msg : messages) {
-        common_chat_msg cm;
-        cm.role = msg.role;
-        cm.content = msg.content;
-        out.push_back(std::move(cm));
+        out.push_back(to_common_chat_msg(msg));
+        calls += out.back().tool_calls.size();
+        responses += out.back().role == "tool" ? 1 : 0;
+    }
+    if (calls + responses > 0) {
+        logger->info("[chat] history: {} tool call(s), {} tool response(s) "
+                     "rendered as native turns", calls, responses);
     }
     return out;
 }

@@ -47,11 +47,31 @@ struct InterfaceContext {
 // ── JSON helpers ───────────────────────────────────────────
 
 /**
+ * @brief Carry a prompt message's tool-use fields into its metadata (v2.14.6).
+ * @param obj One message object from the prompt JSON.
+ * @param m Message being built.
+ * @utility
+ * @version 2.14.6
+ */
+static void read_tool_fields(const nlohmann::json& obj, Message& m) {
+    const auto calls = obj.find(tool_meta::kCalls);
+    if (calls != obj.end() && calls->is_array()) {
+        m.metadata[tool_meta::kCalls] = calls->dump();
+    }
+    for (const char* key : {tool_meta::kCallText, tool_meta::kCallId, tool_meta::kName}) {
+        const auto it = obj.find(key);
+        if (it != obj.end() && it->is_string()) {
+            m.metadata[key] = it->get<std::string>();
+        }
+    }
+}
+
+/**
  * @brief Parse JSON message array into Message vector.
  * @param json_str JSON array of {role, content} objects.
  * @return Parsed messages.
  * @utility
- * @version 2.0.1
+ * @version 2.14.6
  */
 static std::vector<Message> parse_msgs(const char* json_str) {
     std::vector<Message> msgs;
@@ -62,6 +82,7 @@ static std::vector<Message> parse_msgs(const char* json_str) {
         Message m;
         m.role = obj.value("role", "");
         m.content = obj.value("content", "");
+        read_tool_fields(obj, m);  // v2.14.6
         msgs.push_back(std::move(m));
     }
     return msgs;

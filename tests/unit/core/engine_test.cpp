@@ -11,6 +11,7 @@
 #include <entropic/core/engine_types.h>
 #include "mock_inference.h"
 #include <catch2/catch_test_macros.hpp>
+#include <nlohmann/json.hpp>
 
 using namespace entropic;
 using namespace entropic::test;
@@ -541,6 +542,74 @@ SCENARIO("gh#209/#212: a failed turn is rolled out of the session",
                 CHECK(turn.front().content == "second question");
                 CHECK(turn.size() > 1);
             }
+        }
+    }
+}
+
+SCENARIO("v2.14.6: the model's own tool call stays in the history it is shown",
+         "[engine][history][2.14.6]")
+{
+    // The assistant message kept only the CLEANED text, so a turn that made
+    // a tool call stored an empty assistant message, then the result as a
+    // bare user message. On the next turn the model saw results that arrive
+    // without calls and imitated one: "Error: not_found" as prose instead of
+    // calling read_file (test-outside-root-approval, ~13% pass). Keeping the
+    // call raised it to 5/7 in an A/B run.
+    GIVEN("a generation that makes a tool call") {
+        MockInference mock;
+        const std::string raw =
+            "<|tool_call>call:filesystem.read_file{path:<|\"|>a.txt<|\"|>}<tool_call|>";
+        mock.response_queue = {raw, "Done."};
+        mock.tool_calls_queue = {
+            R"([{"name":"filesystem.read_file","arguments":{"path":"a.txt"}}])", "[]"};
+        mock.parse_cleaned_override = "Reading the file.";
+        auto iface = make_mock_interface(mock);
+        LoopConfig lc;
+        lc.max_iterations = 4;
+        CompactionConfig cc;
+        AgentEngine engine(iface, lc, cc);
+        ToolExecutionInterface tex{};
+        tex.process_tool_calls = [](LoopContext&, const std::vector<ToolCall>&,
+                                    void*) -> std::vector<Message> {
+            Message r;  // shaped like ToolExecutor's result message
+            r.role = "user";
+            r.content = R"({"lines":[{"content":"x","line":1}]})";
+            r.metadata["tool_call_id"] = "tc-1";
+            r.metadata["tool_name"] = "filesystem.read_file";
+            return {r};
+        };
+        engine.set_tool_executor(tex);
+        auto out = engine.run(make_messages());
+        THEN("its assistant message carries the call for the prompt, content stays clean") {
+            const Message* call_msg = nullptr;
+            for (const auto& m : out) {
+                if (m.role == "assistant" && m.metadata.count("tool_call_text") > 0) {
+                    call_msg = &m;
+                }
+            }
+            REQUIRE(call_msg != nullptr);
+            CHECK(call_msg->metadata.at("tool_call_text") == raw);
+            CHECK(call_msg->content.find("<|tool_call>") == std::string::npos);
+        }
+        AND_THEN("the next generation is sent the call and its result as tool turns") {
+            // Structured, so the backend renders the template's native
+            // tool-call and tool-response turns; the raw text rides along for
+            // the template-less path.
+            REQUIRE(mock.seen_messages.size() >= 2);
+            auto sent = nlohmann::json::parse(mock.seen_messages[1]);
+            bool call = false;
+            bool response = false;
+            for (const auto& m : sent) {
+                if (m.value("role", "") == "assistant" && m.contains("tool_calls")) {
+                    call = m["tool_calls"].size() == 1
+                        && m["tool_calls"][0].value("name", "") == "filesystem.read_file"
+                        && m.value("tool_call_text", "") == raw;
+                }
+                response = response
+                    || m.value("tool_name", "") == "filesystem.read_file";
+            }
+            CHECK(call);
+            CHECK(response);
         }
     }
 }

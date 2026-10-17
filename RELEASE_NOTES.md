@@ -23,6 +23,16 @@ A failed turn is reported as a failure (gh#209, gh#212).
   `error: turn failed — <reason>`. Other ask errors are now `isError: true`
   too.
 
+- **Grammar-constrained tiers no longer owe a completion call by default.**
+  A tier whose config or identity binds a `grammar` used to default to
+  `explicit_completion: true`. It cannot make a tool call, so every call was
+  nudged three times and then failed; before 2.14.5 that was hidden behind
+  `ENTROPIC_OK` and cost four generations per call. It now defaults to false.
+  An identity that sets both `grammar:` and `explicit_completion: true` fails
+  configure. A config `grammar` on an identity that says `true` (every
+  bundled agentic identity does) configures with a warning, and its turns
+  fail with `ENTROPIC_ERROR_TURN_FAILED`.
+
 ## Engine bug fixes
 
 - gh#209: a turn with no answer of its own returned the previous turn's

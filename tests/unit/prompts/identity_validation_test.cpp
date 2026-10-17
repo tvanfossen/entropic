@@ -103,3 +103,58 @@ SCENARIO("gh#211: malformed YAML is a returned error, never an abort",
     INFO(err);
     CHECK_FALSE(err.empty());
 }
+
+SCENARIO("v2.14.5: a grammar-bound tier does not owe an explicit completion",
+         "[prompts][identity][grammar][gh212][2.14.5]") {
+    // A grammar-constrained tier cannot make a tool call. Defaulting it to
+    // explicit_completion nudged every call three times and then failed it —
+    // hidden behind ENTROPIC_OK until v2.14.5 reported failed turns.
+    entropic::TierConfig tier;
+    entropic::prompts::IdentityFrontmatter fm;
+    THEN("no grammar, no auto_chain: the contract applies, as before") {
+        CHECK(entropic::prompts::derive_explicit_completion(tier, fm));
+    }
+    THEN("an identity grammar turns the default off") {
+        fm.grammar = "npc_verbs";
+        CHECK_FALSE(entropic::prompts::derive_explicit_completion(tier, fm));
+    }
+    THEN("a tier-config grammar turns the default off") {
+        tier.grammar = std::filesystem::path("npc.gbnf");
+        CHECK_FALSE(entropic::prompts::derive_explicit_completion(tier, fm));
+    }
+    THEN("an explicit setting still wins") {
+        fm.grammar = "npc_verbs";
+        fm.explicit_completion = false;
+        CHECK_FALSE(entropic::prompts::derive_explicit_completion(tier, fm));
+    }
+}
+
+SCENARIO("v2.14.5: explicit_completion: true with a grammar fails configure",
+         "[prompts][identity][grammar][gh212][2.14.5]") {
+    Scratch s;
+    const fs::path data_dir = TEST_DATA_DIR;
+    std::ofstream(s.dir / "npc.md")
+        << "---\ntype: identity\nversion: 1\nname: npc\nfocus:\n  - act\n"
+           "grammar: npc_verbs\nexplicit_completion: true\n---\nAct.\n";
+    auto err = entropic::prompts::validate_configured_prompts(
+        with_identity(s.dir / "npc.md"), data_dir);
+    INFO(err);
+    CHECK(err.find("reader") != std::string::npos);
+    CHECK(err.find("grammar") != std::string::npos);
+    CHECK(err.find("explicit_completion") != std::string::npos);
+}
+
+SCENARIO("v2.14.5: a config grammar on an identity that owes completion "
+         "still configures", "[prompts][identity][grammar][gh154][2.14.5]") {
+    // gh#154 requires a tier-config grammar on a bundled agentic identity
+    // (which says explicit_completion: true) to configure. Only one FILE
+    // stating both is refused; across sources the facade warns.
+    Scratch s;
+    const fs::path data_dir = TEST_DATA_DIR;
+    std::ofstream(s.dir / "agent.md")
+        << "---\ntype: identity\nversion: 1\nname: agent\nfocus:\n  - act\n"
+           "explicit_completion: true\n---\nAct.\n";
+    auto cfg = with_identity(s.dir / "agent.md");
+    cfg.models.tiers["reader"].grammar = std::filesystem::path("npc.gbnf");
+    CHECK(entropic::prompts::validate_configured_prompts(cfg, data_dir).empty());
+}

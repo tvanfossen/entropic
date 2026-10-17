@@ -552,6 +552,32 @@ static void rewire_observers(entropic_handle_t h) {
 }
 
 /**
+ * @brief Warn when a tier-config grammar meets an identity that owes completion.
+ *
+ * v2.14.5. Across two sources this is allowed (gh#154 requires it to
+ * configure), but every turn of the tier will be nudged and then fail with
+ * ENTROPIC_ERROR_TURN_FAILED — the operator should hear that at configure.
+ *
+ * @param name Tier name.
+ * @param tier Tier configuration.
+ * @param fm The tier's identity frontmatter.
+ * @utility
+ * @version 2.14.5
+ */
+static void warn_grammar_completion(const std::string& name,
+                                    const entropic::TierConfig& tier,
+                                    const entropic::prompts::IdentityFrontmatter& fm) {
+    if (tier.grammar.has_value() && fm.explicit_completion.value_or(false)) {
+        s_log->warn("tier '{}': config grammar '{}' on an identity with "
+                    "explicit_completion: true — a grammar-constrained tier "
+                    "cannot make the completing tool call, so every turn "
+                    "will fail (ENTROPIC_ERROR_TURN_FAILED); set "
+                    "explicit_completion: false in the identity",
+                    name, tier.grammar->string());
+    }
+}
+
+/**
  * @brief Register per-tier ChildContextInfo with the engine.
  *
  * Extracted from configure_common to keep that function under the
@@ -562,7 +588,7 @@ static void rewire_observers(entropic_handle_t h) {
  * @param data_dir Resolved data directory for identity files.
  * @param shared_prefix Prefix assembled from constitution + app context.
  * @utility
- * @version 2.14.4
+ * @version 2.14.5
  */
 static void populate_tier_info(entropic_handle_t h,
                                const std::filesystem::path& data_dir,
@@ -573,8 +599,10 @@ static void populate_tier_info(entropic_handle_t h,
         auto parsed = entropic::prompts::resolve_tier_identity_full(
             tier, name, data_dir);
         info.system_prompt = shared_prefix + parsed.body;
-        info.explicit_completion = parsed.frontmatter.explicit_completion
-            .value_or(!tier.auto_chain.has_value());
+        // v2.14.5: a grammar-bound tier no longer owes one by default.
+        info.explicit_completion = entropic::prompts::derive_explicit_completion(
+            tier, parsed.frontmatter);
+        warn_grammar_completion(name, tier, parsed.frontmatter);
         // E6 (2.0.6-rc18): propagate per-identity caps from frontmatter
         // so AgentEngine::tri_get_tier_param surfaces them to the loop
         // and tool executor. -1 = "use global loop_config default".

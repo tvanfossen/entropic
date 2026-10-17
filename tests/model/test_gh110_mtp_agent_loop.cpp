@@ -93,10 +93,26 @@ SCENARIO("gh#110: MTP engages through the real agent loop (entropic_run)",
         // envelope), and speculative.{enabled,mtp}=true routed through the
         // non-cancellable dispatching generate() so run_generate_dispatch
         // (and therefore MTP) is actually reached.
+        // v2.14.5: this scenario is about MTP engaging, not the completion
+        // contract. The bundled lead owes an explicit completion, and a
+        // counting reply is prose — every turn was nudged and failed, which
+        // ENTROPIC_OK hid until v2.14.5 began reporting failed turns.
+        write_file(dir / "identity_lead.md",
+                   "---\ntype: identity\nversion: 1\nname: lead\n"
+                   "focus:\n  - continue sequences\n"
+                   // The bundled lead's allowlist: without one all 27
+                   // tools are staged (~7 K tokens) and a 4 K context
+                   // cannot hold the prompt.
+                   "allowed_tools:\n  - entropic.delegate\n"
+                   "  - entropic.pipeline\n  - entropic.complete\n"
+                   "enable_thinking: true\n"
+                   "explicit_completion: false\n---\n"
+                   "You continue the sequence you are given.\n");
         write_file(dir / "config.local.yaml",
                    "models:\n"
                    "  lead:\n"
                    "    path: " + target.string() + "\n"
+                   "    identity: " + (dir / "identity_lead.md").string() + "\n"
                    "    adapter: gemma4\n"
                    "    context_length: 4096\n"
                    "    gpu_layers: 99\n"

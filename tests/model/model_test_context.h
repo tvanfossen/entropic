@@ -14,6 +14,7 @@
 #pragma once
 
 #include <entropic/config/bundled_models.h>
+#include <entropic/inference/interface_factory.h>
 #include <entropic/config/identity.h>
 #include <entropic/config/loader.h>
 #include <entropic/core/identity_manager.h>
@@ -70,6 +71,7 @@ using namespace entropic;
  */
 struct ModelTestContext {
     std::unique_ptr<ModelOrchestrator> orchestrator; ///< Model orchestrator
+    InterfaceContext* iface_ctx = nullptr;           ///< v2.14.6: production iface context (make_real_interface)
     config::BundledModels registry;                  ///< Bundled model registry
     ParsedConfig config;                             ///< Parsed configuration
     std::string model_path;                          ///< Resolved model path
@@ -568,45 +570,6 @@ inline std::vector<Message> parse_messages_json(const char* msgs_json) {
 }
 
 /**
- * @brief Parse generation params from JSON, with test defaults.
- * @param params_json JSON params string from engine.
- * @return GenerationParams with engine values or test defaults.
- * @utility
- * @version 1.10.2
- */
-inline GenerationParams parse_gen_params(const char* params_json) {
-    auto params = test_gen_params();
-    if (params_json == nullptr) { return params; }
-    auto obj = json::parse(params_json, nullptr, false);
-    if (!obj.is_object()) { return params; }
-    if (obj.contains("max_tokens")) {
-        params.max_tokens = obj["max_tokens"].get<int>();
-    }
-    if (obj.contains("temperature")) {
-        params.temperature = obj["temperature"].get<float>();
-    }
-    // gh#87 (v2.7.0): carry the per-turn tool defs so they reach the
-    // orchestrator → set_active_tools → common_chat render. Without this
-    // the engine-loop harness would drop tools and fall back to no-tool
-    // rendering (the GenericAdapter can't parse native formats).
-    if (obj.contains("tools") && obj["tools"].is_string()) {
-        params.tools = obj["tools"].get<std::string>();
-    }
-    // gh#89: carry grammar selection through the harness, matching the
-    // production param parser. Without this the harness DROPPED grammar_key,
-    // so grammar-constrained generation (e.g. the constitutional critique
-    // schema) silently ran UNCONSTRAINED — the validator then fell through
-    // its fail-open net on the bundled model's free-form output.
-    if (obj.contains("grammar_key") && obj["grammar_key"].is_string()) {
-        params.grammar_key = obj["grammar_key"].get<std::string>();
-    }
-    if (obj.contains("grammar") && obj["grammar"].is_string()) {
-        params.grammar = obj["grammar"].get<std::string>();
-    }
-    return params;
-}
-
-/**
  * @brief Allocate a C string copy (freed by real_free).
  * @param s Source string.
  * @return Heap-allocated copy.
@@ -626,105 +589,6 @@ inline char* alloc_cstr(const std::string& s) {
 // user_data points to ModelTestContext (g_ctx).
 
 /**
- * @brief Batch generate via orchestrator (C wrapper).
- * @param msgs_json JSON messages (borrowed).
- * @param params_json Generation params JSON (parsed for overrides).
- * @param result_json Output response string.
- * @param user_data ModelTestContext pointer.
- * @return 0 on success.
- * @callback
- * @version 1.10.2
- */
-inline int real_generate(const char* msgs_json,
-                         const char* params_json,
-                         char** result_json,
-                         void* user_data) {
-    auto* ctx = static_cast<ModelTestContext*>(user_data);
-    auto messages = parse_messages_json(msgs_json);
-    auto params = parse_gen_params(params_json);
-    auto result = ctx->orchestrator->generate(
-        messages, params, ctx->default_tier);
-    *result_json = alloc_cstr(result.raw_content.empty()
-        ? result.content : result.raw_content);
-    return 0;
-}
-
-/**
- * @brief Streaming generate via orchestrator (C wrapper).
- * @param msgs_json JSON messages.
- * @param params_json Generation params JSON (parsed for overrides).
- * @param on_token Token callback.
- * @param token_ud Token callback user data.
- * @param cancel Cancel flag pointer.
- * @param user_data ModelTestContext pointer.
- * @return 0 on success.
- * @callback
- * @version 1.10.2
- */
-inline int real_generate_stream(const char* msgs_json,
-                                const char* params_json,
-                                void (*on_token)(const char*, size_t, void*),
-                                void* token_ud,
-                                int* cancel,
-                                void* user_data)
-{
-    if (cancel != nullptr && *cancel != 0) { return 0; }
-    auto* ctx = static_cast<ModelTestContext*>(user_data);
-    auto messages = parse_messages_json(msgs_json);
-    auto params = parse_gen_params(params_json);
-    std::atomic<bool> cancel_flag(false);
-    std::function<void(std::string_view)> stream_cb =
-        [on_token, token_ud](std::string_view tok)
-        { on_token(tok.data(), tok.size(), token_ud); };
-    ctx->orchestrator->generate_streaming(
-        messages, params, stream_cb, cancel_flag, ctx->default_tier);
-    return 0;
-}
-
-/**
- * @brief Route messages to tier (C wrapper).
- * @param msgs_json JSON messages.
- * @param result_json Output tier name.
- * @param user_data ModelTestContext pointer.
- * @return 0 on success.
- * @callback
- * @version 1.10.2
- */
-inline int real_route(const char* msgs_json,
-                      char** result_json,
-                      void* user_data) {
-    auto* ctx = static_cast<ModelTestContext*>(user_data);
-    auto messages = parse_messages_json(msgs_json);
-    auto tier = ctx->orchestrator->route(messages);
-    *result_json = alloc_cstr(tier);
-    return 0;
-}
-
-/**
- * @brief Raw text completion (C wrapper).
- * @param prompt Raw prompt string.
- * @param params_json Params (unused).
- * @param result_json Output response string.
- * @param user_data ModelTestContext pointer.
- * @return 0 on success.
- * @callback
- * @version 1.10.2
- */
-inline int real_complete(const char* prompt,
-                         const char* /*params_json*/,
-                         char** result_json,
-                         void* user_data) {
-    auto* ctx = static_cast<ModelTestContext*>(user_data);
-    auto messages = make_messages("", prompt);
-    auto params = test_gen_params();
-    params.max_tokens = 1;
-    auto result = ctx->orchestrator->generate(
-        messages, params, ctx->default_tier);
-    *result_json = alloc_cstr(result.content);
-    return 0;
-}
-
-/**
  * @brief Parse tool calls from raw content (C wrapper).
  * @param raw_content Raw model output.
  * @param cleaned_content Output cleaned content.
@@ -734,79 +598,6 @@ inline int real_complete(const char* prompt,
  * @callback
  * @version 1.10.2
  */
-/**
- * @brief Parse tool calls from raw model output via the adapter.
- * @param raw_content Raw model output string.
- * @param cleaned_content Output: content with tool calls stripped.
- * @param tool_calls_json Output: JSON array of parsed tool calls.
- * @param user_data Pointer to ModelTestContext.
- * @return 0 on success, non-zero on failure.
- * @internal
- * @version 2.7.1
- */
-inline int real_parse_tool_calls(const char* raw_content,
-                                 char** cleaned_content,
-                                 char** tool_calls_json,
-                                 void* user_data)
-{
-    auto* ctx = static_cast<ModelTestContext*>(user_data);
-    std::string raw = raw_content ? raw_content : "";
-
-    // gh#87 (v2.7.0): mirror production iface_parse_tool_calls — when the
-    // last generate rendered through common_chat (tools staged), parse via
-    // the backend's captured params; the model emitted its native format.
-    auto tier = ctx->orchestrator->last_used_tier();
-    if (tier.empty()) { tier = ctx->default_tier; }
-    auto* llama = dynamic_cast<LlamaCppBackend*>(
-        ctx->orchestrator->get_backend(tier));
-    if (llama != nullptr && llama->common_chat_parse_reliable()) {
-        auto cc = llama->parse_response(raw);
-        apply_action_envelope_recovery(cc.tool_calls, raw);  // gh#88
-        *cleaned_content = alloc_cstr(cc.content);
-        // gh#93: shared typed serialization — mirror production exactly.
-        *tool_calls_json = alloc_cstr(serialize_tool_calls(cc.tool_calls));
-        return 0;
-    }
-
-    auto* adapter = ctx->orchestrator->get_adapter(tier);  // gh#89: routed tier
-    if (adapter == nullptr) {
-        *cleaned_content = alloc_cstr(raw);
-        *tool_calls_json = alloc_cstr("[]");
-        return 0;
-    }
-    auto parsed = adapter->parse_tool_calls(raw);
-    *cleaned_content = alloc_cstr(parsed.cleaned_content);
-    *tool_calls_json = alloc_cstr(serialize_tool_calls(parsed.tool_calls));
-    return 0;
-}
-
-/**
- * @brief Check if response is complete (C wrapper).
- * @param content Response content.
- * @param tool_calls_json Tool calls JSON.
- * @param user_data Unused.
- * @return 1 if complete, 0 if not.
- * @callback
- * @version 1.10.2
- */
-inline int real_is_complete(const char* /*content*/,
-                            const char* tool_calls_json,
-                            void* /*user_data*/) {
-    auto tc = json::parse(tool_calls_json, nullptr, false);
-    if (tc.is_array() && !tc.empty()) { return 0; }
-    return 1;
-}
-
-/**
- * @brief Free a C string allocated by wrappers.
- * @param ptr Pointer to free.
- * @callback
- * @version 1.10.2
- */
-inline void real_free(void* ptr) {
-    free(ptr);
-}
-
 /**
  * @brief Provide structured tool defs for engine-loop tests (gh#87).
  *
@@ -842,24 +633,30 @@ inline int real_get_tool_prompt(const char* /*tier*/, char** result,
 
 /**
  * @brief Build an InferenceInterface wired to the live model.
+ *
+ * v2.14.6: the PRODUCTION wrappers (`build_orchestrator_interface`), not a
+ * harness copy. The copy had drifted three ways at once: it returned 0
+ * whatever the orchestrator said (gh#214), it parsed params without
+ * `force_tool_call`, and it parsed messages without the tool-call fields the
+ * native tool turns need — so model tests ran a degraded engine and passed
+ * or failed for the wrong reasons. Only `get_tool_prompt` stays the
+ * harness's (the facade supplies it in production).
+ *
+ * Built once and reused: an engine in one scenario must never see its
+ * interface context destroyed by the next scenario's call.
+ *
  * @return Wired interface.
  * @utility
- * @version 2.7.0
+ * @version 2.14.6
  */
 inline InferenceInterface make_real_interface() {
-    InferenceInterface iface;
-    iface.generate = real_generate;
-    iface.generate_stream = real_generate_stream;
-    iface.route = real_route;
-    iface.complete = real_complete;
-    iface.parse_tool_calls = real_parse_tool_calls;
-    iface.is_response_complete = real_is_complete;
-    iface.get_tool_prompt = real_get_tool_prompt;  // gh#87: params.tools path
-    iface.tool_prompt_data = &g_ctx;
-    iface.free_fn = real_free;
-    iface.backend_data = &g_ctx;
-    iface.orchestrator_data = &g_ctx;
-    iface.adapter_data = &g_ctx;
+    static InferenceInterface iface{};
+    if (g_ctx.iface_ctx == nullptr) {
+        iface = build_orchestrator_interface(
+            g_ctx.orchestrator.get(), g_ctx.default_tier, &g_ctx.iface_ctx);
+        iface.get_tool_prompt = real_get_tool_prompt;  // gh#87: params.tools path
+        iface.tool_prompt_data = &g_ctx;
+    }
     return iface;
 }
 
@@ -1091,6 +888,10 @@ public:
      * @version 2.14.0
      */
     void testRunEnded(Catch::TestRunStats const& stats) override {
+        // v2.14.6: release the production iface context before the
+        // orchestrator it points at shuts down.
+        destroy_orchestrator_interface(g_ctx.iface_ctx);
+        g_ctx.iface_ctx = nullptr;
         if (g_ctx.orchestrator) {
             g_ctx.orchestrator->shutdown();
         }

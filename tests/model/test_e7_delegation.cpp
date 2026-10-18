@@ -101,8 +101,8 @@ namespace fs = std::filesystem;
 /// @version 2.13.0
 struct PatchCapture {
     int fired = 0;        ///< Times the complete callback ran
-    size_t files = 0;     ///< files_touched_len of the last call
-    std::string patch;    ///< Patch text of the last call
+    size_t files = 0;     ///< files_touched_len summed over every call (v2.14.6)
+    std::string patch;    ///< Patch text of every call, appended (v2.14.6)
 };
 
 /**
@@ -354,8 +354,11 @@ SCENARIO("gh#160: an isolated delegation never writes the project, and "
             [](const ent_delegation_result_t* r, void* ud) {
                 auto* c = static_cast<PatchCapture*>(ud);
                 c->fired++;
-                c->files = r->files_touched_len;
-                c->patch.assign(r->patch, r->patch_len);
+                // v2.14.6: ACCUMULATE. This kept only the LAST delegation's
+                // patch, so a later no-op delegation (the lead acknowledging
+                // on turn 2) erased the evidence of the edit that did run.
+                c->files += r->files_touched_len;
+                c->patch.append(r->patch, r->patch_len);
                 return ENT_DECISION_ACCEPT;
             }, &cap);
 

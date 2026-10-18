@@ -1,1 +1,13 @@
-[]
+[
+  {
+    "req_id": "REQ-LOOP-007",
+    "req_name": "Engine-authored transcript shaping keeps the system prompt bit-stable",
+    "functions": [
+      {
+        "name": "inject_engine_state_reminder",
+        "file": "src/core/response_generator.cpp",
+        "version": "2.14.6"
+      }
+    ]
+  }
+]

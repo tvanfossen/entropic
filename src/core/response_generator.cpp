@@ -888,6 +888,10 @@ std::string ResponseGenerator::build_params_json(
     return j.dump();
 }
 
+/// v2.14.6: the iteration counter is sent only in the final this-many
+/// iterations of the budget (REQ-LOOP-007).
+static constexpr int kReminderWindow = 3;
+
 /**
  * @brief Append "[engine] iteration N/MAX, tool calls so far K." as a
  *        NEW user message at the end of the prompt (per-turn reminder).
@@ -904,10 +908,15 @@ std::string ResponseGenerator::build_params_json(
  * most-recent context the model sees before generating — and is not
  * persisted into ctx.messages. (#16)
  *
+ * v2.14.6: only when it matters — the iteration counter in the final
+ * kReminderWindow iterations, and the one-shot validation / anti-spiral
+ * lines whenever they are set. An ordinary turn carries no note.
+ *
  * @return A copy of the message list with the reminder appended as a
- *         trailing user message; the caller's ctx.messages is unchanged.
+ *         trailing user message when there is one to send; the caller's
+ *         ctx.messages is unchanged.
  * @req REQ-LOOP-007
- * @version 2.1.4
+ * @version 2.14.6
  */
 std::vector<Message> ResponseGenerator::inject_engine_state_reminder(
     const std::vector<Message>& messages,
@@ -915,18 +924,26 @@ std::vector<Message> ResponseGenerator::inject_engine_state_reminder(
     int max_iter = ctx.effective_max_iterations >= 0
         ? ctx.effective_max_iterations
         : loop_config_.max_iterations;
-    std::string reminder = "[engine] iteration "
-        + std::to_string(ctx.metrics.iterations)
-        + "/" + std::to_string(max_iter)
-        + ", tool calls so far: "
-        + std::to_string(ctx.metrics.tool_calls) + ".";
+    // v2.14.6: the counter shows only near the budget. Sent every turn, the
+    // model read it as the user's request ("I see you've provided a status
+    // update", test-v2141) — after a native tool response it is the only
+    // plain user text left. Where the budget is close it is worth saying.
+    std::string reminder;
+    if (max_iter - ctx.metrics.iterations < kReminderWindow) {
+        reminder = "[engine] iteration "
+            + std::to_string(ctx.metrics.iterations)
+            + "/" + std::to_string(max_iter)
+            + ", tool calls so far: "
+            + std::to_string(ctx.metrics.tool_calls) + ".";
+    }
 
     // Demo ask #2 (v2.1.0): if the previous turn was validator-rejected,
     // surface the reason so the model knows WHY it's being asked again.
     // Engine clears pending_validation_feedback after this turn — the
     // line is one-shot.
     if (!ctx.pending_validation_feedback.empty()) {
-        reminder += "\n[engine] previous turn rejected: "
+        reminder += (reminder.empty() ? "" : "\n")
+                  + std::string("[engine] previous turn rejected: ")
                   + ctx.pending_validation_feedback;
     }
     // Demo ask #5 (v2.1.0): anti-spiral primitive. ToolExecutor
@@ -934,15 +951,18 @@ std::vector<Message> ResponseGenerator::inject_engine_state_reminder(
     // max_consecutive_same_tool. Same one-shot lifecycle as the
     // validation feedback above; engine clears after this turn.
     if (!ctx.pending_anti_spiral_warning.empty()) {
-        reminder += "\n[engine] anti-spiral: "
+        reminder += (reminder.empty() ? "" : "\n")
+                  + std::string("[engine] anti-spiral: ")
                   + ctx.pending_anti_spiral_warning;
     }
 
     auto result = messages;
-    Message reminder_msg;
-    reminder_msg.role = "user";
-    reminder_msg.content = std::move(reminder);
-    result.push_back(std::move(reminder_msg));
+    if (!reminder.empty()) {
+        Message reminder_msg;
+        reminder_msg.role = "user";
+        reminder_msg.content = std::move(reminder);
+        result.push_back(std::move(reminder_msg));
+    }
     return result;
 }
 

@@ -460,7 +460,7 @@ static int mock_generate_capturing(
 SCENARIO("ResponseGenerator injects iteration / budget reminder as user message",
          "[core][response_generator][2.1.4][issue-16]")
 {
-    GIVEN("a ResponseGenerator and a LoopContext at iteration 7/50, 12 tool calls") {
+    GIVEN("a ResponseGenerator and a LoopContext at iteration 48/50, 12 tool calls") {
         InferenceInterface iface{};
         iface.generate = mock_generate_capturing;
         iface.free_fn = mock_free;
@@ -474,7 +474,8 @@ SCENARIO("ResponseGenerator injects iteration / budget reminder as user message"
         LoopContext ctx{};
         ctx.state = AgentState::EXECUTING;
         ctx.locked_tier = "lead";
-        ctx.metrics.iterations = 7;
+        // v2.14.6: within the final 3 iterations, where the counter shows.
+        ctx.metrics.iterations = 48;
         ctx.metrics.tool_calls = 12;
         Message sys{"system", "you are a helpful agent"};
         ctx.messages.push_back(std::move(sys));
@@ -487,7 +488,7 @@ SCENARIO("ResponseGenerator injects iteration / budget reminder as user message"
             gen.generate_response(ctx);
 
             THEN("the captured messages contain the iteration reminder line") {
-                CHECK(g_captured_msgs.find("[engine] iteration 7/50")
+                CHECK(g_captured_msgs.find("[engine] iteration 48/50")
                       != std::string::npos);
                 CHECK(g_captured_msgs.find("tool calls so far: 12")
                       != std::string::npos);
@@ -502,6 +503,48 @@ SCENARIO("ResponseGenerator injects iteration / budget reminder as user message"
                 CHECK(ctx.messages.front().content
                       == "you are a helpful agent");
             }
+        }
+    }
+}
+
+SCENARIO("v2.14.6: no engine note on an ordinary turn — only when it matters",
+         "[core][response_generator][2.14.6][REQ-LOOP-007]")
+{
+    // The model answered the per-turn "[engine] iteration 2/15, tool calls
+    // so far: 1." note as if it were the user's request ("I see you've
+    // provided a status update") — test-v2141 on E4B. The counter now shows
+    // only in the final 3 iterations; one-shot feedback still always shows.
+    InferenceInterface iface{};
+    iface.generate = mock_generate_capturing;
+    iface.free_fn = mock_free;
+    iface.is_response_complete = mock_is_complete;
+    auto loop_cfg = make_loop_config();
+    loop_cfg.max_iterations = 15;
+    EngineCallbacks callbacks{};
+    GenerationEvents events{};
+    ResponseGenerator gen(iface, loop_cfg, callbacks, events);
+    LoopContext ctx{};
+    ctx.state = AgentState::EXECUTING;
+    ctx.locked_tier = "lead";
+    ctx.metrics.iterations = 2;
+    ctx.messages.push_back(Message{"system", "sys"});
+    ctx.messages.push_back(Message{"user", "do the thing"});
+
+    WHEN("an early iteration has nothing one-shot to report") {
+        g_captured_msgs.clear();
+        gen.generate_response(ctx);
+        THEN("no engine note is sent") {
+            CHECK(g_captured_msgs.find("[engine]") == std::string::npos);
+        }
+    }
+    WHEN("an early iteration carries validation feedback") {
+        ctx.pending_validation_feedback = "cite the line";
+        g_captured_msgs.clear();
+        gen.generate_response(ctx);
+        THEN("the feedback is sent, without the counter") {
+            CHECK(g_captured_msgs.find("previous turn rejected: cite the line")
+                  != std::string::npos);
+            CHECK(g_captured_msgs.find("iteration 2/15") == std::string::npos);
         }
     }
 }
@@ -523,7 +566,7 @@ SCENARIO("Engine state reminder honors per-identity max_iterations override",
         LoopContext ctx{};
         ctx.state = AgentState::EXECUTING;
         ctx.locked_tier = "researcher";
-        ctx.metrics.iterations = 42;
+        ctx.metrics.iterations = 198;  // v2.14.6: near the budget
         ctx.effective_max_iterations = 200;
         Message sys{"system", "researcher prompt"};
         ctx.messages.push_back(std::move(sys));
@@ -536,7 +579,7 @@ SCENARIO("Engine state reminder honors per-identity max_iterations override",
             gen.generate_response(ctx);
 
             THEN("reminder uses the per-identity override, not the global default") {
-                CHECK(g_captured_msgs.find("iteration 42/200")
+                CHECK(g_captured_msgs.find("iteration 198/200")
                       != std::string::npos);
                 CHECK(g_captured_msgs.find("/15") == std::string::npos);
             }
@@ -578,9 +621,9 @@ SCENARIO("Engine state reminder surfaces pending validation feedback",
                           "previous turn rejected: every codebase claim must cite file:line")
                       != std::string::npos);
             }
-            AND_THEN("the iteration line is still present alongside the rejection line") {
+            AND_THEN("the counter is not sent this far from the budget (v2.14.6)") {
                 CHECK(g_captured_msgs.find("iteration 5/")
-                      != std::string::npos);
+                      == std::string::npos);
             }
         }
     }
@@ -651,9 +694,9 @@ SCENARIO("Engine state reminder surfaces anti-spiral warning",
                           "anti-spiral: filesystem.grep has been called 5 times")
                       != std::string::npos);
             }
-            AND_THEN("the anti-spiral line co-exists with the iteration line") {
+            AND_THEN("the counter is not sent this far from the budget (v2.14.6)") {
                 CHECK(g_captured_msgs.find("iteration 8/")
-                      != std::string::npos);
+                      == std::string::npos);
             }
         }
     }
@@ -747,6 +790,9 @@ SCENARIO("System message stays bit-stable across turns (prompt cache)",
         iface.free_fn = mock_free;
         iface.is_response_complete = mock_is_complete;
         auto loop_cfg = make_loop_config();
+        // v2.14.6: the counter shows only in the final 3 iterations; a
+        // budget of 3 keeps both turns inside that window.
+        loop_cfg.max_iterations = 3;
         EngineCallbacks callbacks{};
         GenerationEvents events{};
         ResponseGenerator gen(iface, loop_cfg, callbacks, events);

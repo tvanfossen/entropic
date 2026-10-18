@@ -485,13 +485,11 @@ TEST_CASE("gh#108 agentic benchmark: full 24-config permutation matrix "
           "(6 weight variants x MTP x flash+q4KV) at true 128k context",
           "[.][model][gh108][benchmark][agentic][matrix]") {
     auto md = models_dir();
+    // v2.14.6: the pared model set (user, 2026-10-17) — one row per model
+    // still on disk, each trunk with ITS OWN head.
     std::vector<ModelVariant> variants = {
-        {"E4B-Q8", md / "gemma-4-E4B-it-qat-UD-Q4_K_XL.gguf", md / "mtp-gemma-4-E4B-it.gguf"},
-        {"E4B-UD-Q4", md / "gemma-4-E4B-it-UD-Q4_K_XL.gguf", md / "mtp-gemma-4-E4B-it.gguf"},
         {"E4B-QAT-Q4", md / "gemma-4-E4B-it-qat-UD-Q4_K_XL.gguf", md / "mtp-gemma-4-E4B-it.gguf"},
         {"E2B-Q8", md / "gemma-4-E2B-it-Q8_0.gguf", md / "mtp-gemma-4-E2B-it.gguf"},
-        {"E2B-UD-Q4", md / "gemma-4-E2B-it-UD-Q4_K_XL.gguf", md / "mtp-gemma-4-E2B-it.gguf"},
-        {"E2B-QAT-Q4", md / "gemma-4-E4B-it-qat-UD-Q4_K_XL.gguf", md / "mtp-gemma-4-E2B-it.gguf"},
     };
     for (const auto& v : variants) {
         if (!std::filesystem::is_regular_file(v.path) ||

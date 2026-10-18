@@ -317,8 +317,6 @@ add_model_test_per_case(test-gh108-mtp-stream-grammar test_gh108_mtp_stream_gram
 
 # Decode-configuration benchmarks, one entry (one process) per case — each
 # loads its own model, and the A4B case alone maps a 14 GB GGUF:
-#   quant-configs  gh#108 (v2.9.3): E4B Q8 baseline vs E4B Q2-mobile+MTP vs
-#                  E4B Q4_K_XL+MTP; functional-only, for human quality judgment.
 #   mtp-e4b        gh#153: four-arm MTP vs plain throughput (plain, control,
 #                  mtp, mtp-under-tier-grammar) on E4B QAT, fully offloaded.
 #   mtp-a4b        gh#153: the same four arms on 26B-A4B QAT, gpu_layers auto.
@@ -334,8 +332,6 @@ add_model_test_per_case(test-gh108-mtp-stream-grammar test_gh108_mtp_stream_gram
 # `-mtp-a4b` also selects `-mtp-a4b-experts`. Anchor it (`mtp-a4b$`) to run
 # only the auto-offload case.
 add_bench_executable(test-gh108-config-benchmark test_gh108_config_benchmark.cpp)
-add_bench_entry(test-gh108-config-benchmark
-    test-gh108-config-benchmark-quant-configs "[quant-configs]")
 add_bench_entry(test-gh108-config-benchmark
     test-gh108-config-benchmark-mtp-e4b "[mtp-e4b]")
 add_bench_entry(test-gh108-config-benchmark

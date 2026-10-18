@@ -85,7 +85,7 @@ SCENARIO("gh#144: MTP prefill must not re-decode an unchanged prefix",
         auto dir = models_dir();
         REQUIRE_FALSE(dir.empty());
         fs::path trunk = dir / "gemma-4-E4B-it-qat-UD-Q4_K_XL.gguf";
-        fs::path head = dir / "mtp-gemma-4-E2B-it.gguf";
+        fs::path head = dir / "mtp-gemma-4-E4B-it.gguf";
         REQUIRE(fs::is_regular_file(trunk));
         REQUIRE(fs::is_regular_file(head));
 

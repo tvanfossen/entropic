@@ -209,7 +209,7 @@ SCENARIO("auto records WHICH lever it spent on a model that cannot fit",
     // It is GREEN on today's behaviour on purpose: the placement decision is
     // deferred, not made. Changing the policy turns this red, which is the
     // point — the next person to touch it has to say so out loud.
-    GIVEN("the 26B-A4B at IQ4_XS, which cannot fit at any ubatch") {
+    GIVEN("the 26B-A4B at QAT Q4 (13.6 GB), which cannot fit at any ubatch") {
         const auto path = model_file("gemma-4-26B-A4B-it-qat-UD-Q4_K_XL.gguf");
         if (path.empty()) {
             SKIP("gemma-4-26B-A4B-it-qat-UD-Q4_K_XL.gguf not present");

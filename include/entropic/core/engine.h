@@ -1512,7 +1512,27 @@ private:
      * @version 2.0.6-rc16
      */
     bool record_explicit_completion_failure(
-        LoopContext& ctx, const std::string& finish_reason);
+        LoopContext& ctx, const std::string& finish_reason,
+        const std::string& content);
+
+    /**
+     * @brief The correction text after an empty or tool-less turn (v2.14.6).
+     * @param ctx Loop context.
+     * @param owes_call true when the tier requires explicit completion.
+     * @return The [SYSTEM] correction.
+     * @utility
+     * @version 2.14.6
+     */
+    std::string empty_turn_nudge(const LoopContext& ctx, bool owes_call) const;
+
+    /**
+     * @brief Empty or tool-less turns a tier may take before failing.
+     * @param tier Tier name.
+     * @return max_consecutive_empty_turns, default 3 (gh#123).
+     * @utility
+     * @version 2.14.6
+     */
+    int empty_turn_ceiling(const std::string& tier) const;
 
     /**
      * @brief Decide post-delegation engine state.

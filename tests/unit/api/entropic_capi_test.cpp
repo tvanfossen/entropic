@@ -1714,8 +1714,11 @@ TEST_CASE("entropic_run on configured handle without active model returns error"
     char* out = nullptr;
     auto rc = entropic_run(h, "hello", &out);
     // No active backend → GENERATE_FAILED.
+    // v2.14.6: a failed generation is retried, then the turn fails —
+    // ENTROPIC_ERROR_TURN_FAILED is that error.
     REQUIRE((rc == ENTROPIC_ERROR_GENERATE_FAILED
              || rc == ENTROPIC_ERROR_INVALID_STATE
+             || rc == ENTROPIC_ERROR_TURN_FAILED
              || rc == ENTROPIC_OK));
     if (out) { entropic_free(out); }
 }
@@ -1726,8 +1729,11 @@ TEST_CASE("entropic_run_messages on configured handle with empty array",
     if (!h.configured()) { SUCCEED(); return; }
     char* out = nullptr;
     auto rc = entropic_run_messages(h, "[]", &out);
+    // v2.14.6: a failed generation is retried, then the turn fails —
+    // ENTROPIC_ERROR_TURN_FAILED is that error.
     REQUIRE((rc == ENTROPIC_ERROR_GENERATE_FAILED
              || rc == ENTROPIC_ERROR_INVALID_STATE
+             || rc == ENTROPIC_ERROR_TURN_FAILED
              || rc == ENTROPIC_OK));
     if (out) { entropic_free(out); }
 }
@@ -1765,8 +1771,11 @@ TEST_CASE("entropic_run_messages_streaming on configured handle with empty array
     auto cb = [](const char*, size_t, void*) {};
     auto rc = entropic_run_messages_streaming(
         h, "[]", cb, nullptr, nullptr);
+    // v2.14.6: a failed generation is retried, then the turn fails —
+    // ENTROPIC_ERROR_TURN_FAILED is that error.
     REQUIRE((rc == ENTROPIC_ERROR_GENERATE_FAILED
              || rc == ENTROPIC_ERROR_INVALID_STATE
+             || rc == ENTROPIC_ERROR_TURN_FAILED
              || rc == ENTROPIC_OK));
 }
 

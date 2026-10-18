@@ -614,6 +614,49 @@ SCENARIO("v2.14.6: the model's own tool call stays in the history it is shown",
     }
 }
 
+SCENARIO("v2.14.6: an empty turn is retried, never accepted as complete",
+         "[engine][empty_turn][2.14.6]")
+{
+    // test-e7-delegation on E4B: the lead ended its turn inside an
+    // unterminated thinking block — no content, no tool call — and the
+    // engine accepted that as COMPLETE, so it never delegated. Without
+    // explicit_completion a turn still owes the user SOMETHING.
+    GIVEN("a tier with no completion contract whose first reply is empty") {
+        MockInference mock;
+        mock.response_queue = {"", "Here is the answer."};
+        mock.tier = "lead";
+        mock.is_complete = true;
+        auto iface = make_mock_interface(mock);
+        LoopConfig lc;
+        lc.max_iterations = 6;
+        CompactionConfig cc;
+        AgentEngine engine(iface, lc, cc);
+        auto out = engine.run(make_messages());
+        THEN("the model is asked again and its real answer is the result") {
+            CHECK(mock.generate_call_count == 2);
+            CHECK(out.back().content == "Here is the answer.");
+            CHECK(engine.last_turn_failure().empty());
+        }
+    }
+    GIVEN("a tier that keeps replying with nothing") {
+        MockInference mock;
+        mock.response = "";
+        mock.tier = "lead";
+        mock.is_complete = true;
+        auto iface = make_mock_interface(mock);
+        LoopConfig lc;
+        lc.max_iterations = 15;
+        CompactionConfig cc;
+        AgentEngine engine(iface, lc, cc);
+        engine.run(make_messages());
+        THEN("the turn fails, bounded, with a reason that says so") {
+            CHECK(mock.generate_call_count <= 4);
+            CHECK(engine.last_turn_failure().find("empty_response")
+                  != std::string::npos);
+        }
+    }
+}
+
 // ── P1-6 regression: zero-tool-call loop bounded (2.0.6-rc16.2) ─
 
 SCENARIO("zero-tool-call with explicit_completion halts within retry cap",

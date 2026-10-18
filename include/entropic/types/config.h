@@ -452,6 +452,14 @@ struct GenerationParams {
     int seed = -1;
     int reasoning_budget = -1;               ///< Per-call think budget override (-1 = unlimited)
     bool enable_thinking = true;             ///< Enable <think> blocks (false if reasoning_budget == 0)
+    /// @brief Force this generation to make a tool call (v2.14.6).
+    ///
+    /// Set by the engine for the retry after it nudged a tier that owes a
+    /// tool call: the orchestrator then stages gh#134's require_tool_call
+    /// for THIS generation only, so the tool-call grammar binds eagerly. A
+    /// model that already complies is never constrained — the first attempt
+    /// stays free-form.
+    bool force_tool_call = false;
     std::string grammar;                     ///< GBNF grammar string (empty = unconstrained)
     /// @brief Grammar registry key. Resolved to GBNF content by orchestrator
     /// before passing to the backend. If both grammar and grammar_key are set,

@@ -396,7 +396,7 @@ static std::string resolve_stream_finish_reason(int rc,
  * @param mode Label for the log line ("stream"/"batch").
  * @return {messages_json, params_json}.
  * @req REQ-LOOP-007
- * @version 2.12.0
+ * @version 2.14.6
  */
 std::pair<std::string, std::string> ResponseGenerator::prepare_prompts(
     LoopContext& ctx, const char* mode) {
@@ -409,7 +409,9 @@ std::pair<std::string, std::string> ResponseGenerator::prepare_prompts(
                  mode, ctx.locked_tier, messages.size());
     log_prompt(messages, ctx.locked_tier);
     return {serialize_messages(messages),
-            build_params_json(ctx.locked_tier, ctx.session_key)};
+            build_params_json(ctx.locked_tier, ctx.session_key,
+                              ctx.metadata.count("force_tool_call") > 0
+                                  && ctx.metadata.at("force_tool_call") == "1")};
 }
 
 /**
@@ -864,14 +866,18 @@ std::string ResponseGenerator::serialize_messages(
  * string injection.
  *
  * @param tier Locked tier name.
- * @return JSON string {tier, tools?}.
+ * @param session_key Session key ("" omitted).
+ * @param force_tool_call v2.14.6: force this generation's tool call.
+ * @return JSON string {tier, session?, force_tool_call?, tools?}.
  * @req REQ-IDEN-001
- * @version 2.7.0
+ * @version 2.14.6
  */
 std::string ResponseGenerator::build_params_json(
-    const std::string& tier, const std::string& session_key) {
+    const std::string& tier, const std::string& session_key,
+    bool force_tool_call) {
     nlohmann::json j = nlohmann::json::object();
     if (!tier.empty()) { j["tier"] = tier; }
+    if (force_tool_call) { j["force_tool_call"] = true; }  // v2.14.6
     // gh#144 (v2.12.0): only emitted when non-empty, so a handle that never
     // names a session sends a byte-identical params payload.
     if (!session_key.empty()) { j["session"] = session_key; }

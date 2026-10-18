@@ -657,6 +657,39 @@ SCENARIO("v2.14.6: an empty turn is retried, never accepted as complete",
     }
 }
 
+SCENARIO("v2.14.6: after a nudge, a tier that owes a tool call is forced to make one",
+         "[engine][explicit_completion][2.14.6]")
+{
+    // E4B under explicit_completion answered in prose, was nudged, then
+    // emitted thinking-only empty turns until the turn failed (e7, and the
+    // consumer's 18/102). The nudge only ASKED. After one nudge, the retry
+    // is generated with the tool-call grammar forced (gh#134's mechanism).
+    GIVEN("a lead that owes a tool call and answers in prose") {
+        MockInference mock;
+        mock.response_queue = {"I'll have eng do it.", "still prose"};
+        mock.tier = "lead";
+        mock.is_complete = true;
+        auto iface = make_mock_interface(mock);
+        LoopConfig lc;
+        lc.max_iterations = 6;
+        CompactionConfig cc;
+        AgentEngine engine(iface, lc, cc);
+        TierResolutionInterface tri{};
+        tri.get_tier_param = [](const std::string& tier, const std::string& param,
+                                void*) -> std::string {
+            return (tier == "lead" && param == "explicit_completion") ? "true" : "";
+        };
+        engine.set_tier_resolution(tri);
+        engine.run(make_messages());
+        THEN("the first generation is free-form and the retry is forced") {
+            REQUIRE(mock.seen_params.size() >= 2);
+            CHECK(mock.seen_params[0].find("force_tool_call") == std::string::npos);
+            CHECK(mock.seen_params[1].find("\"force_tool_call\":true")
+                  != std::string::npos);
+        }
+    }
+}
+
 // ── P1-6 regression: zero-tool-call loop bounded (2.0.6-rc16.2) ─
 
 SCENARIO("zero-tool-call with explicit_completion halts within retry cap",

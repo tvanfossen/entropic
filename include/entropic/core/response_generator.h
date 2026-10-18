@@ -176,12 +176,15 @@ private:
     /**
      * @brief Build generation params JSON with tier routing.
      * @param tier Locked tier name (embedded in params for orchestrator).
-     * @return JSON string {tier, tools?}.
+     * @param session_key Session key ("" omitted).
+     * @param force_tool_call v2.14.6: force this generation's tool call.
+     * @return JSON string {tier, session?, force_tool_call?, tools?}.
      * @req REQ-IDEN-001
-     * @version 2.7.0
+     * @version 2.14.6
      */
     std::string build_params_json(const std::string& tier,
-                                  const std::string& session_key = "");
+                                  const std::string& session_key = "",
+                                  bool force_tool_call = false);
 
     /**
      * @brief Append an "[engine] iteration N/MAX..." reminder to the

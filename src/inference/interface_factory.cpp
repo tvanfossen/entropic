@@ -131,7 +131,7 @@ static void parse_logit_bias_into(
  * @param json_str JSON params (may be null).
  * @return GenerationParams with parsed overrides.
  * @utility
- * @version 2.12.0
+ * @version 2.14.6
  */
 static GenerationParams parse_params(const char* json_str) {
     GenerationParams p;
@@ -139,6 +139,7 @@ static GenerationParams parse_params(const char* json_str) {
     auto j = nlohmann::json::parse(json_str, nullptr, false);
     if (!j.is_object()) { return p; }
     assign_if_present(j, "max_tokens",       p.max_tokens);
+    assign_if_present(j, "force_tool_call",  p.force_tool_call);  // v2.14.6
     assign_if_present(j, "temperature",      p.temperature);
     assign_if_present(j, "grammar_key",      p.grammar_key);
     // gh#144 (v2.12.0): caller-scoped session; absent means the default.

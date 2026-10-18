@@ -293,6 +293,18 @@ SCENARIO("gh#160: an isolated delegation never writes the project, and "
         TierResolutionInterface tri;
         tri.resolve_tier = eng_resolve_tier;
         tri.tier_exists = mock_tier_exists;
+        // v2.14.6: the lead's PRODUCTION contract. The bundled lead identity
+        // sets explicit_completion: true and the facade enforces it; this
+        // engine is built directly, so without this hook the lead ran with
+        // no contract and a prose answer ("I'll have eng do that") was
+        // accepted as complete — the scenario then never delegated (about a
+        // third of E4B runs). With it, a turn that delegates nothing is
+        // nudged toward a tool call, as it is for a real consumer.
+        tri.get_tier_param = [](const std::string& tier, const std::string& param,
+                                void* /*ud*/) -> std::string {
+            return (tier == g_ctx.default_tier && param == "explicit_completion")
+                ? "true" : "";
+        };
         engine.set_tier_resolution(tri);
 
         entropic::SessionRootInterface sri;
@@ -314,8 +326,12 @@ SCENARIO("gh#160: an isolated delegation never writes the project, and "
         // routed default tier, whose name comes from the dev box config.
         const std::unordered_map<std::string, std::vector<std::string>>
             tier_allowed{
+                // entropic.complete: the production lead's own (identity_lead
+                // allowed_tools) — a lead that owes a completion call must be
+                // able to make one (gh#213).
                 {g_ctx.default_tier,
-                 {"entropic.delegate", "filesystem.read_file"}},
+                 {"entropic.delegate", "filesystem.read_file",
+                  "entropic.complete"}},
                 {"eng", {"filesystem.read_file", "filesystem.write_file"}}};
 
         entropic::ToolExecutor executor(

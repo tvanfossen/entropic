@@ -735,9 +735,9 @@ static void warn_turn_diagnostics(
  * @param tier_name Selected tier.
  * @return Resolved params — per-tier sampler defaults applied — with the
  *         turn's tools and require_tool_call flag already staged on the
- *         backend.
+ *         backend (forced for this call when params.force_tool_call).
  * @req REQ-INFER-009
- * @version 2.13.0
+ * @version 2.14.6
  */
 GenerationParams ModelOrchestrator::resolve_and_stage(
     InferenceBackend* model,
@@ -752,6 +752,12 @@ GenerationParams ModelOrchestrator::resolve_and_stage(
         it != config_.models.tiers.end()) {
         require_tc = it->second.require_tool_call.value_or(false);
     }
+    // v2.14.6: the engine forces the retry after a no-tool-call nudge.
+    if (resolved.force_tool_call && !require_tc) {
+        logger->info("[tools] tier '{}': tool call FORCED for this generation "
+                     "(retry after a no-tool-call nudge)", tier_name);
+    }
+    require_tc = require_tc || resolved.force_tool_call;
     stage_active_tools(model, resolved, require_tc);   // gh#87 3b, gh#134
     return resolved;
 }

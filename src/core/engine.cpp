@@ -932,7 +932,7 @@ static std::string tool_calls_to_json(const std::vector<ToolCall>& calls) {
  * @param ctx Loop context.
  * @param result Generation result.
  * @req REQ-LOOP-003
- * @version 2.14.6
+ * @version 2.14.6 [reviewed]
  */
 void AgentEngine::process_generation_result(LoopContext& ctx,
                                             GenerateResult& result) {
@@ -965,6 +965,7 @@ void AgentEngine::process_generation_result(LoopContext& ctx,
         // consecutive-empty-turn debt.
         if (made_progress) {
             ctx.metadata["zero_tool_call_retries"] = "0";
+            ctx.metadata.erase("force_tool_call");  // v2.14.6: complied
         }
     } else {
         evaluate_no_tool_decision(ctx, cleaned, result.finish_reason);
@@ -1261,7 +1262,7 @@ std::string AgentEngine::empty_turn_nudge(const LoopContext& ctx,
  * @param content The turn's visible content.
  * @return true if the turn was nudged or failed (caller returns).
  * @req REQ-LOOP-004
- * @version 2.14.6
+ * @version 2.14.6 [reviewed]
  */
 bool AgentEngine::record_explicit_completion_failure(
     LoopContext& ctx, const std::string& finish_reason,
@@ -1289,6 +1290,9 @@ bool AgentEngine::record_explicit_completion_failure(
                  "nudging", ctx.locked_tier,
                  owes_call ? "no-tool-call" : "empty", n + 1, ceiling,
                  finish_reason);
+    // v2.14.6: the nudge only ASKED; a stalled model kept emitting
+    // thinking-only turns. The retry for a tier that owes a call is forced.
+    if (owes_call) { ctx.metadata["force_tool_call"] = "1"; }
     Message correction;
     correction.role = "user";
     correction.content = empty_turn_nudge(ctx, owes_call);

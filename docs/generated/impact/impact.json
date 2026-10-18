@@ -1,12 +1,23 @@
 [
   {
-    "req_id": "REQ-HOOK-002",
-    "req_name": "Engine fires hooks at every lifecycle boundary, including a vetoable completion",
+    "req_id": "REQ-IDEN-001",
+    "req_name": "Tier resolution contract and per-tier loop overrides",
     "functions": [
       {
-        "name": "execute_iteration",
-        "file": "src/core/engine.cpp",
-        "version": "2.3.7"
+        "name": "build_params_json",
+        "file": "src/core/response_generator.cpp",
+        "version": "2.14.6"
+      }
+    ]
+  },
+  {
+    "req_id": "REQ-INFER-009",
+    "req_name": "Tool staging drives a native render whose parse context is captured",
+    "functions": [
+      {
+        "name": "resolve_and_stage",
+        "file": "src/inference/orchestrator.cpp",
+        "version": "2.14.6"
       }
     ]
   },
@@ -15,14 +26,9 @@
     "req_name": "Fixed per-iteration pipeline with pre-generate cancellation",
     "functions": [
       {
-        "name": "execute_iteration",
-        "file": "src/core/engine.cpp",
-        "version": "2.3.7"
-      },
-      {
         "name": "process_generation_result",
         "file": "src/core/engine.cpp",
-        "version": "2.14.6"
+        "version": "2.14.6 [reviewed]"
       }
     ]
   },
@@ -38,6 +44,22 @@
       {
         "name": "record_explicit_completion_failure",
         "file": "src/core/engine.cpp",
+        "version": "2.14.6 [reviewed]"
+      }
+    ]
+  },
+  {
+    "req_id": "REQ-LOOP-007",
+    "req_name": "Engine-authored transcript shaping keeps the system prompt bit-stable",
+    "functions": [
+      {
+        "name": "prepare_prompts",
+        "file": "src/core/response_generator.cpp",
+        "version": "2.14.6"
+      },
+      {
+        "name": "inject_engine_state_reminder",
+        "file": "src/core/response_generator.cpp",
         "version": "2.14.6"
       }
     ]

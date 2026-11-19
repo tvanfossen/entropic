@@ -84,7 +84,7 @@ repos:
   # against clew 2.0.0 before it is tagged. Switch to
   # https://github.com/tvanfossen/clew at the v2.0.0 tag before merging.
   - repo: /home/tvanfossen/Projects/clew
-    rev: 7b956250
+    rev: 30b7f0df
     hooks:
       - id: clew-guard
         files: \.(h|hpp|c|cpp|cc|cxx|py)$

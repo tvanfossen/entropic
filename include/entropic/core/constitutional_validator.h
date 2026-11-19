@@ -349,7 +349,7 @@ public:
     /**
      * @brief Append this turn's tool manifest and evidence to a prompt.
      * @param prompt Critique prompt under construction (appended in place).
-     * @dg_internal
+     * @req REQ-VALID-002
      * @version 2.13.0
      */
     void append_turn_evidence(std::string& prompt) const;
@@ -481,7 +481,7 @@ private:
      * @param critique Critique with violations.
      * @param messages_json Original conversation context.
      * @return Augmented messages JSON.
-     * @dg_internal
+     * @req REQ-VALID-002
      * @version 1.9.8
      */
     std::string build_revision_messages(
@@ -559,7 +559,7 @@ private:
      * @param json Raw JSON string.
      * @param result CritiqueResult to populate.
      * @return true if field found and parsed.
-     * @utility
+     * @req REQ-VALID-002
      * @version 1.9.8
      */
     static bool extract_compliant_field(
@@ -569,7 +569,7 @@ private:
      * @brief Extract violations array from critique JSON.
      * @param json Raw JSON string.
      * @param result CritiqueResult to populate.
-     * @utility
+     * @req REQ-VALID-002
      * @version 1.9.8
      */
     static void extract_violations(
@@ -590,7 +590,7 @@ private:
      * @brief Extract the "revised" field from critique JSON.
      * @param json Raw JSON string.
      * @param result CritiqueResult to populate.
-     * @utility
+     * @req REQ-VALID-002
      * @version 1.9.8
      */
     static void extract_revised_field(

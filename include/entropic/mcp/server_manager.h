@@ -619,14 +619,14 @@ private:
 
     /**
      * @brief Connect every server the operator declared in config (v2.14.0).
-     * @dg_internal
+     * @req REQ-MCP-025
      * @version 2.14.0
      */
     void connect_declared_servers();
 
     /**
      * @brief Discover `.mcp.json` servers and connect the enabled ones.
-     * @dg_internal
+     * @req REQ-MCP-025
      * @version 2.14.0
      */
     void connect_discovered_servers();

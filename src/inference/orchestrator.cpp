@@ -46,7 +46,7 @@ using entropic::log::elapsed_ms;
  * @brief Extract latest user message from conversation.
  * @param messages Conversation history.
  * @return Latest user message content.
- * @dg_internal
+ * @req REQ-INFER-020
  * @version 1.8.2
  */
 std::string extract_latest_user_message(const std::vector<Message>& messages) {
@@ -2447,7 +2447,7 @@ std::vector<GenerationRecord> ModelOrchestrator::generation_records() const
  *
  * @param grammar_value Raw frontmatter value.
  * @return Normalized registry key.
- * @utility
+ * @req REQ-INFER-007
  * @version 1.9.3
  */
 static std::string normalize_grammar_key(const std::string& grammar_value) {
@@ -2619,7 +2619,7 @@ namespace {
 /**
  * @brief Apply a tier override iff set AND the field is still at its
  *        GenerationParams default (preserving a per-call override).
- * @utility
+ * @req REQ-INFER-021
  * @version 2.5.3
  */
 template <typename T>

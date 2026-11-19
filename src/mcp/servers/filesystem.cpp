@@ -123,7 +123,7 @@ namespace {
  *
  * @param name Directory name to check.
  * @return true if name is in the skip list.
- * @dg_internal
+ * @req REQ-MCP-022
  * @version 2.13.0
  */
 bool should_skip_dir(const std::string& name) {
@@ -385,7 +385,7 @@ bool walk_budget_spent(WalkBudget& budget) {
  * @param path File path.
  * @return File contents.
  * @throws std::runtime_error if file cannot be opened.
- * @dg_internal
+ * @req REQ-MCP-021
  * @version 1.8.5
  */
 std::string read_file_contents(const fs::path& path) {
@@ -403,7 +403,7 @@ std::string read_file_contents(const fs::path& path) {
  * @brief Write string contents to a file, creating parent dirs.
  * @param path File path.
  * @param content Content to write.
- * @dg_internal
+ * @req REQ-MCP-021
  * @version 1.8.5
  */
 void write_file_contents(const fs::path& path,
@@ -893,7 +893,7 @@ int count_occurrences(const std::string& content,
  * @param replace_all Replace all occurrences vs single.
  * @param error_type Output: "no_match" or "multiple_matches" on failure.
  * @return Modified content, or nullopt on error.
- * @dg_internal
+ * @req REQ-MCP-021
  * @version 2.14.0
  */
 std::optional<std::string>
@@ -971,7 +971,7 @@ std::string apply_insert(const std::string& content,
  * @param filename Filename to test.
  * @param patterns Patterns (post brace expansion).
  * @return true if any pattern matches.
- * @dg_internal
+ * @req REQ-MCP-022
  * @version 2.1.4
  */
 bool any_glob_match(const std::string& filename,
@@ -1436,7 +1436,7 @@ std::string read_window(const json& args, long budget, ReadWindow& w) {
  * @param[out] err Declared error, when the window is invalid or a line
  *             exceeds the budget.
  * @return The declared success object (meaningful only when err is "").
- * @dg_internal
+ * @req REQ-MCP-021
  * @version 2.14.0
  */
 json read_and_track(FilesystemServer& server, const fs::path& resolved,
@@ -1953,7 +1953,7 @@ private:
  * @param requested Requested page.
  * @param max_walk Walk cap (filesystem.max_walk_entries).
  * @param[in,out] result Result object (gets entries + ending).
- * @dg_internal
+ * @req REQ-MCP-021
  * @version 2.14.0
  */
 static void list_page(const fs::path& dir, const json& args, Page requested,

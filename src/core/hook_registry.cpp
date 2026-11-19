@@ -20,7 +20,7 @@ namespace entropic {
  * @brief Check if a hook point value is valid.
  * @param point Hook point to validate.
  * @return true if 0 <= point < ENTROPIC_HOOK_COUNT_.
- * @utility
+ * @req REQ-HOOK-001
  * @version 1.9.1
  */
 bool HookRegistry::is_valid_point(entropic_hook_point_t point) {

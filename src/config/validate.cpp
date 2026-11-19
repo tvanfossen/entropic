@@ -342,7 +342,7 @@ static std::string validate_model_tiers(const ModelsConfig& models)
  * @brief Whether a directory holds at least one .gbnf file.
  * @param dir Directory to scan.
  * @return true when the directory exists and contains a .gbnf.
- * @dg_internal
+ * @req REQ-INFER-007
  * @version 2.13.0
  */
 static bool holds_grammars(const std::filesystem::path& dir)

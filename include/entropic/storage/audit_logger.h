@@ -155,7 +155,7 @@ private:
     /**
      * @brief Write a serialized JSON line under mutex.
      * @param line JSON string (no trailing newline).
-     * @dg_internal
+     * @req REQ-STOR-008
      * @version 1.9.5
      */
     void write_line(const std::string& line);

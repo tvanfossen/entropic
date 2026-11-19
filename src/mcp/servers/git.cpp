@@ -32,7 +32,7 @@ namespace entropic {
  * @param args Arguments after "-C repo_dir", one element each.
  * @param[out] read_fd Read end of the child's output pipe (-1 on failure).
  * @return Child pid, or -1 when the pipe or fork failed.
- * @utility
+ * @req REQ-MCP-023
  * @version 2.14.4
  */
 static pid_t spawn_git(const std::string& repo_dir,
@@ -61,7 +61,7 @@ static pid_t spawn_git(const std::string& repo_dir,
  * @brief Read a pipe to EOF and close it.
  * @param fd Read end (-1 = nothing to read).
  * @return Everything read.
- * @utility
+ * @req REQ-MCP-023
  * @version 2.14.4
  */
 static std::string drain_and_close(int fd) {

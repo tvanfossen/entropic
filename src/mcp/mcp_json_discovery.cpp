@@ -306,7 +306,7 @@ std::filesystem::path compute_socket_path(
  * @brief Check if key matches a blocked prefix pattern.
  * @param key Variable name.
  * @return true if key starts with a blocked prefix.
- * @utility
+ * @req REQ-MCP-025
  * @version 1.8.8
  */
 static bool has_blocked_prefix(const std::string& key) {

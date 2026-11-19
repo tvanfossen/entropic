@@ -258,7 +258,7 @@ std::vector<ToolCall> ChatAdapter::parse_tagged_tool_calls(
  *
  * @param j Parsed JSON object.
  * @return ToolCall, or nullopt if neither shape matches a real tool.
- * @dg_internal
+ * @req REQ-INFER-012
  * @version 2.7.1
  */
 static std::optional<ToolCall> action_envelope_to_call(
@@ -363,7 +363,7 @@ static std::unordered_set<std::string> tool_string_props(
  * @brief Coerce one call's numeric args to strings per the tool schema.
  * @param tc    Tool call (arguments_json + arguments mutated in place).
  * @param tools Parsed MCP tool array.
- * @dg_internal
+ * @req REQ-INFER-012
  * @version 2.7.2
  */
 static void coerce_call_string_args(ToolCall& tc, const nlohmann::json& tools) {
@@ -466,7 +466,7 @@ std::string ChatAdapter::strip_think_blocks(const std::string& content) const {
  * @brief Parse a brace/quote-fixed JSON string into a ToolCall.
  * @param fixed Cleaned JSON string (may still be invalid → throws).
  * @return ToolCall if it has a name (any alias), else nullopt.
- * @utility
+ * @req REQ-INFER-012
  * @version 2.3.8
  */
 static std::optional<ToolCall> parse_recovered_tool_call(
@@ -479,7 +479,7 @@ static std::optional<ToolCall> parse_recovered_tool_call(
  * @brief Last-ditch recovery: pull a tool name out via regex.
  * @param json_str Original (possibly unparseable) string.
  * @return ToolCall with just id+name, or nullopt if no name found.
- * @utility
+ * @req REQ-INFER-012
  * @version 2.3.7
  */
 static std::optional<ToolCall> regex_recovered_tool_call(

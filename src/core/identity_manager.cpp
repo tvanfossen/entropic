@@ -431,7 +431,7 @@ void IdentityManager::set_cache_invalidator(void (*cb)(void*),
 
 /**
  * @brief Invoke the cache invalidator if registered.
- * @dg_internal
+ * @req REQ-IDEN-002
  * @version 2.0.6-rc16
  */
 void IdentityManager::fire_cache_invalidator() {

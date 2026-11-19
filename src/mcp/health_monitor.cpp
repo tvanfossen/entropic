@@ -38,7 +38,7 @@ HealthMonitor::~HealthMonitor() {
  * @brief Start monitoring a server.
  * @param name Server name.
  * @param client Non-owning pointer.
- * @dg_internal
+ * @req REQ-MCP-025
  * @version 1.8.7
  */
 void HealthMonitor::watch(
@@ -81,7 +81,7 @@ void HealthMonitor::set_status_callback(StatusCallback cb) {
 
 /**
  * @brief Start the monitoring thread.
- * @dg_internal
+ * @req REQ-MCP-025
  * @version 1.8.7
  */
 void HealthMonitor::start() {

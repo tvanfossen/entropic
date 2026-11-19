@@ -1512,7 +1512,7 @@ protected:
      * @param bitmaps Loaded image bitmaps in marker order (borrowed).
      * @param[out] err_msg Filled on failure.
      * @return ENTROPIC_OK on success, error code on failure.
-     * @utility
+     * @req REQ-INFER-025
      * @version 2.1.8
      */
     entropic_error_t mtmd_prefill(

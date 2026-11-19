@@ -215,7 +215,7 @@ inline bool try_fully_resident(const GgufShape& shape,
  * @param budget VRAM budget.
  * @param[out] out Filled in on success.
  * @return True when some expert split fits.
- * @dg_internal
+ * @req REQ-INFER-019
  * @version 2.13.1
  */
 inline bool try_expert_offload(const GgufShape& shape,
@@ -246,7 +246,7 @@ inline bool try_expert_offload(const GgufShape& shape,
  * @param budget VRAM budget.
  * @param[out] out Filled in on success.
  * @return True when any layer count fits.
- * @dg_internal
+ * @req REQ-INFER-019
  * @version 2.13.1
  */
 inline bool try_fewer_layers(const GgufShape& shape,
@@ -280,7 +280,7 @@ inline bool try_fewer_layers(const GgufShape& shape,
  * @param configured Operator's n_ubatch; 0 means llama.cpp's default.
  * @param[out] out Filled in on success, including the chosen n_ubatch.
  * @return True when some reduced ubatch fits everything.
- * @dg_internal
+ * @req REQ-INFER-019
  * @version 2.13.2
  */
 inline bool try_smaller_ubatch(const GgufShape& shape,

@@ -470,7 +470,7 @@ static std::vector<ToolCall> try_fenced_args_object_call(
  * @param raw   Raw model output.
  * @param llama Active LlamaCppBackend (may be nullptr → gh#127 skipped).
  * @param calls [in/out] Tool call accumulator (no-op unless currently empty).
- * @utility
+ * @req REQ-INFER-010
  * @version 2.10.0
  */
 static void apply_fenced_fallbacks(const std::string& raw,

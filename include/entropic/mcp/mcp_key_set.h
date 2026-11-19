@@ -129,7 +129,7 @@ private:
      * @brief Extract server prefix from a fully-qualified tool name.
      * @param tool_name Tool name (e.g., "filesystem.read_file").
      * @return Server prefix with wildcard (e.g., "filesystem.*"), or empty.
-     * @dg_internal
+     * @req REQ-MCP-010
      * @version 1.9.4
      */
     static std::string server_wildcard(const std::string& tool_name);

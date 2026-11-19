@@ -570,7 +570,7 @@ std::string ConstitutionalValidator::build_critique_prompt(
  * produced. The engine surfaces it when messages have been partially pruned.
  *
  * @param prompt Critique prompt under construction (appended to in place).
- * @dg_internal
+ * @req REQ-VALID-002
  * @version 2.13.0
  */
 void ConstitutionalValidator::append_turn_evidence(
@@ -960,7 +960,7 @@ std::string ConstitutionalValidator::build_single_turn_json(
  * @param critique Critique with violations.
  * @param messages_json Original conversation context.
  * @return Augmented messages JSON.
- * @dg_internal
+ * @req REQ-VALID-002
  * @version 1.9.8
  */
 std::string ConstitutionalValidator::build_revision_messages(
@@ -1245,7 +1245,7 @@ std::string ConstitutionalValidator::extract_string_after_colon(
  * @param json Raw JSON string.
  * @param result CritiqueResult to populate.
  * @return true if field was found and parsed.
- * @utility
+ * @req REQ-VALID-002
  * @version 2.0.0
  */
 bool ConstitutionalValidator::extract_compliant_field(
@@ -1265,7 +1265,7 @@ bool ConstitutionalValidator::extract_compliant_field(
  * @brief Extract violations array from critique JSON.
  * @param json Raw JSON string.
  * @param result CritiqueResult to populate.
- * @utility
+ * @req REQ-VALID-002
  * @version 1.9.8
  */
 void ConstitutionalValidator::extract_violations(
@@ -1313,7 +1313,7 @@ ConstitutionalValidator::extract_next_violation(
  * @brief Extract the "revised" string field from critique JSON.
  * @param json Raw JSON string.
  * @param result CritiqueResult to populate.
- * @utility
+ * @req REQ-VALID-002
  * @version 1.9.8
  */
 void ConstitutionalValidator::extract_revised_field(

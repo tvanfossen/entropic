@@ -241,7 +241,7 @@ bool SqliteDatabase::is_open() const {
  * @brief Prepare a SQL statement.
  * @param sql SQL text.
  * @return Prepared statement or nullptr on error.
- * @dg_internal
+ * @req REQ-STOR-002
  * @version 2.0.0
  */
 sqlite3_stmt* SqliteDatabase::prepare(std::string_view sql) {

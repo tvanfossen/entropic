@@ -49,7 +49,7 @@ std::string read_file_contents(const std::filesystem::path& path) {
  * @brief Build a bundled GrammarEntry from a .gbnf file.
  * @param path Grammar file path.
  * @return Entry, or nullopt if the file is empty/unreadable.
- * @utility
+ * @req REQ-INFER-007
  * @version 2.3.7
  */
 static std::optional<GrammarEntry> build_grammar_entry(

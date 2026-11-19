@@ -139,7 +139,7 @@ private:
      * @brief Check if a hook point value is valid.
      * @param point Hook point to validate.
      * @return true if within range.
-     * @utility
+     * @req REQ-HOOK-001
      * @version 1.9.1
      */
     static bool is_valid_point(entropic_hook_point_t point);

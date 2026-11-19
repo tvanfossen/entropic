@@ -48,7 +48,7 @@ static bool parse_bool(const std::string& val)
  *
  * @param key Environment variable name.
  * @param setter Invoked with the value when present.
- * @utility
+ * @req REQ-CFG-001
  * @version 2.3.7
  */
 template <typename Setter>

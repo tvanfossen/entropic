@@ -32,7 +32,7 @@ using entropic::log::elapsed_ms;
  * @param ctx llama_context.
  * @param adapter llama_adapter_lora handle.
  * @param scale LoRA scaling factor.
- * @utility
+ * @req REQ-INFER-023
  * @version 1.9.2
  */
 void apply_adapter(llama_context* ctx,

@@ -62,7 +62,8 @@ inline bool su8_first_cont_ok(uint8_t lead, uint8_t c1) {
 
 /**
  * @brief Length of the valid sequence at p; 0 if malformed.
- * @utility
+ * @return Sequence length 1-4 when valid, 0 when malformed.
+ * @req REQ-SAFE-001
  * @version 2.9.9
  */
 size_t su8_seq_len(const uint8_t* p, const uint8_t* end) {
@@ -269,7 +270,7 @@ struct MessageRow {
  * @brief Build a MessageRow from one message JSON object.
  * @param m Message JSON.
  * @return Populated row (new uuid, defaulted fields).
- * @utility
+ * @req REQ-STOR-003
  * @version 2.3.7
  */
 MessageRow build_message_row(const json& m) {
@@ -294,7 +295,7 @@ MessageRow build_message_row(const json& m) {
  * @param conversation_id Owning conversation.
  * @param now created_at timestamp.
  * @param r Row to bind.
- * @utility
+ * @req REQ-STOR-003
  * @version 2.3.7
  */
 void bind_message_insert(sqlite3_stmt* s, const std::string& conversation_id,
@@ -368,7 +369,7 @@ namespace {
  * @brief Map a conversations row to its JSON object.
  * @param s Stepped statement (SELECT * FROM conversations).
  * @return JSON conversation object.
- * @utility
+ * @req REQ-STOR-003
  * @version 2.3.7
  */
 json conversation_row_to_json(sqlite3_stmt* s) {
@@ -387,7 +388,7 @@ json conversation_row_to_json(sqlite3_stmt* s) {
  * @brief Map a messages row to its JSON object.
  * @param s Stepped statement (SELECT * FROM messages).
  * @return JSON message object.
- * @utility
+ * @req REQ-STOR-003
  * @version 2.3.7
  */
 json message_row_to_json(sqlite3_stmt* s) {
@@ -574,7 +575,7 @@ bool SqliteStorageBackend::search_conversations(
  *
  * @param s Prepared statement.
  * @param rec Delegation record (read-only).
- * @dg_internal
+ * @req REQ-STOR-005
  * @version 2.3.7
  */
 static void bind_delegation_insert(sqlite3_stmt* s,
@@ -613,7 +614,7 @@ static void bind_delegation_insert(sqlite3_stmt* s,
  * @param[out] child_conversation_id Cleared on rejection.
  * @return true if the parent is valid; false (and out params cleared)
  *         if empty.
- * @dg_internal
+ * @req REQ-STOR-005
  * @version 2.1.12
  */
 static bool guard_parent_conversation(

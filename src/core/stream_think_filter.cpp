@@ -69,7 +69,7 @@ bool StreamThinkFilter::match_tag(const std::string& buf, bool& is_open) const {
  * @brief Count expected bytes in a UTF-8 sequence from lead byte.
  * @param byte Lead byte.
  * @return Expected total bytes (1-4), or 0 if continuation byte.
- * @utility
+ * @req REQ-LOOP-008
  * @version 2.0.2
  */
 static int utf8_char_len(unsigned char byte) {
@@ -133,7 +133,7 @@ void StreamThinkFilter::emit_utf8_safe(const char* data, size_t len) {
 /**
  * @brief Process one byte through the tag-buffering state machine.
  * @param c Byte to process.
- * @dg_internal
+ * @req REQ-LOOP-008
  * @version 2.10.3
  */
 void StreamThinkFilter::process_byte(char c) {

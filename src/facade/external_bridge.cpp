@@ -294,7 +294,7 @@ static json ask_status_tool(const ExternalMCPConfig& cfg) {
  *
  * @param cfg External MCP config supplying prefix and description overrides.
  * @return JSON array of tool schemas.
- * @utility
+ * @req REQ-BRIDGE-001
  * @version 2.14.3
  */
 static json tool_definitions(const ExternalMCPConfig& cfg) {
@@ -369,7 +369,7 @@ static void send_progress(int fd, const std::string& token_text,
  * @param handle Engine handle.
  * @param session_key Session key.
  * @return Registered `<server>.<tool>` names for the session's workspace.
- * @utility
+ * @req REQ-BRIDGE-001
  * @version 2.14.5
  */
 static facade_text::ToolNames session_tool_names(entropic_handle_t handle,
@@ -705,7 +705,7 @@ static AsyncFinalState derive_async_final_state(
  * @param bridge Bridge holding the task registry.
  * @param session_key Session whose tasks are cancelled (v2.14.0).
  * @return true if any task was still in-flight.
- * @utility
+ * @req REQ-BRIDGE-001
  * @version 2.0.6-rc16
  */
 static bool mark_tasks_cancelling(ExternalBridge* bridge,
@@ -729,7 +729,7 @@ static bool mark_tasks_cancelling(ExternalBridge* bridge,
  * @param bridge Bridge holding the task registry.
  * @param session_key Session being cleared (v2.14.0).
  * @return true when a task of that session is still cancelling.
- * @utility
+ * @req REQ-BRIDGE-001
  * @version 2.0.6-rc16
  */
 static bool any_cancelling_left(ExternalBridge* bridge,
@@ -930,7 +930,8 @@ private:
 
 /**
  * @brief The tool result returned when the queue deadline expired.
- * @dg_internal
+ * @return Tool text saying the engine is busy, with the wait time and the queue depth ahead.
+ * @req REQ-BRIDGE-001
  * @version 2.12.0
  */
 json turn_timeout_result(const ExternalBridge* bridge, long waited_ms) {
@@ -1012,7 +1013,7 @@ static std::string resolve_workspace(entropic_handle_t handle,
  * @param session_key Session key.
  * @param workspace Requested workspace path or name ("" = none).
  * @return "" on success, else a message for the caller.
- * @dg_internal
+ * @req REQ-BRIDGE-001
  * @version 2.14.0
  */
 static std::string bind_session_workspace(entropic_handle_t handle,
@@ -1174,7 +1175,7 @@ using ToolHandler = json (*)(entropic_handle_t, ExternalBridge*, const json&);
  * tool_suffix constants tool_definitions() advertises (gh#145).
  *
  * @return Suffix → handler.
- * @utility
+ * @req REQ-BRIDGE-001
  * @version 2.14.3
  */
 static const std::unordered_map<std::string, ToolHandler>& tool_handlers() {
@@ -1802,7 +1803,7 @@ void ExternalBridge::serve_client(int client_fd) {
  *
  * @param cfg External MCP config supplying the server name.
  * @return JSON result object.
- * @utility
+ * @req REQ-BRIDGE-001
  * @version 2.12.0
  */
 static json initialize_result(const ExternalMCPConfig& cfg) {
@@ -2332,7 +2333,8 @@ void ExternalBridge::set_async_sentinel_root(
 
 /**
  * @brief Map a terminal status string to a sentinel filename suffix.
- * @dg_internal
+ * @return ".failed" for "error", ".cancelled" for "cancelled", otherwise ".done".
+ * @req REQ-BRIDGE-001
  * @version 2.1.4
  */
 static const char* sentinel_suffix_for_status(

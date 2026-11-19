@@ -180,7 +180,7 @@ CompactionResult CompactionManager::check_and_compact(
  * @param[out] user_msgs source==user messages.
  * @param[out] assistant_msgs assistant-role messages.
  * @param[out] stripped_count Count of dropped messages.
- * @utility
+ * @req REQ-COMPACT-001
  * @version 2.3.7
  */
 static void partition_messages(const std::vector<Message>& messages,
@@ -209,7 +209,7 @@ static void partition_messages(const std::vector<Message>& messages,
  * @param user_msgs Preserved user messages.
  * @param assistant_msgs Assistant messages (only the last is kept).
  * @return Compacted message list.
- * @utility
+ * @req REQ-COMPACT-001
  * @version 2.3.7
  */
 static std::vector<Message> assemble_compacted(
@@ -269,7 +269,7 @@ std::vector<Message> CompactionManager::compact(
  * @brief Build deterministic structured summary from history.
  * @param messages Messages to summarize.
  * @return Summary text.
- * @dg_internal
+ * @req REQ-COMPACT-001
  * @version 1.8.4
  */
 std::string CompactionManager::structured_summary(
@@ -400,7 +400,7 @@ CompactionManager::extract_tool_log(
  * @param summary Raw summary text.
  * @param message_count Number of original messages.
  * @return Formatted summary string.
- * @dg_internal
+ * @req REQ-COMPACT-001
  * @version 1.8.4
  */
 std::string CompactionManager::format_summary(
@@ -490,7 +490,7 @@ static std::string json_escape(const std::string& input) {
  * @brief Serialize messages to minimal JSON array.
  * @param messages Messages to serialize.
  * @return JSON array string.
- * @utility
+ * @req REQ-COMPACT-001
  * @version 1.8.8
  */
 static std::string serialize_messages_json(

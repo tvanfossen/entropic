@@ -417,7 +417,7 @@ static std::unique_ptr<EntropicWorkspace> build_workspace(
  * @param roots Allowed roots (empty = unrestricted).
  * @param root Candidate workspace root.
  * @return "" when allowed, else the reason.
- * @utility
+ * @req REQ-MCP-027
  * @version 2.14.4
  */
 static std::string workspace_root_refusal(

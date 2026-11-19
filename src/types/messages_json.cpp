@@ -69,7 +69,7 @@ void parse_metadata(const nlohmann::json& m,
  * @brief Populate a Message from a JSON object.
  * @param m JSON message object.
  * @return Filled Message struct.
- * @dg_internal
+ * @req REQ-TYPE-006
  * @version 2.13.0
  */
 Message parse_one_message(const nlohmann::json& m) {

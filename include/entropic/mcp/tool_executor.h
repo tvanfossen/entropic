@@ -362,7 +362,7 @@ private:
      * @param ctx Loop context.
      * @param results Results so far.
      * @return true if stop.
-     * @dg_internal
+     * @req REQ-MCP-012
      * @version 1.8.5
      */
     bool should_stop_batch(const LoopContext& ctx,

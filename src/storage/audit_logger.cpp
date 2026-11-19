@@ -89,7 +89,7 @@ void AuditLogger::record(const AuditEntry& entry) {
 /**
  * @brief Write a serialized JSON line under mutex.
  * @param line JSON string (no trailing newline).
- * @dg_internal
+ * @req REQ-STOR-008
  * @version 1.9.5
  */
 void AuditLogger::write_line(const std::string& line) {
@@ -240,7 +240,7 @@ int AuditLogger::hook_callback(
  * @brief Populate AuditEntry fields from AuditHookContext state.
  * @param entry Entry to populate.
  * @param ctx Hook context with engine state pointers.
- * @dg_internal
+ * @req REQ-STOR-008
  * @version 1.9.5
  */
 void populate_from_hook_context(AuditEntry& entry,

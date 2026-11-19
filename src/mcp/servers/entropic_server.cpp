@@ -1459,7 +1459,7 @@ private:
  * @param raw Provider JSON array, or nullptr.
  * @return `{"results": [{delegation_id, target_tier, summary,
  *         completed_at}]}`.
- * @dg_internal
+ * @req REQ-MCP-024
  * @version 2.14.0
  */
 static std::string followup_results(const char* raw) {

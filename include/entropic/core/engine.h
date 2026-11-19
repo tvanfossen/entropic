@@ -2229,7 +2229,7 @@ private:
     /**
      * @brief Resolve the run this thread owns, if any (gh#158).
      * @return This thread's run state, or nullptr outside a claimed run.
-     * @dg_internal
+     * @req REQ-LOOP-006
      * @version 2.13.0
      */
     std::shared_ptr<RunState> this_thread_run() const;

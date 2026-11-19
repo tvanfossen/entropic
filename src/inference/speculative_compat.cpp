@@ -240,7 +240,7 @@ std::string run_vocab_checks(
  * @param target Target model.
  * @param draft  Draft model.
  * @return Diagnostic string ("" = compatible).
- * @dg_internal
+ * @req REQ-INFER-016
  * @version 2.1.11 [reviewed]
  */
 std::string build_compat_diagnostic(

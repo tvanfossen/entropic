@@ -32,7 +32,7 @@ namespace entropic {
  * @param hooks Hook interface.
  * @param point Hook point.
  * @param json Context JSON.
- * @dg_internal
+ * @req REQ-HOOK-002
  * @version 1.9.1
  */
 static void fire_hook_info(const HookInterface& hooks,
@@ -2066,7 +2066,7 @@ static std::string json_escape_engine(const std::string& s) {
  *
  * @param messages Conversation messages.
  * @return Manifest string, empty if no tool calls.
- * @utility
+ * @req REQ-HOOK-002
  * @version 2.1.3
  */
 static std::string build_tool_manifest(
@@ -2150,7 +2150,7 @@ static std::string format_tool_evidence_entry(const Message& msg,
  * @param max_results Most-recent N tool-result messages to include.
  * @param chars_per_result Per-result truncation budget.
  * @return Evidence block, empty if no tool results in messages.
- * @utility
+ * @req REQ-HOOK-002
  * @version 2.3.7
  */
 static std::string build_tool_evidence(
@@ -2350,7 +2350,7 @@ void AgentEngine::capture_validation_feedback(LoopContext& ctx) {
  *
  * @param messages Conversation messages.
  * @return JSON array string.
- * @utility
+ * @req REQ-HOOK-002
  * @version 2.0.10
  */
 static std::string build_tool_results_json(
@@ -3808,7 +3808,7 @@ bool AgentEngine::concurrent_sessions() const {
 /**
  * @brief The run this thread owns, if any (gh#158).
  * @return This thread's run state, or nullptr outside a claimed run.
- * @dg_internal
+ * @req REQ-LOOP-006
  * @version 2.13.0
  */
 std::shared_ptr<AgentEngine::RunState> AgentEngine::this_thread_run() const {

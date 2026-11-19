@@ -346,7 +346,8 @@ llama_model* load_tier_model(const char* path,
  *            Empty when `cpu_moe_layers == 0`, in which case `data()` is
  *            nullptr and the assignment below is a no-op against
  *            `llama_model_default_params()`.
- * @utility
+ * @return Default params overridden with the tier's GPU layers, mmap mode, split mode, main GPU and expert-offload buffer types.
+ * @req REQ-INFER-027
  * @version 2.13.0
  */
 llama_model_params build_load_mparams(
@@ -377,7 +378,7 @@ llama_model_params build_load_mparams(
  *
  * @param model Loaded model.
  * @return Declared expert count, or 0 when the model declares none.
- * @utility
+ * @req REQ-INFER-027
  * @version 2.13.0
  */
 int model_expert_count(const llama_model* model) {
@@ -1334,7 +1335,7 @@ static std::vector<llama_chat_message> to_llama_chat(
  *
  * @param messages Source messages.
  * @return Vector of common_chat_msg.
- * @utility
+ * @req REQ-INFER-009
  * @version 2.6.1
  */
 static std::vector<common_chat_msg> to_common_chat(
@@ -1361,7 +1362,7 @@ static std::vector<common_chat_msg> to_common_chat(
  *
  * @param tools_json MCP tool-list JSON array string.
  * @return Parsed common_chat tool definitions.
- * @utility
+ * @req REQ-INFER-009
  * @version 2.7.0
  */
 static std::vector<common_chat_tool> mcp_tools_to_common_chat(

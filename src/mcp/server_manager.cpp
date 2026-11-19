@@ -1066,7 +1066,7 @@ void ServerManager::initialize_external_servers() {
  * would connect back to this handle's own bridge (gh#200) — that is never a
  * request anyone meant to make.
  *
- * @dg_internal
+ * @req REQ-MCP-025
  * @version 2.14.0
  */
 void ServerManager::connect_declared_servers() {
@@ -1090,7 +1090,7 @@ void ServerManager::connect_declared_servers() {
 
 /**
  * @brief Discover `.mcp.json` servers and connect only the enabled ones.
- * @dg_internal
+ * @req REQ-MCP-025
  * @version 2.14.0
  */
 void ServerManager::connect_discovered_servers() {

@@ -170,7 +170,7 @@ bool MCPKeySet::deserialize(const std::string& json) {
  * @brief Extract server prefix wildcard from tool name.
  * @param tool_name E.g., "filesystem.read_file".
  * @return E.g., "filesystem.*", or empty if no dot.
- * @dg_internal
+ * @req REQ-MCP-010
  * @version 1.9.4
  */
 std::string MCPKeySet::server_wildcard(

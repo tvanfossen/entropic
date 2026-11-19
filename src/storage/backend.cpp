@@ -183,7 +183,7 @@ static void bind_opt_int(sqlite3_stmt* stmt, int idx,
 /**
  * @brief Construct with database file path.
  * @param db_path Path to SQLite file.
- * @dg_internal
+ * @utility
  * @version 1.8.8
  */
 SqliteStorageBackend::SqliteStorageBackend(

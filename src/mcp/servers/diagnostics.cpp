@@ -30,7 +30,7 @@ namespace entropic {
  *
  * Returns a placeholder until the LSP client lands in v1.8.7.
  *
- * @dg_internal
+ * @utility
  * @version 1.8.5
  */
 class DiagnosticsTool : public ToolBase {
@@ -38,7 +38,7 @@ public:
     /**
      * @brief Construct with definition.
      * @param def Tool definition loaded from JSON.
-     * @dg_internal
+     * @utility
      * @version 1.8.5
      */
     explicit DiagnosticsTool(ToolDefinition def)
@@ -59,7 +59,7 @@ public:
      * @brief Return the declared not_implemented error (gh#174/#203).
      * @param args_json Unused.
      * @return ServerResponse with `{"error":"not_implemented",...}`.
-     * @dg_internal
+     * @utility
      * @version 2.14.0
      */
     ServerResponse execute(const std::string& args_json) override {
@@ -78,7 +78,7 @@ public:
  *
  * Returns a placeholder until the LSP client lands in v1.8.7.
  *
- * @dg_internal
+ * @utility
  * @version 1.8.5
  */
 class CheckErrorsTool : public ToolBase {
@@ -86,7 +86,7 @@ public:
     /**
      * @brief Construct with definition.
      * @param def Tool definition loaded from JSON.
-     * @dg_internal
+     * @utility
      * @version 1.8.5
      */
     explicit CheckErrorsTool(ToolDefinition def)
@@ -107,7 +107,7 @@ public:
      * @brief Return the declared not_implemented error (gh#174/#203).
      * @param args_json Unused.
      * @return ServerResponse with `{"error":"not_implemented",...}`.
-     * @dg_internal
+     * @utility
      * @version 2.14.0
      */
     ServerResponse execute(const std::string& args_json) override {
@@ -159,7 +159,7 @@ DiagnosticsServer::DiagnosticsServer(
 
 /**
  * @brief Destructor.
- * @dg_internal
+ * @utility
  * @version 1.8.5
  */
 DiagnosticsServer::~DiagnosticsServer() = default;
@@ -167,7 +167,7 @@ DiagnosticsServer::~DiagnosticsServer() = default;
 /**
  * @brief Get the root directory.
  * @return Root directory path.
- * @dg_internal
+ * @utility
  * @version 1.8.5
  */
 const std::filesystem::path& DiagnosticsServer::root_dir() const {

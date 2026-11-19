@@ -389,7 +389,7 @@ std::vector<std::filesystem::path> grammar_search_paths(
  * @param stem Normalized grammar stem.
  * @param search_dirs Directories to look in.
  * @return true when the file is present in at least one.
- * @dg_internal
+ * @utility
  * @version 2.13.0
  */
 static bool grammar_stem_resolves(
@@ -411,7 +411,7 @@ static bool grammar_stem_resolves(
  * @brief Render the search-path list for an error message.
  * @param search_dirs Directories searched.
  * @return Comma-separated list, or a note that none were searched.
- * @dg_internal
+ * @utility
  * @version 2.13.0
  */
 static std::string describe_search_dirs(

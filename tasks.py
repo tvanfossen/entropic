@@ -1424,29 +1424,3 @@ def gen_bindings(c, check=False):
     script = Path(__file__).resolve().parent / "scripts" / "gen_bindings.py"
     flag = "--check" if check else ""
     c.run(f"{sys.executable} {script} {flag}".strip())
-
-
-## @brief Requirements-traceability gate against docs/requirements.yaml.
-#  @version 2.10.4
-#  @utility
-@task
-def check_requirements(c):
-    """Requirements-traceability gate against docs/requirements.yaml.
-
-    Three checks, one exit code. Each closes a decay path this repo has
-    actually taken:
-
-    - orphan @req ids — catches dead ids that doxygen-guard cannot see,
-      because it skips bodiless header declarations (that is how a stale
-      ``REQ-INFER-003`` survived in ``i_inference_backend.h``)
-    - uncovered requirements — a catalog entry nothing implements
-    - exemption ratio — a slide back toward blanket
-      ``@internal``/``@utility``/``@callback``, which doxygen-guard's own
-      coverage command is structurally blind to
-
-    The catalog itself was deleted as collateral in ``2edfb4e`` and stayed
-    missing for 15 months because every consumer of it fails open. This
-    gate fails closed.
-    """
-    script = Path(__file__).resolve().parent / "scripts" / "check_requirements.py"
-    c.run(f"{sys.executable} {script}")

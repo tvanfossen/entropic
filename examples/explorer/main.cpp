@@ -86,7 +86,7 @@ static bool read_input(char* buf, size_t size)
  * @param project_dir  Project config directory (e.g. ".explorer").
  * @return Configured engine handle, or nullptr on failure.
  *
- * @dg_internal
+ * @utility
  * @version 2
  */
 static entropic_handle_t setup_engine(const char* project_dir)
@@ -126,7 +126,7 @@ static entropic_handle_t setup_engine(const char* project_dir)
  *
  * @param handle  Configured engine handle.
  *
- * @dg_internal
+ * @utility
  * @version 1
  */
 static void explore_loop(entropic_handle_t handle)
@@ -166,7 +166,7 @@ static void explore_loop(entropic_handle_t handle)
  *
  * @return EXIT_SUCCESS or EXIT_FAILURE.
  *
- * @dg_internal
+ * @utility
  * @version 1
  */
 static int run_explorer()
@@ -188,7 +188,7 @@ static int run_explorer()
  * @param argv  Argument vector.
  * @return EXIT_SUCCESS or EXIT_FAILURE.
  *
- * @dg_internal
+ * @utility
  * @version 1
  */
 int main(int argc, char* argv[])

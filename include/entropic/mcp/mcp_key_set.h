@@ -138,7 +138,7 @@ private:
      * @brief Find the best matching access level for a tool name.
      * @param tool_name Fully-qualified tool name.
      * @return Granted MCPAccessLevel, or NONE if no match.
-     * @dg_internal
+     * @utility
      * @version 1.9.4
      */
     MCPAccessLevel find_best_match(const std::string& tool_name) const;

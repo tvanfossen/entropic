@@ -142,7 +142,7 @@ std::filesystem::path AuditLogger::log_path() const {
 /**
  * @brief Generate ISO 8601 UTC timestamp with milliseconds.
  * @return Timestamp string.
- * @dg_internal
+ * @utility
  * @version 1.9.5
  */
 std::string AuditLogger::utc_timestamp() {
@@ -160,7 +160,7 @@ std::string AuditLogger::utc_timestamp() {
 
 /**
  * @brief Rotate the log file if max_file_size is exceeded.
- * @dg_internal
+ * @utility
  * @version 1.9.5
  */
 void AuditLogger::rotate_if_needed() {
@@ -175,7 +175,7 @@ void AuditLogger::rotate_if_needed() {
 
 /**
  * @brief Perform the actual file rotation.
- * @dg_internal
+ * @utility
  * @version 1.9.5
  */
 void AuditLogger::rotate_files() {

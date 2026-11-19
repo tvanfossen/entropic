@@ -163,7 +163,7 @@ private:
     /**
      * @brief Generate ISO 8601 UTC timestamp with milliseconds.
      * @return Timestamp string (e.g., "2026-03-18T14:32:01.847Z").
-     * @dg_internal
+     * @utility
      * @version 1.9.5
      */
     static std::string utc_timestamp();
@@ -174,14 +174,14 @@ private:
      * Closes current file, renames audit.jsonl to audit.jsonl.1,
      * shifts existing rotated files, and opens a new audit.jsonl.
      *
-     * @dg_internal
+     * @utility
      * @version 1.9.5
      */
     void rotate_if_needed();
 
     /**
      * @brief Perform the actual file rotation.
-     * @dg_internal
+     * @utility
      * @version 1.9.5
      */
     void rotate_files();

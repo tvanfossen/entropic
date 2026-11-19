@@ -378,7 +378,7 @@ private:
      * @brief Build messages JSON for critique generation.
      * @param content Text to critique.
      * @return JSON array with system + user messages.
-     * @dg_internal
+     * @utility
      * @version 1.9.8
      */
     std::string build_critique_messages(const std::string& content) const;
@@ -386,7 +386,7 @@ private:
     /**
      * @brief Build params JSON for critique generation.
      * @return JSON string with grammar_key, max_tokens, temperature.
-     * @dg_internal
+     * @utility
      * @version 1.9.8
      */
     std::string build_critique_params() const;
@@ -408,7 +408,7 @@ private:
     /**
      * @brief Store a validation result (thread-safe).
      * @param result Result to store.
-     * @dg_internal
+     * @utility
      * @version 1.9.8
      */
     void store_result(const ValidationResult& result);
@@ -469,7 +469,7 @@ private:
      * @brief Build a single-turn messages JSON.
      * @param prompt Full prompt text.
      * @return JSON array string.
-     * @dg_internal
+     * @utility
      * @version 1.9.8
      */
     std::string build_single_turn_json(
@@ -493,7 +493,7 @@ private:
      * @brief Build human-readable feedback text from violations.
      * @param critique Critique result with violations.
      * @return Feedback string.
-     * @dg_internal
+     * @utility
      * @version 1.9.8
      */
     std::string build_feedback_text(
@@ -505,7 +505,7 @@ private:
      * @param feedback Feedback message.
      * @param messages_json Base conversation messages.
      * @return Augmented JSON array.
-     * @dg_internal
+     * @utility
      * @version 1.9.8
      */
     std::string inject_feedback_into_messages(
@@ -528,7 +528,7 @@ private:
      * @brief Write revised content into modified_json output.
      * @param content Revised content.
      * @param modified_json Output buffer (malloc'd).
-     * @dg_internal
+     * @utility
      * @version 1.9.8
      */
     static void write_modified_json(
@@ -634,22 +634,22 @@ private:
     /// forward in `PendingValidationState` instead.
     ///
     /// @return The calling thread's value for that field.
-    /// @dg_internal
+    /// @utility
     /// @version 2.13.0
     static const std::string& current_tier();
     /// @brief This thread's tool-call manifest (gh#158).
     /// @return Manifest text for the turn being validated.
-    /// @dg_internal
+    /// @utility
     /// @version 2.13.0
     static const std::string& current_tool_context();
     /// @brief This thread's un-pruned tool evidence (gh#158).
     /// @return Evidence text for the turn being validated.
-    /// @dg_internal
+    /// @utility
     /// @version 2.13.0
     static const std::string& current_tool_evidence();
     /// @brief This thread's identity system prompt (gh#158).
     /// @return System prompt for the turn being validated.
-    /// @dg_internal
+    /// @utility
     /// @version 2.13.0
     static const std::string& current_system_prompt();
     /// @brief Publish this thread's per-turn validation context (gh#158).
@@ -657,7 +657,7 @@ private:
     /// @param tool_context Tool-call manifest.
     /// @param tool_evidence Un-pruned tool evidence.
     /// @param system_prompt Identity system prompt.
-    /// @dg_internal
+    /// @utility
     /// @version 2.13.0
     static void set_turn_context(const std::string& tier,
                                  const std::string& tool_context,
@@ -676,7 +676,7 @@ private:
 
     /**
      * @brief State captured when validation is paused on rejection.
-     * @dg_internal
+     * @utility
      * @version 2.1.5
      */
     struct PendingValidationState {

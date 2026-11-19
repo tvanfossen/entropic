@@ -131,7 +131,7 @@ private:
      * @param cancel_int Backend cancel int; borrowed, set to 1 on stop.
      * @param done Retirement flag; borrowed.
      * @return The poller thread, non-joinable when nothing to watch.
-     * @dg_internal
+     * @utility
      * @version 2.13.0
      */
     std::thread spawn_cancel_poller(int& cancel_int,

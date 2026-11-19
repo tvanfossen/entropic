@@ -156,7 +156,7 @@ bool path_within(const fs::path& path, const fs::path& base) {
  * @param entry Configured path (absolute after load).
  * @return weakly_canonical form, or the lexically normal form when the
  *         filesystem cannot be queried.
- * @dg_internal
+ * @utility
  * @version 2.13.0
  */
 fs::path canonical_entry(const fs::path& entry) {
@@ -195,7 +195,7 @@ std::optional<fs::path> first_containing(
  * @brief The YAML spelling of an outside-root mode, for logs.
  * @param mode Configured mode.
  * @return "false", "true" or "optional".
- * @dg_internal
+ * @utility
  * @version 2.13.0
  */
 const char* outside_root_mode_name(OutsideRootAccess mode) {
@@ -209,7 +209,7 @@ const char* outside_root_mode_name(OutsideRootAccess mode) {
  * @brief "read" or "write", for approval requests and messages.
  * @param access Access kind.
  * @return Lower-case verb.
- * @dg_internal
+ * @utility
  * @version 2.13.0
  */
 const char* access_verb(PathAccess access) {
@@ -295,7 +295,7 @@ std::string outside_root_refusal(OutsideRootVerdict verdict,
  * @param access Read or write.
  * @param allowed_by The `outside_root_allow` entry, or nullopt when
  *        `allow_outside_root: true` served it.
- * @dg_internal
+ * @utility
  * @version 2.13.0
  */
 void log_outside_root_served(const fs::path& resolved, PathAccess access,
@@ -311,7 +311,7 @@ void log_outside_root_served(const fs::path& resolved, PathAccess access,
  * @brief Render a path list for a log line.
  * @param paths Paths.
  * @return `[a, b]`.
- * @dg_internal
+ * @utility
  * @version 2.13.0
  */
 std::string join_paths(const std::vector<fs::path>& paths) {
@@ -331,7 +331,7 @@ std::string join_paths(const std::vector<fs::path>& paths) {
  *
  * @param deny Configured `outside_root_deny`.
  * @param root Canonical project root.
- * @dg_internal
+ * @utility
  * @version 2.13.0
  */
 void warn_deny_entries_inside_root(const std::vector<fs::path>& deny,
@@ -353,7 +353,7 @@ void warn_deny_entries_inside_root(const std::vector<fs::path>& deny,
  * nothing still visited every entry in the tree. This bounds the walk
  * itself and records that it was cut short, so the result can say so.
  *
- * @dg_internal
+ * @utility
  * @version 2.13.0
  */
 struct WalkBudget {
@@ -366,7 +366,7 @@ struct WalkBudget {
  * @brief Charge one visited entry to the budget.
  * @param[in,out] budget Walk budget.
  * @return true when the cap is now spent and the walk must stop.
- * @dg_internal
+ * @utility
  * @version 2.13.0
  */
 bool walk_budget_spent(WalkBudget& budget) {
@@ -421,7 +421,7 @@ void write_file_contents(const fs::path& path,
  * @brief Hash a string using std::hash.
  * @param s String to hash.
  * @return Hash value.
- * @dg_internal
+ * @utility
  * @version 1.8.5
  */
 size_t hash_content(const std::string& s) {
@@ -453,7 +453,7 @@ std::string make_error(const std::string& code,
 
 /**
  * @brief A requested page: how many results to skip, how many to keep.
- * @dg_internal
+ * @utility
  * @version 2.14.0
  */
 struct Page {
@@ -500,7 +500,7 @@ std::string read_page(const json& args, long default_limit, long max_limit,
  * `reason` (`limit` = more exist, continue at `next_offset`; `walk` = the
  * directory walk hit its cap) (gh#173/#202/#203).
  *
- * @dg_internal
+ * @utility
  * @version 2.14.0
  */
 class PagedResult {
@@ -517,7 +517,7 @@ public:
      * @param item Result.
      * @return false once the page is full and a further result exists —
      *         the caller stops walking.
-     * @dg_internal
+     * @utility
      * @version 2.14.0
      */
     bool offer(json item) {
@@ -536,7 +536,7 @@ public:
     /**
      * @brief Whether the page filled with results still to come.
      * @return true once offer() has returned false.
-     * @dg_internal
+     * @utility
      * @version 2.14.0
      */
     bool full() const { return more_; }
@@ -546,7 +546,7 @@ public:
      * @param[in,out] result Result object.
      * @param key Array key ("paths", "matches", "entries").
      * @param walk_truncated Whether the walk stopped on its cap.
-     * @dg_internal
+     * @utility
      * @version 2.14.0
      */
     void finish(json& result, const std::string& key,
@@ -576,7 +576,7 @@ private:
  * @param root Canonical project root.
  * @param path Path to show.
  * @return Display string; "." for the root itself.
- * @dg_internal
+ * @utility
  * @version 2.14.0
  */
 std::string display_path(const fs::path& root, const fs::path& path) {
@@ -587,7 +587,7 @@ std::string display_path(const fs::path& root, const fs::path& path) {
 
 /**
  * @brief The window of a file one read_file call returns.
- * @dg_internal
+ * @utility
  * @version 2.14.0
  */
 struct ReadWindow {
@@ -598,7 +598,7 @@ struct ReadWindow {
 
 /**
  * @brief Accumulates one read_file window, line by line.
- * @dg_internal
+ * @utility
  * @version 2.14.0
  */
 struct WindowReader {
@@ -612,7 +612,7 @@ struct WindowReader {
      * @brief Consider line `n` for the window.
      * @param n 1-based line number.
      * @param line Line text.
-     * @dg_internal
+     * @utility
      * @version 2.14.0
      */
     void take(long n, const std::string& line) {
@@ -688,7 +688,7 @@ json read_numbered_lines(const fs::path& path, const std::string& display,
  * @param pat     Pattern string.
  * @param i       Current position (the first star); advanced in-place.
  * @param out     Regex output buffer.
- * @dg_internal
+ * @utility
  * @version 2.10.0
  */
 void emit_glob_star(const std::string& pat, size_t& i, std::string& out) {
@@ -710,7 +710,7 @@ void emit_glob_star(const std::string& pat, size_t& i, std::string& out) {
  * @param filename Workspace-relative path to test.
  * @param pattern  Glob pattern (already brace-expanded).
  * @return true if filename matches.
- * @dg_internal
+ * @utility
  * @version 2.10.0
  */
 bool glob_match(const std::string& filename,
@@ -760,14 +760,14 @@ bool glob_match(const std::string& filename,
  * @param pattern Source pattern.
  * @return Vector of brace-expanded patterns. At minimum a single entry
  *         (the input verbatim) when no braces are present.
- * @dg_internal
+ * @utility
  * @version 2.1.4
  */
 /**
  * @brief Split the body of a `{a,b,c}` group into alternatives.
  * @param body Text between the braces (no `{` or `}`).
  * @return Vector of alternative strings. At least one entry.
- * @dg_internal
+ * @utility
  * @version 2.1.4
  */
 std::vector<std::string> split_brace_alternatives(
@@ -788,7 +788,7 @@ std::vector<std::string> split_brace_alternatives(
 
 /**
  * @brief Multiply existing patterns by alternatives.
- * @dg_internal
+ * @utility
  * @version 2.1.4
  */
 std::vector<std::string> multiply_alternatives(
@@ -812,7 +812,7 @@ std::vector<std::string> multiply_alternatives(
  * (`*.{c,h}.{old,new}` → 4 patterns). Nested braces are not supported;
  * unbalanced braces pass through verbatim.
  *
- * @dg_internal
+ * @utility
  * @version 2.1.4
  */
 std::vector<std::string> expand_braces(const std::string& pattern) {
@@ -871,7 +871,7 @@ std::string check_read_before_write(
  * @param content Text to search.
  * @param needle Substring to count.
  * @return Occurrence count.
- * @dg_internal
+ * @utility
  * @version 1.8.6
  */
 int count_occurrences(const std::string& content,
@@ -923,7 +923,7 @@ apply_str_replace(const std::string& content, const std::string& old_str, const 
  * @brief Number of lines in `content` as read_file numbers them.
  * @param content File content.
  * @return Line count (a final line without '\n' counts).
- * @dg_internal
+ * @utility
  * @version 2.14.0
  */
 long count_lines(const std::string& content) {
@@ -995,7 +995,7 @@ bool any_glob_match(const std::string& filename,
  * @param max_results Maximum number of results.
  * @param ignore Optional ignore matcher (nullptr disables filtering).
  * @return Vector of matching absolute path strings (deduped).
- * @dg_internal
+ * @utility
  * @version 2.1.4
  */
 /**
@@ -1004,7 +1004,7 @@ bool any_glob_match(const std::string& filename,
  * Encapsulates the decision tree for "skip me / prune below / take me"
  * so collect_glob_matches can stay flat and within the complexity gate.
  *
- * @dg_internal
+ * @utility
  * @version 2.1.4
  */
 enum class EntryAction {
@@ -1102,7 +1102,7 @@ void collect_glob_matches(
  *
  * @param path File.
  * @return true when the file should not be searched as text.
- * @dg_internal
+ * @utility
  * @version 2.14.0
  */
 bool looks_binary(const fs::path& path) {
@@ -1146,7 +1146,7 @@ bool grep_file(const fs::path& path, const std::string& display,
  * @param entry Directory entry.
  * @param base The listed directory; `name` is relative to it.
  * @return JSON with name, type ("file"|"directory") and size.
- * @dg_internal
+ * @utility
  * @version 2.14.0
  */
 json entry_to_json(const fs::directory_entry& entry, const fs::path& base) {
@@ -1299,7 +1299,7 @@ std::string apply_edit(const json& args,
 
 /**
  * @brief Tool for reading file contents with line numbering.
- * @dg_internal
+ * @utility
  * @version 1.8.5
  */
 class ReadFileTool : public ToolBase {
@@ -1308,7 +1308,7 @@ public:
      * @brief Construct from server reference and data directory.
      * @param server Owning filesystem server.
      * @param data_dir Path to bundled data directory.
-     * @dg_internal
+     * @utility
      * @version 1.8.5
      */
     ReadFileTool(FilesystemServer& server,
@@ -1333,7 +1333,7 @@ public:
      * @brief Read a file and return numbered lines as JSON.
      * @param args_json JSON with "path" key.
      * @return ServerResponse with file content or error.
-     * @dg_internal
+     * @utility
      * @version 1.8.5
      */
     ServerResponse execute(const std::string& args_json) override;
@@ -1364,7 +1364,7 @@ private:
  * @brief Execute read_file: resolve, size-check, read, hash, track.
  * @param args_json JSON arguments.
  * @return ServerResponse with content or error.
- * @dg_internal
+ * @utility
  * @version 1.8.5
  */
 /**
@@ -1415,7 +1415,7 @@ std::string check_read_gates(FilesystemServer& server,
  * @param budget Byte budget (max_read_bytes).
  * @param[out] w Parsed window.
  * @return "" or a declared `invalid_args` error.
- * @dg_internal
+ * @utility
  * @version 2.14.0
  */
 std::string read_window(const json& args, long budget, ReadWindow& w) {
@@ -1489,7 +1489,7 @@ ServerResponse ReadFileTool::execute(const std::string& args_json) {
 
 /**
  * @brief Tool for writing file contents with read-before-write.
- * @dg_internal
+ * @utility
  * @version 1.8.5
  */
 class WriteFileTool : public ToolBase {
@@ -1498,7 +1498,7 @@ public:
      * @brief Construct from server reference and data directory.
      * @param server Owning filesystem server.
      * @param data_dir Path to bundled data directory.
-     * @dg_internal
+     * @utility
      * @version 1.8.5
      */
     WriteFileTool(FilesystemServer& server,
@@ -1512,7 +1512,7 @@ public:
      * @brief Write content to a file after read-before-write check.
      * @param args_json JSON with "path" and "content" keys.
      * @return ServerResponse with result or error.
-     * @dg_internal
+     * @utility
      * @version 1.8.5
      */
     ServerResponse execute(const std::string& args_json) override;
@@ -1567,7 +1567,7 @@ ServerResponse WriteFileTool::execute(
 
 /**
  * @brief Tool for in-place file editing (string replace or insert).
- * @dg_internal
+ * @utility
  * @version 1.8.5
  */
 class EditFileTool : public ToolBase {
@@ -1576,7 +1576,7 @@ public:
      * @brief Construct from server reference and data directory.
      * @param server Owning filesystem server.
      * @param data_dir Path to bundled data directory.
-     * @dg_internal
+     * @utility
      * @version 1.8.5
      */
     EditFileTool(FilesystemServer& server,
@@ -1590,7 +1590,7 @@ public:
      * @brief Edit a file via string replacement or line insertion.
      * @param args_json JSON with edit parameters.
      * @return ServerResponse with result or error.
-     * @dg_internal
+     * @utility
      * @version 1.8.5
      */
     ServerResponse execute(const std::string& args_json) override;
@@ -1607,7 +1607,7 @@ private:
  * @param args_json JSON arguments.
  * @return ServerResponse whose result is the declared success object or
  *         a declared structured error.
- * @dg_internal
+ * @utility
  * @version 2.14.0
  */
 ServerResponse EditFileTool::execute(const std::string& args_json) {
@@ -1628,7 +1628,7 @@ ServerResponse EditFileTool::execute(const std::string& args_json) {
 
 /**
  * @brief Tool for recursive file pattern matching.
- * @dg_internal
+ * @utility
  * @version 1.8.5
  */
 class GlobTool : public ToolBase {
@@ -1637,7 +1637,7 @@ public:
      * @brief Construct with server reference and data directory.
      * @param server Owning FilesystemServer (for root_dir).
      * @param data_dir Path to bundled data directory.
-     * @dg_internal
+     * @utility
      * @version 2.0.4
      */
     GlobTool(FilesystemServer& server, const std::string& data_dir)
@@ -1661,7 +1661,7 @@ public:
      * @brief Find files matching a glob pattern.
      * @param args_json JSON with "pattern" key.
      * @return ServerResponse with matched file paths.
-     * @dg_internal
+     * @utility
      * @version 1.8.5
      */
     ServerResponse execute(const std::string& args_json) override;
@@ -1706,7 +1706,7 @@ ServerResponse GlobTool::execute(const std::string& args_json) {
 
 /**
  * @brief Tool for regex content search across files.
- * @dg_internal
+ * @utility
  * @version 1.8.5
  */
 class GrepTool : public ToolBase {
@@ -1714,7 +1714,7 @@ public:
     /**
      * @brief Construct from data directory.
      * @param data_dir Path to bundled data directory.
-     * @dg_internal
+     * @utility
      * @version 2.1.4
      */
     GrepTool(FilesystemServer& server, const std::string& data_dir)
@@ -1738,7 +1738,7 @@ public:
      * @brief Search files for regex pattern matches.
      * @param args_json JSON with "pattern" and optional "glob" keys.
      * @return ServerResponse with match results.
-     * @dg_internal
+     * @utility
      * @version 1.8.5
      */
     ServerResponse execute(const std::string& args_json) override;
@@ -1776,7 +1776,7 @@ std::regex compile_grep_or_error(const std::string& pattern,
  *
  * Issues #13/#15 (v2.1.4).
  *
- * @dg_internal
+ * @utility
  * @version 2.1.4
  */
 /**
@@ -1821,7 +1821,7 @@ static void grep_search(
  * @param re Compiled regex.
  * @param[in,out] budget Walk budget.
  * @param[in,out] page Page being collected.
- * @dg_internal
+ * @utility
  * @version 2.14.0
  */
 static void grep_target(FilesystemServer& server, const fs::path& start,
@@ -1846,7 +1846,7 @@ static void grep_target(FilesystemServer& server, const fs::path& start,
  * @param[out] re Compiled regex.
  * @return "" or the first declared error (`invalid_args`,
  *         `invalid_regex`, `not_found`).
- * @dg_internal
+ * @utility
  * @version 2.14.0
  */
 static std::string grep_preflight(const json& args, const fs::path& start,
@@ -1903,7 +1903,7 @@ ServerResponse GrepTool::execute(const std::string& args_json) {
 
 /**
  * @brief Tool for listing directory contents.
- * @dg_internal
+ * @utility
  * @version 1.8.5
  */
 class ListDirectoryTool : public ToolBase {
@@ -1912,7 +1912,7 @@ public:
      * @brief Construct from server reference and data directory.
      * @param server Owning filesystem server.
      * @param data_dir Path to bundled data directory.
-     * @dg_internal
+     * @utility
      * @version 1.8.5
      */
     ListDirectoryTool(FilesystemServer& server,
@@ -1937,7 +1937,7 @@ public:
      * @brief List directory entries with optional recursion.
      * @param args_json JSON with "path" and optional depth params.
      * @return ServerResponse with directory listing.
-     * @dg_internal
+     * @utility
      * @version 1.8.5
      */
     ServerResponse execute(const std::string& args_json) override;
@@ -2117,7 +2117,7 @@ void FilesystemServer::register_fs_tools() {
 
 /**
  * @brief Destructor (default, unique_ptr cleanup).
- * @dg_internal
+ * @utility
  * @version 1.8.5
  */
 FilesystemServer::~FilesystemServer() = default;
@@ -2231,7 +2231,7 @@ const IgnoreMatcher& FilesystemServer::ignore() const {
 /**
  * @brief Get the filesystem config.
  * @return Config reference.
- * @dg_internal
+ * @utility
  * @version 1.8.5
  */
 const FilesystemConfig& FilesystemServer::config() const {

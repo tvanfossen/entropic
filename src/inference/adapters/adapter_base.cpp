@@ -33,7 +33,7 @@ constexpr const char* TOOL_RESULT_SUFFIX =
 /**
  * @brief Generate a UUID v4 string.
  * @return UUID string.
- * @dg_internal
+ * @utility
  * @version 1.8.2
  */
 std::string generate_uuid() {
@@ -54,7 +54,7 @@ std::string generate_uuid() {
  *
  * @param j Parsed JSON tool-call object.
  * @return The tool name, or empty string if no name key is present.
- * @dg_internal
+ * @utility
  * @version 2.3.8
  */
 std::string tool_name_from_json(const nlohmann::json& j) {
@@ -76,7 +76,7 @@ std::string tool_name_from_json(const nlohmann::json& j) {
  *
  * @param j Parsed JSON tool-call object.
  * @return Populated ToolCall, or nullopt if nameless.
- * @dg_internal
+ * @utility
  * @version 2.3.8
  */
 std::optional<ToolCall> tool_call_from_json(const nlohmann::json& j) {
@@ -115,7 +115,7 @@ ChatAdapter::ChatAdapter(std::string tier_name, std::string identity_prompt)
  * @param tool_call The executed tool call.
  * @param result Execution result text.
  * @return Formatted user message.
- * @dg_internal
+ * @utility
  * @version 1.8.2
  */
 Message ChatAdapter::format_tool_result(
@@ -139,7 +139,7 @@ Message ChatAdapter::format_tool_result(
  * @param content Response content.
  * @param tool_calls Parsed tool calls.
  * @return true if complete.
- * @dg_internal
+ * @utility
  * @version 1.8.2
  */
 bool ChatAdapter::is_response_complete(
@@ -336,7 +336,7 @@ void apply_action_envelope_recovery(std::vector<ToolCall>& calls,
  * @param tools Parsed MCP tool array.
  * @param name  Tool name to match.
  * @return Property names whose schema declares `"type":"string"`.
- * @dg_internal
+ * @utility
  * @version 2.7.2
  */
 static std::unordered_set<std::string> tool_string_props(
@@ -529,7 +529,7 @@ std::optional<ToolCall> ChatAdapter::try_recover_json(
  * @brief Default tool formatting: markdown headings + JSON schema.
  * @param tool_jsons Tool definitions as JSON strings.
  * @return Formatted tool section string.
- * @dg_internal
+ * @utility
  * @version 1.8.2
  */
 std::string ChatAdapter::format_tools(
@@ -561,7 +561,7 @@ std::string ChatAdapter::format_tools(
  * @brief Parse a single JSON tool call string.
  * @param json_str JSON string from tagged block.
  * @return Parsed ToolCall or nullopt.
- * @dg_internal
+ * @utility
  * @version 2.3.8
  */
 std::optional<ToolCall> ChatAdapter::parse_single_tool_call(
@@ -585,7 +585,7 @@ std::optional<ToolCall> ChatAdapter::parse_single_tool_call(
  * @param base_system Base system prompt text.
  * @param has_vision Whether vision is available.
  * @return base_system unchanged.
- * @dg_internal
+ * @utility
  * @version 1.9.11
  */
 std::string ChatAdapter::format_system_with_vision(
@@ -598,7 +598,7 @@ std::string ChatAdapter::format_system_with_vision(
  * @brief Default: OpenAI-format content array JSON.
  * @param parts Content parts from a message.
  * @return JSON array string with text/image objects.
- * @dg_internal
+ * @utility
  * @version 1.9.11
  */
 std::string ChatAdapter::format_content_parts(

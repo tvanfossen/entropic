@@ -89,8 +89,9 @@ Before submitting a PR, run the full pre-commit suite locally:
 .venv/bin/pre-commit run --all-files
 ```
 
-This runs all 16 hooks, including the C/C++ complexity gates, the
-doxygen-guard, the unit tests, and the per-library coverage check.
+This runs every hook, including the C/C++ complexity gates, clew guard
+(doxygen comments and requirements traceability), the unit tests, and the
+per-library coverage check.
 PRs that don't pass pre-commit will not be merged.
 
 See `docs/contributing.md` for development setup, build

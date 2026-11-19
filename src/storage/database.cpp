@@ -23,7 +23,7 @@ auto logger = entropic::log::get("storage.database");
 
 /**
  * @brief A single named migration.
- * @dg_internal
+ * @utility
  * @version 1.8.8
  */
 struct Migration {
@@ -31,7 +31,7 @@ struct Migration {
     const char* sql;  ///< SQL to execute
 };
 
-/// @dg_internal
+/// @utility
 static constexpr const char* MIGRATION_001_INITIAL = R"sql(
 CREATE TABLE IF NOT EXISTS conversations (
     id TEXT PRIMARY KEY,
@@ -78,7 +78,7 @@ CREATE INDEX IF NOT EXISTS idx_conversations_updated
     ON conversations(updated_at);
 )sql";
 
-/// @dg_internal
+/// @utility
 static constexpr const char* MIGRATION_002_FTS = R"sql(
 CREATE VIRTUAL TABLE IF NOT EXISTS messages_fts USING fts5(
     content,
@@ -102,7 +102,7 @@ CREATE TRIGGER IF NOT EXISTS messages_au AFTER UPDATE ON messages BEGIN
 END;
 )sql";
 
-/// @dg_internal
+/// @utility
 static constexpr const char* MIGRATION_003_DELEGATIONS = R"sql(
 CREATE TABLE IF NOT EXISTS delegations (
     id TEXT PRIMARY KEY,
@@ -129,7 +129,7 @@ CREATE INDEX IF NOT EXISTS idx_delegations_child
     ON delegations(child_conversation_id);
 )sql";
 
-/// @dg_internal
+/// @utility
 static constexpr const char* MIGRATION_004_COMPACTION_SNAPSHOTS = R"sql(
 CREATE TABLE IF NOT EXISTS compaction_snapshots (
     id TEXT PRIMARY KEY,
@@ -146,7 +146,7 @@ CREATE INDEX IF NOT EXISTS idx_snapshots_conversation
     ON compaction_snapshots(conversation_id);
 )sql";
 
-/// @dg_internal
+/// @utility
 static constexpr std::array<Migration, 4> MIGRATIONS = {{
     {"001_initial",             MIGRATION_001_INITIAL},
     {"002_fts",                 MIGRATION_002_FTS},
@@ -159,7 +159,7 @@ static constexpr std::array<Migration, 4> MIGRATIONS = {{
 /**
  * @brief Construct with database file path.
  * @param db_path Path to SQLite file.
- * @dg_internal
+ * @utility
  * @version 1.8.8
  */
 SqliteDatabase::SqliteDatabase(const std::filesystem::path& db_path)
@@ -167,7 +167,7 @@ SqliteDatabase::SqliteDatabase(const std::filesystem::path& db_path)
 
 /**
  * @brief Destructor — closes connection if open.
- * @dg_internal
+ * @utility
  * @version 1.8.8
  */
 SqliteDatabase::~SqliteDatabase() {
@@ -375,7 +375,7 @@ size_t SqliteDatabase::fetch_all(
 /**
  * @brief Get the underlying sqlite3 handle.
  * @return Raw sqlite3 pointer.
- * @dg_internal
+ * @utility
  * @version 1.8.8
  */
 sqlite3* SqliteDatabase::raw_handle() const {
@@ -386,7 +386,7 @@ sqlite3* SqliteDatabase::raw_handle() const {
  * @brief Get names of already-applied migrations.
  * @param db SQLite database handle.
  * @return Vector of applied migration names.
- * @dg_internal
+ * @utility
  * @version 1.8.8
  */
 static std::vector<std::string> get_applied_migrations(sqlite3* db) {
@@ -411,7 +411,7 @@ static std::vector<std::string> get_applied_migrations(sqlite3* db) {
  * @param db SQLite database handle.
  * @param mig Migration to apply.
  * @return true on success.
- * @dg_internal
+ * @utility
  * @version 2.0.0
  */
 static bool apply_migration(sqlite3* db, const Migration& mig) {
@@ -443,7 +443,7 @@ static bool apply_migration(sqlite3* db, const Migration& mig) {
  * @param applied Applied migration names.
  * @param name Migration name to check.
  * @return true if already applied.
- * @dg_internal
+ * @utility
  * @version 1.8.8
  */
 static bool is_applied(const std::vector<std::string>& applied,

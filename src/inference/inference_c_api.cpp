@@ -37,7 +37,7 @@ auto logger = entropic::log::get("inference.c_api");
  * @brief Cast opaque handle to C++ backend pointer.
  * @param h Opaque handle.
  * @return Backend pointer.
- * @dg_internal
+ * @utility
  * @version 1.8.2
  */
 entropic::InferenceBackend* to_backend(entropic_inference_backend_t h) {
@@ -63,7 +63,7 @@ char* alloc_string(const std::string& s) {
  * @brief Parse ModelConfig from JSON string.
  * @param json_str JSON config string.
  * @return Parsed ModelConfig.
- * @dg_internal
+ * @utility
  * @version 1.8.2
  */
 /**
@@ -81,7 +81,7 @@ static void set_if(const nlohmann::json& j, const char* key, T& out) {
 
 /**
  * @brief Parse a ModelConfig from a JSON config string.
- * @dg_internal
+ * @utility
  * @version 2.3.7
  */
 entropic::ModelConfig parse_config_json(const char* json_str) {
@@ -146,7 +146,7 @@ static void parse_logit_bias_into(
  * @brief Parse GenerationParams from JSON string.
  * @param json_str JSON params string.
  * @return Parsed GenerationParams.
- * @dg_internal
+ * @utility
  * @version 1.8.2
  */
 entropic::GenerationParams parse_params_json(const char* json_str) {
@@ -171,7 +171,7 @@ entropic::GenerationParams parse_params_json(const char* json_str) {
  * @brief Serialize GenerationResult to JSON string.
  * @param result Generation result.
  * @return JSON string.
- * @dg_internal
+ * @utility
  * @version 1.8.2
  */
 std::string serialize_result_json(const entropic::GenerationResult& result) {
@@ -639,13 +639,13 @@ static void ggml_log_noop(enum ggml_log_level /*level*/,
 
 /**
  * @brief Redirect llama/ggml logs to a file or silence them.
- * @dg_internal
+ * @utility
  * @version 2.0.1
  */
 /**
  * @brief Close the active ggml log fp and route llama logs to noop.
  * Caller must hold s_ggml_log_mu.
- * @dg_internal
+ * @utility
  * @version 2.2.5
  */
 static void ggml_log_silence_locked() {
@@ -659,7 +659,7 @@ static void ggml_log_silence_locked() {
 
 /**
  * @brief Resolve path via weakly_canonical, fall back to raw on error.
- * @dg_internal
+ * @utility
  * @version 2.2.5
  */
 static std::string canonicalize_or_passthrough(const char* path) {
@@ -676,7 +676,7 @@ static std::string canonicalize_or_passthrough(const char* path) {
  * clobbering the live redirect. Same-path re-call truncates and
  * reopens (preserves pre-v2.2.5 reset-on-recall behavior).
  *
- * @dg_internal
+ * @utility
  * @version 2.2.5
  */
 void entropic_inference_log_to_file(const char* path) {
@@ -711,7 +711,7 @@ void entropic_inference_log_to_file(const char* path) {
 
 /**
  * @brief Silence all llama/ggml output.
- * @dg_internal
+ * @utility
  * @version 2.0.1
  */
 void entropic_inference_log_silence(void) {

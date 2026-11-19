@@ -81,7 +81,7 @@ std::optional<std::string> check_arch_gate(
  * @param vt Target vocab.
  * @param vd Draft vocab.
  * @return Diagnostic string on mismatch.
- * @dg_internal
+ * @utility
  * @version 2.1.11
  */
 std::optional<std::string> check_vocab_type(
@@ -99,7 +99,7 @@ std::optional<std::string> check_vocab_type(
  * @param vt Target vocab.
  * @param vd Draft vocab.
  * @return Diagnostic string on mismatch.
- * @dg_internal
+ * @utility
  * @version 2.1.11
  */
 std::optional<std::string> check_bos(
@@ -121,7 +121,7 @@ std::optional<std::string> check_bos(
  * @param vt Target vocab.
  * @param vd Draft vocab.
  * @return Diagnostic string on mismatch.
- * @dg_internal
+ * @utility
  * @version 2.1.11
  */
 std::optional<std::string> check_eos(
@@ -144,7 +144,7 @@ std::optional<std::string> check_eos(
  * @param vd Draft vocab.
  * @return Diagnostic string when the absolute difference exceeds
  *         `kSpecVocabMaxSizeDifference` (128).
- * @dg_internal
+ * @utility
  * @version 2.1.11
  */
 std::optional<std::string> check_vocab_size(
@@ -173,7 +173,7 @@ std::optional<std::string> check_vocab_size(
  * @param vt Target vocab.
  * @param vd Draft vocab.
  * @return Diagnostic string on first mismatch, empty otherwise.
- * @dg_internal
+ * @utility
  * @version 2.1.11
  */
 std::optional<std::string> check_token_text(
@@ -210,7 +210,7 @@ namespace {
  * @param vt Target vocab.
  * @param vd Draft vocab.
  * @return Empty string on success, diagnostic on first failure.
- * @dg_internal
+ * @utility
  * @version 2.1.11
  */
 std::string run_vocab_checks(

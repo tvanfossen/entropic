@@ -408,7 +408,7 @@ int model_expert_count(const llama_model* model) {
  *
  * @param config Validated model config.
  * @return true on success.
- * @dg_internal
+ * @utility
  * @version 2.13.0 [reviewed]
  */
 bool LlamaCppBackend::do_load(const ModelConfig& config) {
@@ -439,7 +439,7 @@ bool LlamaCppBackend::do_load(const ModelConfig& config) {
  * Lifetime: tokenizer_ borrows vocab_; do_unload resets tokenizer_ BEFORE
  * freeing the model so the borrow never dangles.
  *
- * @dg_internal
+ * @utility
  * @version 2.13.0
  */
 void LlamaCppBackend::bind_model_handles() {
@@ -456,7 +456,7 @@ void LlamaCppBackend::bind_model_handles() {
  * inference context with KV cache.
  *
  * @return true on success.
- * @dg_internal
+ * @utility
  * @version 2.1.8
  */
 namespace {
@@ -533,7 +533,7 @@ llama_context_params build_cparams(const entropic::ModelConfig& cfg) {
  * v2.2.9 extracted the cparams builder to satisfy the SLOC gate.
  *
  * @return true on success.
- * @dg_internal
+ * @utility
  * @version 2.13.0
  */
 bool LlamaCppBackend::do_activate() {
@@ -548,7 +548,7 @@ bool LlamaCppBackend::do_activate() {
  * and the WARM promotion cannot drift apart.
  *
  * @return true on success.
- * @dg_internal
+ * @utility
  * @version 2.13.0
  */
 bool LlamaCppBackend::finish_activation() {
@@ -630,7 +630,7 @@ bool LlamaCppBackend::do_load_active(const ModelConfig& config) {
  *
  * @param config Tier config carrying `cpu_moe_layers`.
  * @return true to proceed; false with `last_error_` set.
- * @dg_internal
+ * @utility
  * @req REQ-INFER-027
  * @version 2.13.0
  */
@@ -682,7 +682,7 @@ bool LlamaCppBackend::expert_offload_admits(const ModelConfig& config) {
  * v2.13.0 (gh#153 #42(iii)): also carries the EXPERIMENTAL expert-tensor
  * overrides, whose owning holder must outlive the load call below.
  *
- * @dg_internal
+ * @utility
  * @req REQ-INFER-027
  * @version 2.13.0 [reviewed]
  */
@@ -730,7 +730,7 @@ bool LlamaCppBackend::load_gpu_model() {
 /**
  * @brief Create the llama context + prompt cache (do_activate step 2).
  * @return true on success; sets last_error_ on failure.
- * @dg_internal
+ * @utility
  * @version 2.3.7
  */
 bool LlamaCppBackend::create_inference_context() {
@@ -767,7 +767,7 @@ bool LlamaCppBackend::create_inference_context() {
  * is non-fatal — the engine falls back to text-only with a logged
  * diagnostic.
  *
- * @dg_internal
+ * @utility
  * @version 2.1.8
  */
 void LlamaCppBackend::init_mmproj_if_configured() {
@@ -807,7 +807,7 @@ void LlamaCppBackend::init_mmproj_if_configured() {
  *       here would self-deadlock. Callers that race generate_mtp
  *       (do_deactivate/do_unload) hold mtp_mutex_ around the call instead.
  * @req REQ-INFER-002
- * @dg_internal
+ * @utility
  * @version 2.9.1
  */
 void LlamaCppBackend::teardown_mtp_draft() {
@@ -833,7 +833,7 @@ void LlamaCppBackend::teardown_mtp_draft() {
  * @return The effective window size.
  * @req REQ-INFER-015
  * @version 2.11.0
- * @dg_internal
+ * @utility
  */
 static int effective_n_draft(int n_max) {
     return (n_max > 0) ? n_max : 16;
@@ -849,7 +849,7 @@ static int effective_n_draft(int n_max) {
  * shared KV dimensions match. Idempotent when the live head already
  * matches head_path; otherwise tears the stale head down and rebuilds.
  *
- * @dg_internal
+ * @utility
  * @version 2.11.0
  */
 bool LlamaCppBackend::setup_mtp_draft(const std::string& head_path, int n_max) {
@@ -863,7 +863,7 @@ bool LlamaCppBackend::setup_mtp_draft(const std::string& head_path, int n_max) {
 
 /**
  * @brief Load the MTP head GGUF + create its shared-KV context (gh#106).
- * @dg_internal
+ * @utility
  * @version 2.13.0
  */
 bool LlamaCppBackend::build_mtp_head(const std::string& head_path) {
@@ -913,7 +913,7 @@ bool LlamaCppBackend::build_mtp_head(const std::string& head_path) {
  * deactivation; a failed warm-reload now nulls the handle (recoverable
  * via the next activate, which reloads from scratch).
  *
- * @dg_internal
+ * @utility
  * @version 2.12.0
  */
 void LlamaCppBackend::do_deactivate() {
@@ -958,7 +958,7 @@ void LlamaCppBackend::do_deactivate() {
  * Extracted from do_deactivate to keep it under the knots ABC gate. On
  * success rebinds model_/vocab_/tokenizer_; on failure leaves model_ null
  * (recoverable — the next activate reloads from scratch).
- * @dg_internal
+ * @utility
  * @version 2.13.0 [reviewed]
  */
 void LlamaCppBackend::reload_model_cpu_only() {
@@ -1024,7 +1024,7 @@ LlamaCppBackend::~LlamaCppBackend() {
  * tokenizer_.reset() happens BEFORE the (nullptr) model_/vocab_
  * are touched, so no dangling-borrow risk.
  *
- * @dg_internal
+ * @utility
  * @version 2.3.10
  */
 void LlamaCppBackend::inject_tokenizer_for_test(
@@ -1045,7 +1045,7 @@ void LlamaCppBackend::inject_tokenizer_for_test(
  * inject_*_for_test calls (tokenizer flips state, sampler
  * factory then plugs in without disturbing it).
  *
- * @dg_internal
+ * @utility
  * @version 2.3.10
  */
 void LlamaCppBackend::inject_sampler_factory_for_test(
@@ -1124,7 +1124,7 @@ void LlamaCppBackend::do_unload() {
  * @param text Input text.
  * @param add_special Add BOS/EOS special tokens.
  * @return Vector of token IDs.
- * @dg_internal
+ * @utility
  * @version 1.8.2
  */
 std::vector<llama_token> LlamaCppBackend::tokenize(
@@ -1145,7 +1145,7 @@ std::vector<llama_token> LlamaCppBackend::tokenize(
  * @brief Detokenize a single token to string.
  * @param token Token ID.
  * @return String representation.
- * @dg_internal
+ * @utility
  * @version 1.8.2
  */
 std::string LlamaCppBackend::detokenize(llama_token token) const {
@@ -1161,7 +1161,7 @@ std::string LlamaCppBackend::detokenize(llama_token token) const {
  * @brief Count tokens in text.
  * @param text Input text.
  * @return Token count.
- * @dg_internal
+ * @utility
  * @version 1.8.2
  */
 int LlamaCppBackend::do_count_tokens(const std::string& text) const {
@@ -1195,7 +1195,7 @@ std::vector<int32_t> LlamaCppBackend::tokenize_text(
  * @param tokens Token IDs to evaluate.
  * @param n_tokens Number of tokens (minimum 2).
  * @return LogprobResult with per-transition logprobs and perplexity.
- * @dg_internal
+ * @utility
  * @version 1.10.2
  */
 LogprobResult LlamaCppBackend::do_evaluate_logprobs(
@@ -1250,7 +1250,7 @@ LogprobResult LlamaCppBackend::do_evaluate_logprobs(
  * concurrent demand (≤ n_parallel for a valid batch).
  *
  * @return Unused seq_id (starts at 1, 0 is generation).
- * @dg_internal
+ * @utility
  * @version 2.8.0
  */
 llama_seq_id LlamaCppBackend::allocate_temp_seq_id() {
@@ -1266,7 +1266,7 @@ llama_seq_id LlamaCppBackend::allocate_temp_seq_id() {
 /**
  * @brief Release a temporary sequence ID back to the pool.
  * @param seq_id The seq_id to release.
- * @dg_internal
+ * @utility
  * @version 1.10.2
  */
 void LlamaCppBackend::release_temp_seq_id(llama_seq_id seq_id) {
@@ -1284,7 +1284,7 @@ void LlamaCppBackend::release_temp_seq_id(llama_seq_id seq_id) {
  * @param next_token Token to score.
  * @param n_vocab Vocabulary size.
  * @return log P(next_token | context).
- * @dg_internal
+ * @utility
  * @version 1.9.10
  */
 float LlamaCppBackend::extract_token_logprob(
@@ -1503,7 +1503,7 @@ static std::string concat_messages_fallback(
  * @param messages Conversation history.
  * @param params Generation parameters (enable_thinking honored).
  * @return Formatted prompt string.
- * @dg_internal
+ * @utility
  * @version 2.10.4
  */
 std::string LlamaCppBackend::apply_chat_template(
@@ -1831,7 +1831,7 @@ LlamaCppBackend::CommonChatResult LlamaCppBackend::parse_response(
  *
  * @param messages Conversation history.
  * @return Formatted prompt string, or a plain join on failure.
- * @dg_internal
+ * @utility
  * @version 2.6.1
  */
 std::string LlamaCppBackend::apply_chat_template_lowlevel(
@@ -1879,7 +1879,7 @@ std::string LlamaCppBackend::apply_chat_template_lowlevel(
  *
  * @param params Generation parameters.
  * @return Owned Sampler, or nullptr if no factory installed.
- * @dg_internal
+ * @utility
  * @version 2.3.10
  */
 std::unique_ptr<Sampler> LlamaCppBackend::create_sampler(
@@ -1895,7 +1895,7 @@ std::unique_ptr<Sampler> LlamaCppBackend::create_sampler(
  * @brief Run batched prefill on input tokens.
  * @param tokens Input token sequence.
  * @return true on success.
- * @dg_internal
+ * @utility
  * @version 2.13.0
  */
 bool LlamaCppBackend::run_prefill(const std::vector<llama_token>& tokens) {
@@ -1937,7 +1937,7 @@ bool LlamaCppBackend::run_prefill(const std::vector<llama_token>& tokens) {
  * @param on_token Streaming callback (may be nullptr).
  * @param stop Stop sequences.
  * @return "continue", "stop", "eos", or "error".
- * @dg_internal
+ * @utility
  * @version 2.12.0
  */
 std::string LlamaCppBackend::step_token(
@@ -1989,7 +1989,7 @@ std::string LlamaCppBackend::step_token(
  * @param on_token Per-token callback (nullptr for batch).
  * @param cancel Cancel flag (nullptr for batch).
  * @return GenerationResult.
- * @dg_internal
+ * @utility
  * @version 2.8.0
  */
 GenerationResult LlamaCppBackend::decode_loop(
@@ -2127,7 +2127,7 @@ static void fill_batch_cell(llama_batch& b, int k, llama_token tok,
 /**
  * @brief Build per-request sampler chains + KV sequence ids (gh#98).
  * @return false if any sampler chain could not be built.
- * @dg_internal
+ * @utility
  * @version 2.13.0
  */
 bool LlamaCppBackend::prepare_batch_seqs(
@@ -2158,7 +2158,7 @@ bool LlamaCppBackend::prepare_batch_seqs(
 
 /**
  * @brief Prefill the shared prefix into seq 0 and seq_cp it to the others.
- * @dg_internal
+ * @utility
  * @version 2.13.0
  */
 bool LlamaCppBackend::prefill_shared_and_fanout(
@@ -2186,7 +2186,7 @@ bool LlamaCppBackend::prefill_shared_and_fanout(
  *
  * Each sequence's suffix tokens are decoded at their real positions; only the
  * last token of each carries logits, recorded as that seq's first sample idx.
- * @dg_internal
+ * @utility
  * @version 2.8.0
  */
 bool LlamaCppBackend::prefill_batch_suffixes(
@@ -2222,7 +2222,7 @@ bool LlamaCppBackend::prefill_batch_suffixes(
 
 /**
  * @brief Sample + accept + classify each still-active sequence (gh#98).
- * @dg_internal
+ * @utility
  * @version 2.8.0
  */
 void LlamaCppBackend::sample_batch_active(std::vector<BatchSeq>& seqs) {
@@ -2250,7 +2250,7 @@ void LlamaCppBackend::sample_batch_active(std::vector<BatchSeq>& seqs) {
  * tokens — the multi-seq throughput win. `last_gen_decode_calls_` counts the
  * decodes (≈ longest output), the observable that batching engaged (vs N·len
  * for a serial fallback).
- * @dg_internal
+ * @utility
  * @version 2.8.0
  */
 void LlamaCppBackend::run_batch_gen_loop(
@@ -2278,7 +2278,7 @@ void LlamaCppBackend::run_batch_gen_loop(
 
 /**
  * @brief Detokenize each sequence into a GenerationResult (gh#98).
- * @dg_internal
+ * @utility
  * @version 2.8.0
  */
 std::vector<GenerationResult> LlamaCppBackend::build_batch_results(
@@ -2297,7 +2297,7 @@ std::vector<GenerationResult> LlamaCppBackend::build_batch_results(
 
 /**
  * @brief Release every batch sequence's temp seq_id (seq 0 excluded, gh#98).
- * @dg_internal
+ * @utility
  * @version 2.13.0
  */
 void LlamaCppBackend::release_temp_seqs(std::vector<BatchSeq>& seqs) {
@@ -2320,7 +2320,7 @@ void LlamaCppBackend::release_temp_seqs(std::vector<BatchSeq>& seqs) {
  * own grammar). `last_prefill_tokens_` holds `shared + Σ suffix` (prefix
  * prefilled once); `last_gen_decode_calls_` holds the batched step count.
  *
- * @dg_internal
+ * @utility
  * @version 2.13.0
  */
 std::vector<GenerationResult> LlamaCppBackend::run_batched_decode(
@@ -2377,7 +2377,7 @@ std::vector<GenerationResult> LlamaCppBackend::run_batched_decode(
  * @param params Per-request generation params.
  * @param cancel Cancel flag.
  * @return One result per request, in input order.
- * @dg_internal
+ * @utility
  * @version 2.8.0
  */
 std::vector<GenerationResult> LlamaCppBackend::do_generate_batch(
@@ -2408,7 +2408,7 @@ std::vector<GenerationResult> LlamaCppBackend::do_generate_batch(
  * @brief Extract system prompt text from message list.
  * @param messages Conversation history.
  * @return System message content, empty if none found.
- * @dg_internal
+ * @utility
  * @version 1.8.3
  */
 std::string LlamaCppBackend::extract_system_prompt(
@@ -2444,7 +2444,7 @@ std::string LlamaCppBackend::extract_system_prompt(
  * @param start_offset First index to decode.
  * @param slot Sequence slot to decode into.
  * @return true when every chunk decoded.
- * @dg_internal
+ * @utility
  * @version 2.12.0
  */
 bool LlamaCppBackend::decode_tokens_into_slot(
@@ -2499,7 +2499,7 @@ bool LlamaCppBackend::decode_tokens_into_slot(
  * @param tokens Full token sequence.
  * @param start_offset Index of the first token to decode.
  * @return true on success, false on decode failure.
- * @dg_internal
+ * @utility
  * @version 2.12.0
  */
 bool LlamaCppBackend::decode_tokens_from(
@@ -2524,7 +2524,7 @@ bool LlamaCppBackend::decode_tokens_from(
  * @param cached Cache entry to restore from.
  * @param tokens Full token sequence.
  * @return true on success, false to fall back to full prefill.
- * @dg_internal
+ * @utility
  * @version 2.12.0
  */
 bool LlamaCppBackend::restore_cached_prefix(
@@ -2565,7 +2565,7 @@ bool LlamaCppBackend::restore_cached_prefix(
  *
  * @param key Cache key for the prefix.
  * @param prefix_tokens Number of prefix tokens currently in seq 0.
- * @dg_internal
+ * @utility
  * @version 2.0.6
  */
 void LlamaCppBackend::save_prefix_to_cache(
@@ -2590,7 +2590,7 @@ void LlamaCppBackend::save_prefix_to_cache(
  * @param messages Original message list.
  * @param params Generation params (for template).
  * @return Token count of the system prefix, 0 if no system message.
- * @dg_internal
+ * @utility
  * @version 1.8.3
  */
 int LlamaCppBackend::compute_prefix_token_count(
@@ -2630,7 +2630,7 @@ int LlamaCppBackend::compute_prefix_token_count(
  * @param prefix_tokens System prefix token count.
  * @param key Cache key for the prefix.
  * @return true on success.
- * @dg_internal
+ * @utility
  * @version 2.0.6
  */
 bool LlamaCppBackend::prefill_and_cache_prefix(
@@ -2749,7 +2749,7 @@ GenerationResult LlamaCppBackend::prefill_error() const {
  * @param messages Original messages (for prefix boundary).
  * @param params Generation parameters.
  * @return true on success; false on refusal or decode failure.
- * @dg_internal
+ * @utility
  * @version 2.13.0
  */
 bool LlamaCppBackend::run_prefill_cached(
@@ -2846,7 +2846,7 @@ bool LlamaCppBackend::run_prefill_cached(
  *
  * @param tokens Full incoming token sequence.
  * @return true if reuse handled the prefill; false to fall back (no KV change).
- * @dg_internal
+ * @utility
  * @version 2.12.0
  */
 bool LlamaCppBackend::try_warm_reuse(const std::vector<llama_token>& tokens) {
@@ -2891,7 +2891,7 @@ bool LlamaCppBackend::try_warm_reuse(const std::vector<llama_token>& tokens) {
  * this region makes the knots complexity counter attribute the whole
  * declaration run to the preceding declaration).
  * @utility
- * @dg_internal
+ * @utility
  * @version 2.12.0
  */
 void LlamaCppBackend::invalidate_resident_kv() {
@@ -2927,7 +2927,7 @@ void LlamaCppBackend::forget_session_kv(const std::string& session_key) {
  * (llama_memory_clear(mem, true)). After one of those no slot holds what the
  * bookkeeping thinks it does.
  * @utility
- * @dg_internal
+ * @utility
  * @version 2.13.0
  */
 void LlamaCppBackend::invalidate_all_resident_kv() {
@@ -2947,7 +2947,7 @@ void LlamaCppBackend::invalidate_all_resident_kv() {
  * @param messages Original messages (for prefix boundary).
  * @param params Generation parameters.
  * @return true on success.
- * @dg_internal
+ * @utility
  * @version 2.7.5
  */
 bool LlamaCppBackend::prefill_dispatch(
@@ -2991,7 +2991,7 @@ namespace {
 
 /**
  * @brief True when any message carries an IMAGE content part.
- * @dg_internal
+ * @utility
  * @version 2.1.8
  */
 bool any_image_in(const std::vector<Message>& messages) {
@@ -3010,7 +3010,7 @@ bool any_image_in(const std::vector<Message>& messages) {
  *
  * @param messages Original messages.
  * @return New message vector with image parts removed.
- * @dg_internal
+ * @utility
  * @version 2.1.8
  */
 std::vector<Message> strip_image_parts(
@@ -3038,7 +3038,7 @@ std::vector<Message> strip_image_parts(
  *        owns; must mtmd_bitmap_free each on exit).
  * @return Messages with content flattened to marker-substituted text,
  *         or empty vector if any image fails to load.
- * @dg_internal
+ * @utility
  * @version 2.13.0
  */
 std::vector<Message> substitute_image_markers(
@@ -3092,7 +3092,7 @@ std::vector<Message> substitute_image_markers(
  * first so prefill always starts at seq position 0. Bitmap ownership
  * stays with the caller (mtmd_tokenize borrows for the call).
  *
- * @dg_internal
+ * @utility
  * @version 2.13.0
  */
 entropic_error_t LlamaCppBackend::mtmd_prefill(
@@ -3249,7 +3249,7 @@ GenerationResult LlamaCppBackend::generate_multimodal(
  * bit-identical to pre-v2.12.0.
  *
  * @param params Generation parameters carrying the session key.
- * @dg_internal
+ * @utility
  * @version 2.12.0
  */
 void LlamaCppBackend::bind_session_slot(const GenerationParams& params) {
@@ -3287,7 +3287,7 @@ void LlamaCppBackend::bind_session_slot(const GenerationParams& params) {
  * @param messages Conversation history.
  * @param params Generation parameters.
  * @return GenerationResult.
- * @dg_internal
+ * @utility
  * @version 2.12.0
  */
 GenerationResult LlamaCppBackend::do_generate(
@@ -3310,7 +3310,7 @@ GenerationResult LlamaCppBackend::do_generate(
 
 /**
  * @brief Text-only generate body (v2.1.8, extracted for knots SLOC).
- * @dg_internal
+ * @utility
  * @version 2.13.2
  */
 GenerationResult LlamaCppBackend::do_generate_text_only(
@@ -3366,7 +3366,7 @@ GenerationResult LlamaCppBackend::do_generate_text_only(
  * a null on_token (it already polls cancel). Text-only branch goes
  * through `do_generate_text_only(messages, params, cancel)`.
  *
- * @dg_internal
+ * @utility
  * @version 2.4.2
  */
 GenerationResult LlamaCppBackend::do_generate(
@@ -3462,7 +3462,7 @@ GenerationResult LlamaCppBackend::do_generate_text_only(
  * @param on_token Per-token callback.
  * @param cancel Atomic cancel flag.
  * @return GenerationResult.
- * @dg_internal
+ * @utility
  * @version 2.1.8
  */
 GenerationResult LlamaCppBackend::do_generate_streaming(
@@ -3551,7 +3551,7 @@ GenerationResult LlamaCppBackend::do_generate_streaming_text_only(
  * `generate_speculative_with_draft` directly. (v2.1.11, gh#36)
  *
  * @return GenerationResult with NOT_SUPPORTED.
- * @dg_internal
+ * @utility
  * @version 2.1.11 [reviewed]
  */
 GenerationResult LlamaCppBackend::do_generate_speculative(
@@ -3585,7 +3585,7 @@ namespace {
  * @param generation_prompt Render prefill, required by the TOOL_CALLS type.
  * @req REQ-INFER-008
  * @version 2.13.0
- * @dg_internal
+ * @utility
  */
 static void apply_grammar_source(
     common_params_sampling& cps,
@@ -3750,7 +3750,7 @@ common_params_sampling to_common_sampling(
  * @param ctx llama_context to prefill.
  * @param tokens Full input token sequence.
  * @return true on success, false on llama_decode failure.
- * @dg_internal
+ * @utility
  * @version 2.1.11
  */
 bool spec_prefill_minus_last(
@@ -3780,7 +3780,7 @@ bool spec_prefill_minus_last(
  * @param code Error code for the result.
  * @param msg Human-readable cause; logged and returned.
  * @return The populated error result.
- * @dg_internal
+ * @utility
  * @version 2.11.0
  */
 GenerationResult spec_error(entropic_error_t code, std::string msg) {
@@ -3799,7 +3799,7 @@ GenerationResult spec_error(entropic_error_t code, std::string msg) {
  * @brief Bundles per-kernel-run mutable state to keep the loop body
  *        focused on its responsibility (knots: cognitive ≤ 15, ≤ 3
  *        returns).
- * @dg_internal
+ * @utility
  * @version 2.1.11
  */
 struct SpeculativeRunState {
@@ -3845,7 +3845,7 @@ struct SpeculativeRunState {
 /**
  * @brief Free everything allocated by the kernel.
  * @param state Kernel state.
- * @dg_internal
+ * @utility
  * @version 2.1.11
  */
 static void spec_cleanup(SpeculativeRunState& state) {
@@ -3859,7 +3859,7 @@ static void spec_cleanup(SpeculativeRunState& state) {
 /**
  * @brief Build the target batch [id_last, draft0, ..., draftN-1].
  * @param state Kernel state.
- * @dg_internal
+ * @utility
  * @version 2.1.11
  */
 static void spec_build_batch(SpeculativeRunState& state) {
@@ -3878,7 +3878,7 @@ static void spec_build_batch(SpeculativeRunState& state) {
  * @brief Decode the speculative batch on both contexts. Populates
  *        state.error_* on failure.
  * @return true on success, false on decode failure.
- * @dg_internal
+ * @utility
  * @version 2.1.11 [reviewed]
  */
 static bool spec_decode_both(SpeculativeRunState& state) {
@@ -3909,7 +3909,7 @@ static bool spec_decode_both(SpeculativeRunState& state) {
 /**
  * @brief Trigger draft generation via common_speculative_draft.
  * @return Number of draft tokens proposed.
- * @dg_internal
+ * @utility
  * @version 2.13.0
  */
 static int spec_run_draft(SpeculativeRunState& state) {
@@ -3935,7 +3935,7 @@ static int spec_run_draft(SpeculativeRunState& state) {
  *  - "length"  reached max_tokens
  *  - "cancel"  cancel flag set (sets error_code=CANCELLED)
  *
- * @dg_internal
+ * @utility
  * @version 2.9.2
  */
 static std::string spec_emit_token(
@@ -3979,12 +3979,12 @@ static std::string spec_emit_token(
 /**
  * @brief Drive one accept round: draft → decode → sample-and-accept
  *        → emit tokens. Returns true to continue the outer loop.
- * @dg_internal
+ * @utility
  * @version 2.1.11 [reviewed]
  */
 /**
  * @brief Snapshot draft state before drafting (when use_ckpt_dft).
- * @dg_internal
+ * @utility
  * @version 2.1.11
  */
 static void spec_ckpt_save_dft(SpeculativeRunState& state) {
@@ -4004,7 +4004,7 @@ static void spec_ckpt_save_dft(SpeculativeRunState& state) {
 /**
  * @brief Snapshot target state right before the target decode of
  *        the speculative batch (when use_ckpt_tgt + non-empty draft).
- * @dg_internal
+ * @utility
  * @version 2.1.11
  */
 static void spec_ckpt_save_tgt(SpeculativeRunState& state) {
@@ -4018,7 +4018,7 @@ static void spec_ckpt_save_tgt(SpeculativeRunState& state) {
 /**
  * @brief Restore the draft's pre-draft state so the upcoming
  *        target-batch decode on the draft re-fills cleanly.
- * @dg_internal
+ * @utility
  * @version 2.1.11
  */
 static void spec_ckpt_restore_dft(SpeculativeRunState& state) {
@@ -4037,7 +4037,7 @@ static void spec_ckpt_restore_dft(SpeculativeRunState& state) {
  *        outer loop to re-decode with the partial accept as the new
  *        draft. Matches speculative-simple's partial-acceptance
  *        path lines 258-281.
- * @dg_internal
+ * @utility
  * @version 2.1.11
  */
 static void spec_rollback_partial(
@@ -4080,7 +4080,7 @@ static void spec_rollback_partial(
  * no-op (their KV is restored via the checkpoint dance in
  * `spec_rollback_partial` instead).
  *
- * @dg_internal
+ * @utility
  * @version 2.1.11 [reviewed]
  */
 static void spec_trim_rejected_drafts(SpeculativeRunState& state) {
@@ -4093,7 +4093,7 @@ static void spec_trim_rejected_drafts(SpeculativeRunState& state) {
 /**
  * @brief Walk accepted ids, emit tokens via callback, update state.
  *        Returns true if the outer loop should stop.
- * @dg_internal
+ * @utility
  * @version 2.1.11
  */
 static bool spec_commit_accepted(
@@ -4116,7 +4116,7 @@ static bool spec_commit_accepted(
  *        decode on both contexts, sample-and-accept, emit tokens
  *        (or roll back via checkpoint on partial acceptance).
  *        Returns true to continue the outer loop.
- * @dg_internal
+ * @utility
  * @version 2.1.11 [reviewed]
  */
 /**
@@ -4146,7 +4146,7 @@ static int spec_prepare_draft(SpeculativeRunState& state) {
 
 /**
  * @brief Run one speculative accept round; return false to stop.
- * @dg_internal
+ * @utility
  * @version 2.3.7
  */
 static bool spec_accept_round(
@@ -4205,7 +4205,7 @@ static bool spec_accept_round(
  * NO-seq_rm targets/drafts cannot be supported.
  *
  * @return Empty string on success, diagnostic on failure.
- * @dg_internal
+ * @utility
  * @version 2.1.11 [reviewed]
  */
 static std::string spec_check_preconditions(
@@ -4248,7 +4248,7 @@ static std::string spec_check_preconditions(
  * Checkpoint detection runs AFTER `common_speculative_begin` so the
  * impl's batch is already allocated.
  *
- * @dg_internal
+ * @utility
  * @version 2.1.11
  */
 /**
@@ -4311,7 +4311,7 @@ static std::string spec_init_sampler_and_decoder(
 
 /**
  * @brief Initialize speculative run state (prefill + sampler + decoder).
- * @dg_internal
+ * @utility
  * @version 2.10.4
  */
 static std::string spec_init_run(
@@ -4339,7 +4339,7 @@ static std::string spec_init_run(
 
 /**
  * @brief Run the accept-round loop until completion / EOS / cancel.
- * @dg_internal
+ * @utility
  * @version 2.1.11
  */
 static void spec_run_loop(
@@ -4366,13 +4366,13 @@ static void spec_run_loop(
 
 /**
  * @brief Speculative kernel against an explicit draft backend.
- * @dg_internal
+ * @utility
  * @version 2.1.11
  */
 /**
  * @brief Assemble final GenerationResult + log metrics. Helper to
  *        keep the public entry under SLOC ≤ 50.
- * @dg_internal
+ * @utility
  * @version 2.12.2
  */
 static GenerationResult spec_finalize(
@@ -4461,7 +4461,7 @@ static GenerationResult spec_finalize(
  * @param n_draft_max Maximum draft window size (proposed tokens per
  *        round). Clamped to 16 if non-positive.
  * @return GenerationResult.
- * @dg_internal
+ * @utility
  * @version 2.1.11 [reviewed]
  */
 /**
@@ -4513,7 +4513,7 @@ static GenerationResult spec_run_from_tokens(
 
 /**
  * @brief Speculative generation against a draft model (gh#36).
- * @dg_internal
+ * @utility
  * @version 2.12.0
  */
 GenerationResult LlamaCppBackend::generate_speculative_with_draft(
@@ -4577,7 +4577,7 @@ namespace {
  * The impl reads dp.id_last/n_past + the carried pending_h; the draft
  * tokens land in state.draft.
  * @return Number of draft tokens proposed.
- * @dg_internal
+ * @utility
  * @version 2.13.0
  */
 int mtp_run_draft(SpeculativeRunState& state, int n_max) {
@@ -4600,7 +4600,7 @@ int mtp_run_draft(SpeculativeRunState& state, int n_max) {
  * very same batch (it harvests the rows the next draft needs). The
  * caller never decodes ctx_dft (shared-KV: process() skips it).
  * @return true on success; sets state.error_* on failure.
- * @dg_internal
+ * @utility
  * @version 2.9.0
  */
 bool mtp_decode_and_process(SpeculativeRunState& state) {
@@ -4623,7 +4623,7 @@ bool mtp_decode_and_process(SpeculativeRunState& state) {
 /**
  * @brief One MTP accept round: draft → verify → accept → emit.
  * @return true to continue the outer loop, false to stop.
- * @dg_internal
+ * @utility
  * @version 2.9.1
  */
 bool mtp_accept_round(
@@ -4661,7 +4661,7 @@ bool mtp_accept_round(
  *
  * Built with common_batch_add (full seq metadata) — process() asserts
  * n_seq_id[k]==1, which llama_batch_get_one cannot satisfy.
- * @dg_internal
+ * @utility
  * @version 2.9.0
  */
 bool mtp_process_chunk(SpeculativeRunState& state, int off, int chunk) {
@@ -4678,7 +4678,7 @@ bool mtp_process_chunk(SpeculativeRunState& state, int off, int chunk) {
  * @brief Prefill prompt-minus-last on ctx_tgt, processing each chunk so
  *        pending_h is seeded before the first draft.
  * @return true on success.
- * @dg_internal
+ * @utility
  * @version 2.9.0
  */
 bool mtp_prefill_and_seed(SpeculativeRunState& state, int start = 0) {
@@ -4704,7 +4704,7 @@ bool mtp_prefill_and_seed(SpeculativeRunState& state, int start = 0) {
  * The ctx_dft is the pre-created shared-KV head context — no model load
  * here, so no mparams.path (unlike gh#36's DRAFT_SIMPLE gate).
  * @return Empty on success, diagnostic on failure.
- * @dg_internal
+ * @utility
  * @version 2.10.4
  */
 std::string mtp_init_decoder(
@@ -4740,7 +4740,7 @@ std::string mtp_init_decoder(
  * Uses gh#36's id_last/n_past convention (id_last = last prompt token,
  * verified in round 1). Clears only ctx_tgt's memory — ctx_dft shares it.
  * @return Empty on success, diagnostic on failure.
- * @dg_internal
+ * @utility
  * @version 2.10.4
  */
 std::string mtp_init_run(
@@ -4786,7 +4786,7 @@ std::string mtp_init_run(
 
 /**
  * @brief Run the MTP accept-round loop until completion / EOS / cancel.
- * @dg_internal
+ * @utility
  * @version 2.9.0
  */
 void mtp_run_loop(
@@ -4812,7 +4812,7 @@ void mtp_run_loop(
 
 /**
  * @brief MTP kernel over already-tokenized input.
- * @dg_internal
+ * @utility
  * @version 2.10.4
  */
 GenerationResult mtp_run_from_tokens(
@@ -4922,7 +4922,7 @@ GenerationResult LlamaCppBackend::mtp_guard(
  *
  * @param tokens Full incoming prompt.
  * @return Tokens reusable from the front; 0 when nothing is.
- * @dg_internal
+ * @utility
  * @version 2.12.0
  */
 int LlamaCppBackend::mtp_reuse_cut(
@@ -5011,7 +5011,7 @@ GenerationResult LlamaCppBackend::generate_mtp(
  * @param prompt Raw prompt string.
  * @param params Generation parameters.
  * @return GenerationResult.
- * @dg_internal
+ * @utility
  * @version 2.12.0
  */
 GenerationResult LlamaCppBackend::do_complete(
@@ -5035,7 +5035,7 @@ GenerationResult LlamaCppBackend::do_complete(
 /**
  * @brief Check if loaded model is recurrent.
  * @return true if GDN/Mamba/RWKV architecture.
- * @dg_internal
+ * @utility
  * @version 1.9.13
  */
 bool LlamaCppBackend::is_recurrent() const {
@@ -5094,7 +5094,7 @@ bool LlamaCppBackend::do_supports(BackendCapability cap) const {
 /**
  * @brief Return backend name.
  * @return "llama.cpp".
- * @dg_internal
+ * @utility
  * @version 1.9.13
  */
 std::string LlamaCppBackend::do_backend_name() const {
@@ -5104,7 +5104,7 @@ std::string LlamaCppBackend::do_backend_name() const {
 /**
  * @brief Populate backend metadata from llama.cpp model.
  * @return BackendInfo with model-specific details.
- * @dg_internal
+ * @utility
  * @version 1.9.13
  */
 BackendInfo LlamaCppBackend::do_info() const {
@@ -5138,7 +5138,7 @@ BackendInfo LlamaCppBackend::do_info() const {
  * @brief Clear KV cache or recurrent hidden state.
  * @param seq_id Sequence ID, or -1 for all sequences.
  * @return true on success.
- * @dg_internal
+ * @utility
  * @version 1.9.13
  */
 bool LlamaCppBackend::do_clear_state(int seq_id) {
@@ -5167,7 +5167,7 @@ bool LlamaCppBackend::do_clear_state(int seq_id) {
  * @param seq_id llama sequence id (the C API path passes 0).
  * @param buffer Output; resized to the exact state size.
  * @return true when llama.cpp emitted the full sized blob.
- * @dg_internal
+ * @utility
  * @version 2.4.0
  */
 bool LlamaCppBackend::do_save_state(
@@ -5194,7 +5194,7 @@ bool LlamaCppBackend::do_save_state(
  * @return true when llama_state_seq_set_data reports a non-zero
  *         accepted size (per the llama.cpp contract: positive=ok,
  *         zero=failed to load).
- * @dg_internal
+ * @utility
  * @version 2.4.0
  */
 bool LlamaCppBackend::do_restore_state(

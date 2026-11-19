@@ -1,0 +1,51 @@
+# SPDX-License-Identifier: Apache-2.0
+# clew configuration for the entropic engine.
+#
+# One file for the whole toolchain: the requirements catalog, the
+# `clew-guard` pre-commit gate (guard:) and, once adopted, the wiki.
+# Replaces .doxygen-guard.yaml and scripts/check_requirements.py (gh#229).
+# Reference: clew docs/GUARD.md.
+#
+# index_scope is deliberately undeclared: clew's whole-repo default with the
+# recorded `extern` exclusion is what the index should read.
+
+requirements:
+  file: docs/requirements.yaml
+  format: yaml
+
+guard:
+  validate:
+    # The hook's own `exclude:` regex filters staged files; this list is the
+    # backstop for CLI runs (clew guard validate / coverage).
+    exclude:
+      - "extern/**"
+      - "tests/**"
+      - "build/**"
+      - ".build/**"
+      - ".old/**"
+      - ".venv/**"
+
+    # entropic's own tag (thread-safety contract on the public C API).
+    # `clew guard doxyfile` emits the matching Doxyfile ALIASES line.
+    extra_tags: [threadsafety]
+
+    presence:
+      require_doxygen: true
+      require_return: true
+
+    version:
+      require_present: true
+      require_increment_on_change: true
+
+    tags:
+      req:
+        cross_reference: true
+
+  coverage:
+    # Share of non-test functions carrying @req among those carrying @req or
+    # an exemption (@utility, @callback). 0.506 at adoption — the maintainer
+    # chose to earn the floor, not lower it. Do not lower it to pass a commit.
+    min_req_ratio: 0.5
+
+  impact:
+    report_dir: docs/generated/

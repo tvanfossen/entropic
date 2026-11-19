@@ -19,7 +19,7 @@ namespace entropic {
  * @brief Register a handler for a directive type.
  * @param dtype Directive type enum value.
  * @param handler Handler function.
- * @dg_internal
+ * @utility
  * @version 1.8.4
  */
 void DirectiveProcessor::register_handler(
@@ -33,7 +33,7 @@ void DirectiveProcessor::register_handler(
  * @param ctx Current loop context.
  * @param directives Typed directive list.
  * @return Aggregate result.
- * @dg_internal
+ * @utility
  * @version 2.0.0
  */
 DirectiveResult DirectiveProcessor::process(
@@ -75,7 +75,7 @@ DirectiveResult DirectiveProcessor::process(
  * @param directive The directive being processed.
  * @param has_handler Whether a handler is registered.
  * @return true to proceed, false if suppressed.
- * @dg_internal
+ * @utility
  * @version 1.9.1
  */
 bool DirectiveProcessor::fire_directive_hook(

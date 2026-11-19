@@ -17,7 +17,7 @@
  *   - Each Sampler returned by `create()` owns its `llama_sampler*`
  *     and frees it in the destructor.
  *
- * @dg_internal
+ * @utility
  * @version 2.3.10
  */
 
@@ -41,7 +41,7 @@ namespace entropic {
  * the backend guarantees the context outlives every Sampler it
  * vends.
  *
- * @dg_internal
+ * @utility
  * @version 2.3.10
  */
 class LlamaCppSampler : public Sampler {
@@ -82,7 +82,7 @@ public:
      *
      * @return Borrowed `llama_sampler*` (never null for the
      *         production Sampler; do not free).
-     * @dg_internal
+     * @utility
      * @version 2.3.10
      */
     llama_sampler* native_chain() const { return chain_; }
@@ -112,7 +112,7 @@ private:
  *   - dist:       always appended last; seed resolves via
  *                 `LLAMA_DEFAULT_SEED` when `params.seed < 0`. (P2-14)
  *
- * @dg_internal
+ * @utility
  * @version 2.3.10
  */
 class LlamaCppSamplerFactory : public SamplerFactory {

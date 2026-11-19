@@ -152,7 +152,7 @@ void entropic::wire_outside_root_approver(entropic_handle_t h) {
  * @param context_json Server description (see hooks.h).
  * @param ud The engine handle.
  * @return true to connect.
- * @dg_internal
+ * @utility
  * @version 2.14.0
  */
 static bool discovered_server_thunk(const std::string& context_json, void* ud) {
@@ -497,7 +497,7 @@ static entropic_error_t validate_workspace_args(
  * @return ENTROPIC_OK, ENTROPIC_ERROR_IO (unreadable) or
  *         ENTROPIC_ERROR_INVALID_ARGUMENT (escapes the root), with
  *         last_error set.
- * @dg_internal
+ * @utility
  * @version 2.14.0
  */
 static entropic_error_t load_workspace_context_file(
@@ -681,7 +681,7 @@ entropic_workspace_set_app_context(entropic_handle_t handle,
  * @param name MCP server name (must be unique).
  * @param config_json JSON-serialized MCP server configuration.
  * @return ENTROPIC_OK or error code.
- * @dg_internal
+ * @utility
  * @version 2.1.4
  */
 /**

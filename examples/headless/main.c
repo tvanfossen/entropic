@@ -136,7 +136,7 @@ static void check_context_count(entropic_handle_t handle, const char* label,
  * @param handle    Configured engine handle.
  * @return Number of failures (0 = all passed).
  *
- * @dg_internal
+ * @utility
  * @version 1
  */
 static int run_scenarios(entropic_handle_t handle)
@@ -177,7 +177,7 @@ static int run_scenarios(entropic_handle_t handle)
  * @param argv  Argument vector (unused).
  * @return EXIT_SUCCESS or EXIT_FAILURE.
  *
- * @dg_internal
+ * @utility
  * @version 1
  */
 int main(int argc, char* argv[])

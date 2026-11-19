@@ -9,8 +9,8 @@
  * LOGIC that consumes these results lives in LlamaCppBackend tests
  * (which mock the Tokenizer interface).
  *
- * @dg_internal
- * @dg_internal
+ * @utility
+ * @utility
  * @version 2.3.10
  */
 
@@ -31,7 +31,7 @@ namespace entropic {
  * vocab is borrowed, not owned — its lifetime must outlive this
  * object. LlamaCppBackend resets the tokenizer before freeing the
  * backing llama_model so the borrow never dangles.
- * @dg_internal
+ * @utility
  * @version 2.3.10
  */
 LlamaCppTokenizer::LlamaCppTokenizer(const llama_vocab* vocab)
@@ -43,7 +43,7 @@ LlamaCppTokenizer::LlamaCppTokenizer(const llama_vocab* vocab)
  * @param add_special True to prepend BOS / model-defined special tokens.
  * @return Token id vector. Empty if vocab_ is null or llama_tokenize
  *         returned a negative actual-count on the sized retry.
- * @dg_internal
+ * @utility
  * @version 2.3.10
  */
 std::vector<int32_t> LlamaCppTokenizer::tokenize(
@@ -80,7 +80,7 @@ std::vector<int32_t> LlamaCppTokenizer::tokenize(
  * @param token Token id to decode.
  * @return Surface string. Empty when vocab_ is null or the retry
  *         decode returned non-positive.
- * @dg_internal
+ * @utility
  * @version 2.3.10
  */
 std::string LlamaCppTokenizer::detokenize(int32_t token) const {

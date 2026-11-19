@@ -241,6 +241,7 @@ protected:
 
     /**
      * @brief Parse <tool_call>JSON</tool_call> tagged blocks.
+     * @return One ToolCall per parseable tagged block, in emission order.
      * @version 1.8.2
      */
     std::vector<ToolCall> parse_tagged_tool_calls(
@@ -251,6 +252,7 @@ protected:
 
     /**
      * @brief Attempt JSON recovery on malformed tool call string.
+     * @return Recovered ToolCall if any repair produced a named call; nullopt otherwise.
      * @version 1.8.2
      */
     std::optional<ToolCall> try_recover_json(

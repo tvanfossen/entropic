@@ -36,7 +36,7 @@ thread_local std::string t_current_system_prompt;  ///< Identity prompt
 /**
  * @brief gh#158: this thread's tier under validation — see header.
  * @return Tier name; empty outside a validation call stack.
- * @dg_internal
+ * @utility
  * @version 2.13.0
  */
 const std::string& ConstitutionalValidator::current_tier() {
@@ -46,7 +46,7 @@ const std::string& ConstitutionalValidator::current_tier() {
 /**
  * @brief gh#158: this thread's tool-call manifest — see header.
  * @return Manifest text; empty when none was supplied.
- * @dg_internal
+ * @utility
  * @version 2.13.0
  */
 const std::string& ConstitutionalValidator::current_tool_context() {
@@ -56,7 +56,7 @@ const std::string& ConstitutionalValidator::current_tool_context() {
 /**
  * @brief gh#158: this thread's un-pruned tool evidence — see header.
  * @return Evidence text; empty when none was supplied.
- * @dg_internal
+ * @utility
  * @version 2.13.0
  */
 const std::string& ConstitutionalValidator::current_tool_evidence() {
@@ -66,7 +66,7 @@ const std::string& ConstitutionalValidator::current_tool_evidence() {
 /**
  * @brief gh#158: this thread's identity system prompt — see header.
  * @return System prompt; empty when none was supplied.
- * @dg_internal
+ * @utility
  * @version 2.13.0
  */
 const std::string& ConstitutionalValidator::current_system_prompt() {
@@ -79,7 +79,7 @@ const std::string& ConstitutionalValidator::current_system_prompt() {
  * @param tool_context Tool-call manifest.
  * @param tool_evidence Un-pruned tool evidence.
  * @param system_prompt Identity system prompt.
- * @dg_internal
+ * @utility
  * @version 2.13.0
  */
 void ConstitutionalValidator::set_turn_context(
@@ -169,7 +169,7 @@ void ConstitutionalValidator::detach(HookInterface* hook_iface) {
  *
  * @param identity_name Identity name to check.
  * @return true if validation should run.
- * @dg_internal
+ * @utility
  * @version 2.0.7
  */
 bool ConstitutionalValidator::should_validate(
@@ -350,7 +350,7 @@ void ConstitutionalValidator::set_identity_validation(
  * @brief Set per-identity validation rules from frontmatter.
  * @param identity_name Identity/tier name.
  * @param rules Validation rules for this identity.
- * @dg_internal
+ * @utility
  * @version 2.0.6
  */
 void ConstitutionalValidator::set_tier_rules(
@@ -829,7 +829,7 @@ CritiqueResult ConstitutionalValidator::run_critique(
  * @brief Build messages JSON for critique generation.
  * @param content Text to critique.
  * @return JSON array with system + user messages.
- * @dg_internal
+ * @utility
  * @version 1.9.8
  */
 std::string ConstitutionalValidator::build_critique_messages(
@@ -841,7 +841,7 @@ std::string ConstitutionalValidator::build_critique_messages(
 /**
  * @brief Build params JSON for critique generation.
  * @return JSON string with grammar_key, max_tokens, temperature, tier.
- * @dg_internal
+ * @utility
  * @version 2.0.6-rc17
  */
 std::string ConstitutionalValidator::build_critique_params() const {
@@ -943,7 +943,7 @@ static std::string json_escape(const std::string& s) {
  * @brief Build a single-turn messages JSON (system + user).
  * @param prompt Full prompt text (system role).
  * @return JSON array string.
- * @dg_internal
+ * @utility
  * @version 1.9.8
  */
 std::string ConstitutionalValidator::build_single_turn_json(
@@ -976,7 +976,7 @@ std::string ConstitutionalValidator::build_revision_messages(
  * @brief Build human-readable feedback text from violations.
  * @param critique Critique result with violations.
  * @return Feedback string for re-generation prompt.
- * @dg_internal
+ * @utility
  * @version 1.9.8
  */
 std::string ConstitutionalValidator::build_feedback_text(
@@ -1003,7 +1003,7 @@ std::string ConstitutionalValidator::build_feedback_text(
  * @param feedback The feedback message.
  * @param messages_json Base conversation messages (may be NULL).
  * @return Augmented JSON array with assistant + user feedback appended.
- * @dg_internal
+ * @utility
  * @version 2.13.0
  */
 std::string ConstitutionalValidator::inject_feedback_into_messages(
@@ -1160,7 +1160,7 @@ int ConstitutionalValidator::handle_hook(
  * @brief Write revised content into the modified_json output.
  * @param content Revised content.
  * @param modified_json Output buffer.
- * @dg_internal
+ * @utility
  * @version 1.9.8
  */
 void ConstitutionalValidator::write_modified_json(

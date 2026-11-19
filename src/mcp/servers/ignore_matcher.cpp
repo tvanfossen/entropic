@@ -250,7 +250,7 @@ std::string IgnoreMatcher::pattern_to_regex(const std::string& pattern) {
  * anchored at the base; otherwise the pattern matches against any
  * path component.
  *
- * @dg_internal
+ * @utility
  * @version 2.1.4
  */
 namespace {
@@ -586,7 +586,7 @@ constexpr std::size_t kNoRule = static_cast<std::size_t>(-1);
 
 /**
  * @brief One anchor base's rule indices, consumed newest-first.
- * @dg_internal
+ * @utility
  * @version 2.13.0
  */
 struct BucketCursor {

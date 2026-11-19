@@ -19,7 +19,7 @@
  * @brief Cast opaque handle to MCPServerBase pointer.
  * @param server Opaque handle.
  * @return C++ server pointer.
- * @dg_internal
+ * @utility
  * @version 1.8.5
  */
 static entropic::MCPServerBase* cast(entropic_mcp_server_t server) {
@@ -35,7 +35,7 @@ static entropic::MCPServerBase* cast(entropic_mcp_server_t server) {
  *
  * @param s Source string.
  * @return Heap-allocated copy (free with entropic_free).
- * @dg_internal
+ * @utility
  * @version 2.0.5
  */
 static char* alloc_string(const std::string& s) {
@@ -50,7 +50,7 @@ extern "C" {
  * @brief Get server name.
  * @param server Server handle.
  * @return Server name (server-owned).
- * @dg_internal
+ * @utility
  * @version 1.8.5
  */
 const char* entropic_mcp_server_name(entropic_mcp_server_t server) {
@@ -64,7 +64,7 @@ const char* entropic_mcp_server_name(entropic_mcp_server_t server) {
  * @brief List tools as JSON array.
  * @param server Server handle.
  * @return Caller-owned JSON string.
- * @dg_internal
+ * @utility
  * @version 1.8.5
  */
 char* entropic_mcp_server_list_tools(entropic_mcp_server_t server) {
@@ -80,7 +80,7 @@ char* entropic_mcp_server_list_tools(entropic_mcp_server_t server) {
  * @param tool_name Tool name.
  * @param args_json JSON arguments.
  * @return Caller-owned ServerResponse JSON.
- * @dg_internal
+ * @utility
  * @version 1.8.5
  */
 char* entropic_mcp_server_execute(
@@ -101,7 +101,7 @@ char* entropic_mcp_server_execute(
  * @param server Server handle.
  * @param config_json Configuration JSON.
  * @return ENTROPIC_OK on success.
- * @dg_internal
+ * @utility
  * @version 1.8.5
  */
 entropic_error_t entropic_mcp_server_configure(
@@ -120,7 +120,7 @@ entropic_error_t entropic_mcp_server_configure(
  * @param server Server handle.
  * @param path Working directory path.
  * @return ENTROPIC_OK on success.
- * @dg_internal
+ * @utility
  * @version 1.8.5
  */
 entropic_error_t entropic_mcp_server_set_working_dir(
@@ -136,7 +136,7 @@ entropic_error_t entropic_mcp_server_set_working_dir(
 /**
  * @brief Destroy a server instance.
  * @param server Server handle.
- * @dg_internal
+ * @utility
  * @version 1.8.5
  */
 void entropic_mcp_server_destroy(entropic_mcp_server_t server) {

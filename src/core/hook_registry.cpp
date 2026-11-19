@@ -104,7 +104,7 @@ entropic_error_t HookRegistry::deregister_hook(
  * @brief Take a snapshot of entries for dispatch.
  * @param point Hook point.
  * @return Copy of the entry vector (already sorted).
- * @dg_internal
+ * @utility
  * @version 1.9.1
  */
 std::vector<HookEntry> HookRegistry::snapshot(

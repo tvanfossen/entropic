@@ -277,14 +277,14 @@ private:
     /**
      * @brief Construct the six filesystem tool instances (ctor step 1).
      * @param data_dir Directory holding tool JSON definitions.
-     * @dg_internal
+     * @utility
      * @version 2.3.7
      */
     void create_fs_tools(const std::string& data_dir);
 
     /**
      * @brief Register the six filesystem tools (ctor step 2).
-     * @dg_internal
+     * @utility
      * @version 2.3.7
      */
     void register_fs_tools();
@@ -295,7 +295,7 @@ private:
      * @param access Read or write.
      * @param tool Bare tool name.
      * @throws std::runtime_error when refused.
-     * @dg_internal
+     * @utility
      * @version 2.13.0
      */
     void authorize_outside_root(const std::filesystem::path& resolved,
@@ -308,7 +308,7 @@ private:
      * @param access Read or write.
      * @param tool Bare tool name.
      * @throws std::runtime_error unless the verdict is `approved`.
-     * @dg_internal
+     * @utility
      * @version 2.13.0
      */
     void ask_outside_root_approver(const std::filesystem::path& resolved,
@@ -317,7 +317,7 @@ private:
 
     /**
      * @brief Log the outside-root policy, warning on ineffective entries.
-     * @dg_internal
+     * @utility
      * @version 2.13.0
      */
     void log_outside_root_policy() const;

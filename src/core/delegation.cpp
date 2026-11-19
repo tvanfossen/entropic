@@ -35,7 +35,7 @@ namespace entropic {
  * @param tier_resolution Tier resolution interface.
  * @param repo_dir Optional project root (informational metadata).
  * @param sandbox_mgr Non-owning, engine-scoped sandbox manager.
- * @dg_internal
+ * @utility
  * @version 2.1.6
  */
 DelegationManager::DelegationManager(
@@ -54,7 +54,7 @@ DelegationManager::DelegationManager(
 /**
  * @brief Set todo list save/restore callbacks.
  * @param callbacks Todo callbacks.
- * @dg_internal
+ * @utility
  * @version 1.8.6
  */
 void DelegationManager::set_todo_callbacks(const TodoCallbacks& callbacks) {
@@ -65,7 +65,7 @@ void DelegationManager::set_todo_callbacks(const TodoCallbacks& callbacks) {
  * @brief Set directory swap callback for ScopedSandbox.
  * @param swap_fn Directory swap callback.
  * @param user_data Opaque pointer for swap_fn.
- * @dg_internal
+ * @utility
  * @version 2.1.5
  */
 void DelegationManager::set_dir_swap(
@@ -77,7 +77,7 @@ void DelegationManager::set_dir_swap(
 /**
  * @brief Set storage interface for delegation record persistence.
  * @param storage Storage callbacks (nullable).
- * @dg_internal
+ * @utility
  * @version 1.8.8
  */
 void DelegationManager::set_storage(const StorageInterface* storage) {
@@ -203,7 +203,7 @@ ent_decision_t DelegationManager::fire_start_cb(
  * @param sb_info        Sandbox identity.
  * @param sandbox_result Patch artifact.
  * @param result         Original delegation result.
- * @dg_internal
+ * @utility
  * @version 2.3.7
  */
 /**
@@ -235,7 +235,7 @@ static ent_delegation_result_t build_delegation_result_struct(
 
 /**
  * @brief Deliver a finished sandbox patch to the completion callback.
- * @dg_internal
+ * @utility
  * @version 2.3.7
  */
 void DelegationManager::deliver_sandbox_result(
@@ -300,7 +300,7 @@ ent_decision_t DelegationManager::invoke_complete_cb(
 
 /**
  * @brief Persist a patch to pending/ + log WARN.
- * @dg_internal
+ * @utility
  * @version 2.1.5
  */
 void DelegationManager::persist_pending_patch(
@@ -327,7 +327,7 @@ void DelegationManager::persist_pending_patch(
  * @param task Task description for the child.
  * @param max_turns Optional iteration limit.
  * @return DelegationResult.
- * @dg_internal
+ * @utility
  * @version 2.1.6
  */
 /**
@@ -452,7 +452,7 @@ DelegationResult DelegationManager::execute_delegation(
  * `check_delegation_preconditions` so the resume path enforces the
  * same gates as a cold delegate.
  *
- * @dg_internal
+ * @utility
  * @version 2.1.6
  */
 /**
@@ -850,7 +850,7 @@ std::string DelegationManager::extract_summary(
  * @param task Task description.
  * @param max_turns Optional turn limit.
  * @return DelegationResult.
- * @dg_internal
+ * @utility
  * @version 1.8.6
  */
 /**
@@ -1035,7 +1035,7 @@ DelegationResult DelegationManager::build_child_result(
 /**
  * @brief Emit the "Child loop done:" log with branch on terminal_reason.
  * @param result Delegation result with terminal_reason populated.
- * @dg_internal
+ * @utility
  * @version 2.0.6-rc18
  */
 void DelegationManager::log_child_result(
@@ -1064,7 +1064,7 @@ void DelegationManager::log_child_result(
  *
  * @param sb_info Sandbox to finalize.
  * @param result Delegation result.
- * @dg_internal
+ * @utility
  * @version 2.1.6
  */
 void DelegationManager::finalize_sandbox_for(

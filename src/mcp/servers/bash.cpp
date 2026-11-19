@@ -91,7 +91,7 @@ constexpr int kPollMs = 50;
 
 /**
  * @brief One command's outcome.
- * @dg_internal
+ * @utility
  * @version 2.13.0
  */
 struct ShellRun {
@@ -434,7 +434,7 @@ nlohmann::json shell_result(const ShellRun& run, int limit_s,
 
 /**
  * @brief Tool for executing shell commands.
- * @dg_internal
+ * @utility
  * @version 1.8.5
  */
 class ExecuteTool : public ToolBase {
@@ -443,7 +443,7 @@ public:
      * @brief Construct from tool definition with server ref.
      * @param def Tool definition loaded from JSON.
      * @param server Owning BashServer reference.
-     * @dg_internal
+     * @utility
      * @version 1.8.5
      */
     ExecuteTool(ToolDefinition def, BashServer& server)
@@ -453,7 +453,7 @@ public:
      * @brief Execute a shell command.
      * @param args_json JSON with "command" and optional "working_dir".
      * @return ServerResponse with stdout/stderr or error.
-     * @dg_internal
+     * @utility
      * @version 1.8.5
      */
     ServerResponse execute(const std::string& args_json) override;
@@ -547,7 +547,7 @@ BashServer::BashServer(
 
 /**
  * @brief Destructor.
- * @dg_internal
+ * @utility
  * @version 1.8.5
  */
 BashServer::~BashServer() = default;

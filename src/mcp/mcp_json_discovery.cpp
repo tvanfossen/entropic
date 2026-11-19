@@ -24,7 +24,7 @@ namespace entropic {
 /**
  * @brief Construct with project directory.
  * @param project_dir Project root.
- * @dg_internal
+ * @utility
  * @version 1.8.7
  */
 MCPJsonDiscovery::MCPJsonDiscovery(std::filesystem::path project_dir)

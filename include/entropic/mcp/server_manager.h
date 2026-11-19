@@ -592,7 +592,7 @@ private:
     /**
      * @brief Snapshot the external clients under a shared lock (gh#171).
      * @return (name, client) pairs; callers use them with no lock held.
-     * @dg_internal
+     * @utility
      * @version 2.14.0
      */
     std::vector<std::pair<std::string, std::shared_ptr<ExternalMCPClient>>>
@@ -602,7 +602,7 @@ private:
      * @brief Look up one external client under a shared lock (gh#171).
      * @param name Server name.
      * @return The client, or null when not registered.
-     * @dg_internal
+     * @utility
      * @version 2.14.0
      */
     std::shared_ptr<ExternalMCPClient> find_external(const std::string& name) const;
@@ -635,7 +635,7 @@ private:
      * @brief Whether a discovered server may be launched (gh#199/#200).
      * @param cfg Discovered server config.
      * @return true to connect.
-     * @dg_internal
+     * @utility
      * @version 2.14.0
      */
     bool admit_discovered(const ExternalServerConfig& cfg) const;

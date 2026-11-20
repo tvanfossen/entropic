@@ -1,28 +1,30 @@
 # SPDX-License-Identifier: Apache-2.0
-name: Docs — Doxygen → GitHub Pages
+name: Docs — clew wiki → GitHub Pages
 
-# Builds and deploys the doxygen API reference for the engine on every
-# published GitHub Release. Triggering on `release.published` (rather
-# than `push: branches: [main]`) version-aligns the published docs with
-# what was actually shipped: the Pages site reflects the most recent
-# release's headers and source, not in-progress changes mid-merge.
+# Builds and deploys entropic's clew wiki on every published GitHub Release
+# (gh#229; replaces the doxygen site). Triggering on `release.published`
+# version-aligns the published docs with what actually shipped.
+#
+# The wiki carries the public API reference (one page per header under
+# include/, declared as `wiki.api` in .clew.yaml), per-file symbol pages for
+# src/, the requirements catalog with its implementers and tests, and the
+# traceability views. clew's composite action indexes the checkout from
+# scratch and builds the HTML site; it deploys nothing, so the Pages steps
+# below stay ours.
 #
 # Pages source must be set to "GitHub Actions" in repo settings
-# (Settings → Pages → Source). One-time setup; afterwards every release
-# rebuilds and re-deploys automatically.
+# (Settings → Pages → Source).
 #
 # Public URL: https://tvanfossen.github.io/entropic/
 #
-# Doxyfile lives at the repo root. It scans `include/entropic` and `src`
-# recursively, generates HTML only (no LaTeX), and writes to
-# `build/docs/html/`.
+# PRE-RELEASE: pinned to clew v2.0.0, which is not tagged yet. This workflow
+# merges only after that tag exists (same gate as the clew-guard hook pin in
+# .pre-commit-config.yaml).
 
 on:
   release:
     types: [published]
-  # Allow a manual rebuild without cutting a new release. Useful when
-  # the workflow itself changes or when re-deploying after a Pages
-  # configuration tweak.
+  # Manual rebuild without cutting a release, e.g. after a workflow change.
   workflow_dispatch:
 
 permissions:
@@ -37,7 +39,7 @@ concurrency:
 
 jobs:
   build-and-deploy:
-    name: Build doxygen + deploy to Pages
+    name: Build clew wiki + deploy to Pages
     runs-on: ubuntu-24.04
     environment:
       name: github-pages
@@ -45,29 +47,19 @@ jobs:
     steps:
       - uses: actions/checkout@v4
         with:
-          # On release events, check out the tagged ref so the docs
-          # match the release. On workflow_dispatch, fall back to the
-          # default ref (main).
+          # On release events, build from the tagged ref so the docs match
+          # the release. On workflow_dispatch, use the default ref (main).
           ref: ${{ github.event.release.tag_name || github.ref }}
-          submodules: recursive
+          # Full history: clew's change-impact and version views read git.
+          fetch-depth: 0
 
-      - name: Install doxygen
-        run: |
-          sudo apt-get update
-          sudo apt-get install -y --no-install-recommends doxygen graphviz
-
-      - name: Run doxygen
-        # v2.1.2 (#4): PROJECT_NUMBER is injected from the repo-root
-        # VERSION file (single source of truth shared with CMakeLists.txt
-        # and pyproject.toml). Doxygen's stdin override pattern: cat the
-        # checked-in Doxyfile, append a PROJECT_NUMBER assignment, pipe
-        # to ``doxygen -``. This avoids carrying a versioned literal in
-        # the Doxyfile that would drift on every release bump (the v2.1.1
-        # docs site rendered "2.1.0" because of exactly that drift).
-        run: |
-          mkdir -p build/docs
-          ENTROPIC_VERSION="$(cat VERSION)"
-          ( cat Doxyfile ; echo "PROJECT_NUMBER=${ENTROPIC_VERSION}" ) | doxygen -
+      - name: Build the clew wiki
+        id: wiki
+        uses: tvanfossen/clew/.github/actions/wiki@v2.0.0
+        with:
+          version: "2.0.0"
+          format: html
+          out: build/clew-wiki
 
       - name: Configure Pages
         uses: actions/configure-pages@v5
@@ -75,7 +67,7 @@ jobs:
       - name: Upload Pages artifact
         uses: actions/upload-pages-artifact@v3
         with:
-          path: build/docs/html
+          path: ${{ steps.wiki.outputs.site }}
 
       - name: Deploy to GitHub Pages
         id: deployment

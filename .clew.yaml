@@ -49,3 +49,9 @@ guard:
 
   impact:
     report_dir: docs/generated/
+
+wiki:
+  # Public API reference: one page per header under include/ (replaces the
+  # doxygen Pages site, gh#229). Private/protected members and \internal
+  # symbols are left out.
+  api: ["include/**"]

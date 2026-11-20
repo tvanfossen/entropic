@@ -2,7 +2,7 @@
 
 > Local-first agentic inference engine — your models, your hardware, your control
 
-**API reference:** [tvanfossen.github.io/entropic](https://tvanfossen.github.io/entropic/) — auto-generated from doxygen on every release
+**API reference:** [tvanfossen.github.io/entropic](https://tvanfossen.github.io/entropic/) — the clew wiki (API reference, requirements and their tests), rebuilt on every release
 
 ## What Is Entropic?
 

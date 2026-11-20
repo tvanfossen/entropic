@@ -143,12 +143,6 @@ public:
     /* ── Tool call parsing (subclass overrides) ──────────── */
 
     /**
-     * @brief Parse tool calls from model output.
-     * @param content Raw model output.
-     * @return ParseResult with cleaned content and tool calls.
-     * @version 1.8.2
-     */
-    /**
      * @brief This family's reasoning-block delimiters (gh#108).
      *
      * Default is the `<think>` pair used by Qwen and Nemotron. Override in a

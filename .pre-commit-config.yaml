@@ -84,11 +84,16 @@ repos:
   # against clew 2.0.0 before it is tagged. Switch to
   # https://github.com/tvanfossen/clew at the v2.0.0 tag before merging.
   - repo: /home/tvanfossen/Projects/clew
-    rev: 30b7f0df
+    rev: 926dc6fe
     hooks:
       - id: clew-guard
         files: \.(h|hpp|c|cpp|cc|cxx|py)$
         exclude: ^(extern/|tests/|build/|\.build/|\.old/|\.venv/)
+      # Static check of the `wiki:` section (every key known, everything it
+      # points at present). Refreshes the index first; --before-tests defers
+      # the test-report inputs the test run writes. The site itself is built
+      # by .github/workflows/docs.yml on release.
+      - id: clew-wiki-check
 
   # ── Bindings drift (gh#55) ──────────────────────────
   - repo: local

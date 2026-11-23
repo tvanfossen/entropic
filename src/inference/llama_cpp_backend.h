@@ -614,11 +614,18 @@ protected:
 public:
     /**
      * @brief The tool-call GBNF captured by the last render (gh#154).
-     * @return `tool_grammar_`, or "" when no tools were staged.
+     *
+     * v2.14.6: honours its contract. It returned `tool_grammar_` whether or
+     * not tools were staged, and that capture is sticky (gh#105), so a
+     * tool-less generation after a tooled one was handed a stale grammar.
+     *
+     * @return `tool_grammar_`, or "" when no tools are staged for this call.
      * @req REQ-INFER-008
-     * @version 2.13.0
+     * @version 2.14.6
      */
-    std::string active_tool_grammar() const override { return tool_grammar_; }
+    std::string active_tool_grammar() const override {
+        return active_tools_json_.empty() ? std::string{} : tool_grammar_;
+    }
 
     /**
      * @brief Speculative-decoding kernel with explicit draft backend.
@@ -1078,9 +1085,13 @@ protected:
      * `do_generate_text_only`, `do_generate_streaming_text_only`)
      * stay a one-liner — minimum diff to ship the seam.
      *
+     * v2.14.6: plain decode applies the staged tool-call grammar too
+     * (gh#134 only reached the common_sampler path).
+     *
      * @param params Generation parameters.
-     * @return Owned Sampler, or nullptr if no factory wired.
-     * @version 2.3.10
+     * @return Owned Sampler, or nullptr if no factory wired or the tool
+     *         grammar cannot be applied.
+     * @version 2.14.6
      */
     std::unique_ptr<Sampler> create_sampler(
         const GenerationParams& params) const;

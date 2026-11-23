@@ -23,8 +23,10 @@
 
 #include <llama.h>
 
+#include <cctype>
 #include <cstdint>
 #include <memory>
+#include <string>
 #include <unordered_map>
 #include <vector>
 
@@ -66,6 +68,120 @@ void add_grammar_sampler(llama_sampler* chain,
         logger->error("Grammar sampler init FAILED for root rule — output "
                       "will be UNCONSTRAINED. Grammar ({} bytes): {}",
                       grammar.size(), grammar);
+    }
+}
+
+/**
+ * @brief Tokenize a generation prompt for grammar prefill.
+ *
+ * Mirrors llama.cpp common_sampler_init: special tokens parsed, and a
+ * leading token some tokenizers add as whitespace is dropped when the
+ * prompt itself does not start with whitespace.
+ *
+ * @param vocab Vocab.
+ * @param text Generation prompt.
+ * @return Prefill tokens (empty when @p text is empty).
+ * @utility
+ * @version 2.14.6
+ */
+std::vector<llama_token> prefill_tokens(const llama_vocab* vocab,
+                                        const std::string& text) {
+    std::vector<llama_token> toks;
+    if (text.empty()) { return toks; }
+    const auto len = static_cast<int32_t>(text.size());
+    int32_t n = -llama_tokenize(vocab, text.c_str(), len, nullptr, 0,
+                                false, true);
+    toks.resize(static_cast<size_t>(n > 0 ? n : 0));
+    if (n > 0) {
+        llama_tokenize(vocab, text.c_str(), len, toks.data(), n, false, true);
+    }
+    char piece[8] = {0};
+    const bool drop_first = !toks.empty()
+        && llama_token_to_piece(vocab, toks[0], piece, sizeof(piece), 0, true) > 0
+        && std::isspace(static_cast<unsigned char>(piece[0]))
+        && !std::isspace(static_cast<unsigned char>(text[0]));
+    if (drop_first) { toks.erase(toks.begin()); }
+    return toks;
+}
+
+/**
+ * @brief Attach a non-lazy tool-call grammar, prefilled (v2.14.6).
+ *
+ * The model's output starts mid-template, so the grammar must first accept
+ * the generation prompt the template already placed in the prompt.
+ * Without the prefill it rejects the very first sampled token.
+ *
+ * @param chain Chain (grammar appended at its head: call first).
+ * @param vocab Vocab.
+ * @param tool Tool-call grammar.
+ * @return false when the grammar cannot be built or rejects its prefill.
+ * @req REQ-INFER-008
+ * @version 2.14.6
+ */
+bool add_tool_call_grammar(llama_sampler* chain, const llama_vocab* vocab,
+                           const ToolCallGrammar& tool) {
+    if (tool.gbnf.empty()) { return true; }
+    if (tool.lazy) {
+        logger->info("Tool-call grammar ({} bytes) is lazy; its trigger "
+                     "patterns are not captured, so plain decode does not "
+                     "apply it", tool.gbnf.size());
+        return true;
+    }
+    llama_sampler* g = llama_sampler_init_grammar(vocab, tool.gbnf.c_str(), "root");
+    bool ok = g != nullptr;
+    try {
+        for (llama_token t : (ok ? prefill_tokens(vocab, tool.generation_prompt)
+                                 : std::vector<llama_token>{})) {
+            llama_sampler_accept(g, t);
+        }
+    } catch (const std::exception& e) {
+        ok = false;
+        logger->error("Tool-call grammar rejected its own prefill ({}). "
+                      "Generation prompt: '{}'. Grammar: {}",
+                      e.what(), tool.generation_prompt, tool.gbnf);
+    }
+    if (ok) {
+        llama_sampler_chain_add(chain, g);
+        logger->info("Tool-call grammar applied: {} bytes, lazy=false, "
+                     "prefill={} bytes (plain decode)",
+                     tool.gbnf.size(), tool.generation_prompt.size());
+    } else {
+        if (g != nullptr) { llama_sampler_free(g); }
+        logger->error("Tool-call grammar could not be applied ({} bytes); "
+                      "refusing to decode unconstrained", tool.gbnf.size());
+    }
+    return ok;
+}
+
+/**
+ * @brief Temperature → top-k → top-p → min-p stages, each gated (v2.14.6).
+ *
+ * Extracted verbatim from LlamaCppSamplerFactory::create to keep it inside
+ * the knots ABC gate once the tool-call grammar stage was added.
+ *
+ * @param chain Chain (stages appended in order).
+ * @param params Generation parameters gating each stage.
+ * @utility
+ * @version 2.14.6
+ */
+void add_truncation_samplers(llama_sampler* chain,
+                             const GenerationParams& params) {
+    if (params.temperature > 0.0f) {
+        llama_sampler_chain_add(chain,
+            llama_sampler_init_temp(params.temperature));
+    }
+    if (params.top_k > 0) {
+        llama_sampler_chain_add(chain,
+            llama_sampler_init_top_k(params.top_k));
+    }
+    if (params.top_p < 1.0f) {
+        llama_sampler_chain_add(chain,
+            llama_sampler_init_top_p(params.top_p, 1));
+    }
+    // Min-P (gh#23 MVP item 1, v2.3.10) — gated so default 0.0f is no-op
+    if (params.min_p > 0.0f) {
+        llama_sampler_chain_add(chain,
+            llama_sampler_init_min_p(params.min_p, 1));
     }
 }
 
@@ -212,42 +328,50 @@ LlamaCppSamplerFactory::LlamaCppSamplerFactory(
  *
  * Chain order: grammar → penalties → temperature → top-k → top-p →
  * min-p → dist. Each stage is gated by its parameter so the default
- * chain stays bit-identical to pre-v2.3.10.
+ * chain stays bit-identical to pre-v2.3.10. v2.14.6: delegates to the
+ * tool-grammar overload with no tool grammar.
  * @param params Generation parameters driving each stage's gate.
  * @return Owned Sampler that wraps the constructed llama.cpp chain; a new,
  *         independent instance on every call.
  * @req REQ-INFER-006
  * @req REQ-INFER-008
- * @version 2.13.0
+ * @version 2.14.6
  */
 std::unique_ptr<Sampler> LlamaCppSamplerFactory::create(
     const GenerationParams& params)
+{
+    return create(params, ToolCallGrammar{});
+}
+
+/**
+ * @brief Build the chain, with a tool-call grammar at its head (v2.14.6).
+ *
+ * Chain order: grammar (request, else tool-call) → logit bias →
+ * penalties → temperature → top-k → top-p → min-p → dist.
+ *
+ * @param params Generation parameters driving each stage's gate.
+ * @param tool Tool-call grammar for this generation ("" gbnf = none).
+ * @return Owned Sampler, or nullptr when the tool grammar cannot be applied.
+ * @req REQ-INFER-006
+ * @req REQ-INFER-008
+ * @version 2.14.6
+ */
+std::unique_ptr<Sampler> LlamaCppSamplerFactory::create(
+    const GenerationParams& params, const ToolCallGrammar& tool)
 {
     llama_sampler_chain_params chain_params =
         llama_sampler_chain_default_params();
     llama_sampler* chain = llama_sampler_chain_init(chain_params);
 
     add_grammar_sampler(chain, vocab_, params.grammar);
+    if (params.grammar.empty() && !add_tool_call_grammar(chain, vocab_, tool)) {
+        llama_sampler_free(chain);
+        return nullptr;
+    }
     add_logit_bias_sampler(chain, vocab_, params.logit_bias);
 
     add_penalties_sampler(chain, vocab_, params);
-    if (params.temperature > 0.0f) {
-        llama_sampler_chain_add(chain,
-            llama_sampler_init_temp(params.temperature));
-    }
-    if (params.top_k > 0) {
-        llama_sampler_chain_add(chain,
-            llama_sampler_init_top_k(params.top_k));
-    }
-    if (params.top_p < 1.0f) {
-        llama_sampler_chain_add(chain,
-            llama_sampler_init_top_p(params.top_p, 1));
-    }
-    // Min-P (gh#23 MVP item 1, v2.3.10) — gated so default 0.0f is no-op
-    if (params.min_p > 0.0f) {
-        llama_sampler_chain_add(chain,
-            llama_sampler_init_min_p(params.min_p, 1));
-    }
+    add_truncation_samplers(chain, params);
 
     llama_sampler_chain_add(chain,
         llama_sampler_init_dist(resolve_dist_seed(params.seed)));

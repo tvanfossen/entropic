@@ -1,800 +1,201 @@
-[
-  {
-    "req_id": "REQ-API-012",
-    "req_name": "Final-answer selection from a serialized conversation",
-    "functions": [
-      {
-        "name": "turn_start",
-        "file": "src/facade/final_text.h",
-        "version": "2.14.5"
-      },
-      {
-        "name": "substantive_assistant_text",
-        "file": "src/facade/final_text.h",
-        "version": "2.14.5"
-      }
-    ]
-  },
-  {
-    "req_id": "REQ-API-014",
-    "req_name": "Header is the generator input for the Python wrapper; drift is a commit gate",
-    "functions": [
-      {
-        "name": "parse_enum",
-        "file": "scripts/gen_bindings.py",
-        "version": "2.2.1"
-      },
-      {
-        "name": "parse_struct",
-        "file": "scripts/gen_bindings.py",
-        "version": "2.2.1"
-      },
-      {
-        "name": "parse_functions",
-        "file": "scripts/gen_bindings.py",
-        "version": "2.2.1"
-      },
-      {
-        "name": "render_bindings",
-        "file": "scripts/gen_bindings.py",
-        "version": "2.2.1"
-      },
-      {
-        "name": "render_manifest",
-        "file": "scripts/gen_bindings.py",
-        "version": "2.2.2"
-      }
-    ]
-  },
-  {
-    "req_id": "REQ-BRIDGE-001",
-    "req_name": "External bridge exposes the engine over a peer-authenticated unix socket",
-    "functions": [
-      {
-        "name": "tool_definitions",
-        "file": "src/facade/external_bridge.cpp",
-        "version": "2.14.3"
-      },
-      {
-        "name": "session_tool_names",
-        "file": "src/facade/external_bridge.cpp",
-        "version": "2.14.5"
-      },
-      {
-        "name": "mark_tasks_cancelling",
-        "file": "src/facade/external_bridge.cpp",
-        "version": "2.0.6-rc16"
-      },
-      {
-        "name": "any_cancelling_left",
-        "file": "src/facade/external_bridge.cpp",
-        "version": "2.0.6-rc16"
-      },
-      {
-        "name": "turn_timeout_result",
-        "file": "src/facade/external_bridge.cpp",
-        "version": "2.12.0"
-      },
-      {
-        "name": "bind_session_workspace",
-        "file": "src/facade/external_bridge.cpp",
-        "version": "2.14.0"
-      },
-      {
-        "name": "tool_handlers",
-        "file": "src/facade/external_bridge.cpp",
-        "version": "2.14.3"
-      },
-      {
-        "name": "initialize_result",
-        "file": "src/facade/external_bridge.cpp",
-        "version": "2.12.0"
-      },
-      {
-        "name": "sentinel_suffix_for_status",
-        "file": "src/facade/external_bridge.cpp",
-        "version": "2.1.4"
-      },
-      {
-        "name": "configure_server",
-        "file": "src/facade/http_listener.cpp",
-        "version": "2.14.0"
-      },
-      {
-        "name": "bind_loopback",
-        "file": "src/facade/http_listener.cpp",
-        "version": "2.14.0"
-      }
-    ]
-  },
-  {
-    "req_id": "REQ-CFG-001",
-    "req_name": "Layered configuration resolution with most-specific-layer-wins precedence",
-    "functions": [
-      {
-        "name": "apply_env",
-        "file": "src/config/env_overrides.cpp",
-        "version": "2.3.7"
-      }
-    ]
-  },
-  {
-    "req_id": "REQ-COMPACT-001",
-    "req_name": "Threshold compaction preserving task-bearing messages, snapshot first",
-    "functions": [
-      {
-        "name": "partition_messages",
-        "file": "src/core/compaction.cpp",
-        "version": "2.3.7"
-      },
-      {
-        "name": "assemble_compacted",
-        "file": "src/core/compaction.cpp",
-        "version": "2.3.7"
-      },
-      {
-        "name": "structured_summary",
-        "file": "src/core/compaction.cpp",
-        "version": "1.8.4"
-      },
-      {
-        "name": "format_summary",
-        "file": "src/core/compaction.cpp",
-        "version": "1.8.4"
-      },
-      {
-        "name": "serialize_messages_json",
-        "file": "src/core/compaction.cpp",
-        "version": "1.8.8"
-      }
-    ]
-  },
-  {
-    "req_id": "REQ-HOOK-001",
-    "req_name": "Thread-safe hook dispatch with priority, chaining and isolation",
-    "functions": [
-      {
-        "name": "is_valid_point",
-        "file": "src/core/hook_registry.cpp",
-        "version": "1.9.1"
-      }
-    ]
-  },
-  {
-    "req_id": "REQ-HOOK-002",
-    "req_name": "Engine fires hooks at every lifecycle boundary, including a vetoable completion",
-    "functions": [
-      {
-        "name": "fire_hook_info",
-        "file": "src/core/engine.cpp",
-        "version": "1.9.1"
-      },
-      {
-        "name": "build_tool_manifest",
-        "file": "src/core/engine.cpp",
-        "version": "2.1.3"
-      },
-      {
-        "name": "build_tool_evidence",
-        "file": "src/core/engine.cpp",
-        "version": "2.3.7"
-      },
-      {
-        "name": "build_tool_results_json",
-        "file": "src/core/engine.cpp",
-        "version": "2.0.10"
-      }
-    ]
-  },
-  {
-    "req_id": "REQ-IDEN-002",
-    "req_name": "Identity lifecycle separates immutable static from dynamic identities",
-    "functions": [
-      {
-        "name": "fire_cache_invalidator",
-        "file": "src/core/identity_manager.cpp",
-        "version": "2.0.6-rc16"
-      }
-    ]
-  },
-  {
-    "req_id": "REQ-INFER-007",
-    "req_name": "Named grammars are registered, validated, and resolved by a fixed precedence",
-    "functions": [
-      {
-        "name": "holds_grammars",
-        "file": "src/config/validate.cpp",
-        "version": "2.13.0"
-      },
-      {
-        "name": "build_grammar_entry",
-        "file": "src/inference/grammar_registry.cpp",
-        "version": "2.3.7"
-      },
-      {
-        "name": "normalize_grammar_key",
-        "file": "src/inference/orchestrator.cpp",
-        "version": "1.9.3"
-      }
-    ]
-  },
-  {
-    "req_id": "REQ-INFER-009",
-    "req_name": "Tool staging drives a native render whose parse context is captured",
-    "functions": [
-      {
-        "name": "to_common_chat",
-        "file": "src/inference/llama_cpp_backend.cpp",
-        "version": "2.6.1"
-      },
-      {
-        "name": "mcp_tools_to_common_chat",
-        "file": "src/inference/llama_cpp_backend.cpp",
-        "version": "2.7.0"
-      }
-    ]
-  },
-  {
-    "req_id": "REQ-INFER-010",
-    "req_name": "One template-first / adapter-second rule parses every raw emission",
-    "functions": [
-      {
-        "name": "apply_fenced_fallbacks",
-        "file": "src/inference/interface_factory.cpp",
-        "version": "2.10.0"
-      },
-      {
-        "name": "one_call_satisfies_schema",
-        "file": "src/inference/response_parse.cpp",
-        "version": "2.10.3"
-      }
-    ]
-  },
-  {
-    "req_id": "REQ-INFER-012",
-    "req_name": "Adapter registry resolves a family parser with a safe generic fallback",
-    "functions": [
-      {
-        "name": "action_envelope_to_call",
-        "file": "src/inference/adapters/adapter_base.cpp",
-        "version": "2.7.1"
-      },
-      {
-        "name": "coerce_call_string_args",
-        "file": "src/inference/adapters/adapter_base.cpp",
-        "version": "2.7.2"
-      },
-      {
-        "name": "parse_recovered_tool_call",
-        "file": "src/inference/adapters/adapter_base.cpp",
-        "version": "2.3.8"
-      },
-      {
-        "name": "regex_recovered_tool_call",
-        "file": "src/inference/adapters/adapter_base.cpp",
-        "version": "2.3.7"
-      },
-      {
-        "name": "open_tag_pattern",
-        "file": "src/inference/adapters/xml_parameter_parser.cpp",
-        "version": "2.4.1"
-      },
-      {
-        "name": "truncate_at_nested_function",
-        "file": "src/inference/adapters/xml_parameter_parser.cpp",
-        "version": "2.4.1"
-      },
-      {
-        "name": "find_close_tag",
-        "file": "src/inference/adapters/xml_parameter_parser.cpp",
-        "version": "2.4.1"
-      },
-      {
-        "name": "emit_arg",
-        "file": "src/inference/adapters/xml_parameter_parser.cpp",
-        "version": "2.4.1"
-      }
-    ]
-  },
-  {
-    "req_id": "REQ-INFER-016",
-    "req_name": "Speculative decoding is gated on compatibility and must not change the output",
-    "functions": [
-      {
-        "name": "build_compat_diagnostic",
-        "file": "src/inference/speculative_compat.cpp",
-        "version": "2.1.11 [reviewed]"
-      }
-    ]
-  },
-  {
-    "req_id": "REQ-INFER-019",
-    "req_name": "Model pool dedup and VRAM residency policy govern which tier is resident",
-    "functions": [
-      {
-        "name": "try_expert_offload",
-        "file": "src/inference/auto_placement.h",
-        "version": "2.13.1"
-      },
-      {
-        "name": "try_fewer_layers",
-        "file": "src/inference/auto_placement.h",
-        "version": "2.13.1"
-      },
-      {
-        "name": "try_smaller_ubatch",
-        "file": "src/inference/auto_placement.h",
-        "version": "2.13.2"
-      },
-      {
-        "name": "touch",
-        "file": "src/inference/session_residency.h",
-        "version": "2.12.0"
-      },
-      {
-        "name": "forget",
-        "file": "src/inference/session_residency.h",
-        "version": "2.12.0"
-      },
-      {
-        "name": "free_slot",
-        "file": "src/inference/session_residency.h",
-        "version": "2.12.0"
-      },
-      {
-        "name": "lru_key",
-        "file": "src/inference/session_residency.h",
-        "version": "2.12.0"
-      }
-    ]
-  },
-  {
-    "req_id": "REQ-INFER-020",
-    "req_name": "Tier routing, handoff rules and secondary model roles",
-    "functions": [
-      {
-        "name": "extract_latest_user_message",
-        "file": "src/inference/orchestrator.cpp",
-        "version": "1.8.2"
-      }
-    ]
-  },
-  {
-    "req_id": "REQ-INFER-021",
-    "req_name": "Per-tier sampler configuration applies only where the caller did not decide",
-    "functions": [
-      {
-        "name": "apply_if_default",
-        "file": "src/inference/orchestrator.cpp",
-        "version": "2.5.3"
-      }
-    ]
-  },
-  {
-    "req_id": "REQ-INFER-023",
-    "req_name": "LoRA adapters hot-swap under a single-HOT-per-context constraint",
-    "functions": [
-      {
-        "name": "apply_adapter",
-        "file": "src/inference/adapter_manager.cpp",
-        "version": "1.9.2"
-      }
-    ]
-  },
-  {
-    "req_id": "REQ-INFER-025",
-    "req_name": "Multimodal input is bounded, tier-gated and degrades gracefully",
-    "functions": [
-      {
-        "name": "bilinear_resize",
-        "file": "src/inference/image_preprocessor.cpp",
-        "version": "1.9.11"
-      },
-      {
-        "name": "read_image_bytes",
-        "file": "src/inference/image_preprocessor.cpp",
-        "version": "2.3.7"
-      },
-      {
-        "name": "decode",
-        "file": "src/inference/image_preprocessor.cpp",
-        "version": "1.9.11"
-      }
-    ]
-  },
-  {
-    "req_id": "REQ-INFER-026",
-    "req_name": "A prompt that cannot fit the tier context is refused, never decoded",
-    "functions": [
-      {
-        "name": "context_fit_breakdown",
-        "file": "src/inference/context_fit.h",
-        "version": "2.13.0"
-      }
-    ]
-  },
-  {
-    "req_id": "REQ-INFER-027",
-    "req_name": "Expert-tensor offload places routed experts on the host while attention and KV stay resident (EXPERIMENTAL)",
-    "functions": [
-      {
-        "name": "build_load_mparams",
-        "file": "src/inference/llama_cpp_backend.cpp",
-        "version": "2.13.0"
-      },
-      {
-        "name": "model_expert_count",
-        "file": "src/inference/llama_cpp_backend.cpp",
-        "version": "2.13.0"
-      }
-    ]
-  },
-  {
-    "req_id": "REQ-LOOP-006",
-    "req_name": "Interrupt and pause semantics across nested loops",
-    "functions": [
-      {
-        "name": "this_thread_run",
-        "file": "src/core/engine.cpp",
-        "version": "2.13.0"
-      }
-    ]
-  },
-  {
-    "req_id": "REQ-LOOP-008",
-    "req_name": "Family-aware streaming reasoning filter with UTF-8 alignment",
-    "functions": [
-      {
-        "name": "utf8_char_len",
-        "file": "src/core/stream_think_filter.cpp",
-        "version": "2.0.2"
-      },
-      {
-        "name": "process_byte",
-        "file": "src/core/stream_think_filter.cpp",
-        "version": "2.10.3"
-      }
-    ]
-  },
-  {
-    "req_id": "REQ-MCP-010",
-    "req_name": "Per-identity MCP key authorization is opt-in but default-deny once enabled",
-    "functions": [
-      {
-        "name": "server_wildcard",
-        "file": "src/mcp/mcp_key_set.cpp",
-        "version": "1.9.4"
-      }
-    ]
-  },
-  {
-    "req_id": "REQ-MCP-021",
-    "req_name": "Filesystem tools are root-confined, read-before-write gated, and size-bounded",
-    "functions": [
-      {
-        "name": "read_file_contents",
-        "file": "src/mcp/servers/filesystem.cpp",
-        "version": "1.8.5"
-      },
-      {
-        "name": "write_file_contents",
-        "file": "src/mcp/servers/filesystem.cpp",
-        "version": "1.8.5"
-      },
-      {
-        "name": "apply_str_replace",
-        "file": "src/mcp/servers/filesystem.cpp",
-        "version": "2.14.0"
-      },
-      {
-        "name": "read_and_track",
-        "file": "src/mcp/servers/filesystem.cpp",
-        "version": "2.14.0"
-      },
-      {
-        "name": "list_page",
-        "file": "src/mcp/servers/filesystem.cpp",
-        "version": "2.14.0"
-      }
-    ]
-  },
-  {
-    "req_id": "REQ-MCP-022",
-    "req_name": "Glob, grep, and read honour .gitignore plus .explorerignore semantics",
-    "functions": [
-      {
-        "name": "should_skip_dir",
-        "file": "src/mcp/servers/filesystem.cpp",
-        "version": "2.13.0"
-      },
-      {
-        "name": "any_glob_match",
-        "file": "src/mcp/servers/filesystem.cpp",
-        "version": "2.1.4"
-      },
-      {
-        "name": "emit_one",
-        "file": "src/mcp/servers/ignore_matcher.cpp",
-        "version": "2.1.4"
-      },
-      {
-        "name": "strip_flags",
-        "file": "src/mcp/servers/ignore_matcher.cpp",
-        "version": "2.1.4"
-      },
-      {
-        "name": "normalize_base",
-        "file": "src/mcp/servers/ignore_matcher.cpp",
-        "version": "2.13.0"
-      },
-      {
-        "name": "make_base_prefix",
-        "file": "src/mcp/servers/ignore_matcher.cpp",
-        "version": "2.1.4"
-      },
-      {
-        "name": "collect_buckets",
-        "file": "src/mcp/servers/ignore_matcher.cpp",
-        "version": "2.13.0"
-      },
-      {
-        "name": "pop_highest",
-        "file": "src/mcp/servers/ignore_matcher.cpp",
-        "version": "2.13.0"
-      },
-      {
-        "name": "rule_matches",
-        "file": "src/mcp/servers/ignore_matcher.cpp",
-        "version": "2.13.0"
-      }
-    ]
-  },
-  {
-    "req_id": "REQ-MCP-023",
-    "req_name": "Bash and git servers gate on operator approval, not command pattern matching; bash enforces a timeout on the whole process group",
-    "functions": [
-      {
-        "name": "spawn_git",
-        "file": "src/mcp/servers/git.cpp",
-        "version": "2.14.4"
-      },
-      {
-        "name": "drain_and_close",
-        "file": "src/mcp/servers/git.cpp",
-        "version": "2.14.4"
-      }
-    ]
-  },
-  {
-    "req_id": "REQ-MCP-024",
-    "req_name": "Engine-level entropic.* tools validate their arguments and emit typed directives",
-    "functions": [
-      {
-        "name": "followup_results",
-        "file": "src/mcp/servers/entropic_server.cpp",
-        "version": "2.14.0"
-      }
-    ]
-  },
-  {
-    "req_id": "REQ-MCP-025",
-    "req_name": "External servers are discovered safely, directive-stripped, and health-monitored",
-    "functions": [
-      {
-        "name": "watch",
-        "file": "src/mcp/health_monitor.cpp",
-        "version": "1.8.7"
-      },
-      {
-        "name": "start",
-        "file": "src/mcp/health_monitor.cpp",
-        "version": "1.8.7"
-      },
-      {
-        "name": "has_blocked_prefix",
-        "file": "src/mcp/mcp_json_discovery.cpp",
-        "version": "1.8.8"
-      },
-      {
-        "name": "connect_declared_servers",
-        "file": "src/mcp/server_manager.cpp",
-        "version": "2.14.0"
-      },
-      {
-        "name": "connect_discovered_servers",
-        "file": "src/mcp/server_manager.cpp",
-        "version": "2.14.0"
-      }
-    ]
-  },
-  {
-    "req_id": "REQ-MCP-027",
-    "req_name": "Named workspaces bind a session to its own tool root and servers",
-    "functions": [
-      {
-        "name": "workspace_root_refusal",
-        "file": "src/facade/entropic_mcp.cpp",
-        "version": "2.14.4"
-      }
-    ]
-  },
-  {
-    "req_id": "REQ-PROD-002",
-    "req_name": "mcp-bridge is a byte-transparent stdio-to-socket relay, never an engine",
-    "functions": [
-      {
-        "name": "connect_unix_socket",
-        "file": "src/cli/mcp_bridge.cpp",
-        "version": "2.1.7"
-      },
-      {
-        "name": "service_revents",
-        "file": "src/cli/mcp_bridge.cpp",
-        "version": "2.1.7"
-      }
-    ]
-  },
-  {
-    "req_id": "REQ-PROD-003",
-    "req_name": "Every release publishes CPU and CUDA tarballs, each with a .sha256 companion",
-    "functions": [
-      {
-        "name": "_detect_backend",
-        "file": "python/src/entropic/install_engine.py",
-        "version": "2.1.0"
-      },
-      {
-        "name": "_sha256_of",
-        "file": "python/src/entropic/install_engine.py",
-        "version": "2.1.0"
-      },
-      {
-        "name": "_expected_sha256",
-        "file": "python/src/entropic/install_engine.py",
-        "version": "2.1.0"
-      },
-      {
-        "name": "_verify_existing",
-        "file": "python/src/entropic/install_engine.py",
-        "version": "2.1.0"
-      }
-    ]
-  },
-  {
-    "req_id": "REQ-SAFE-001",
-    "req_name": "Untrusted bytes are sanitized at ingress, never at egress",
-    "functions": [
-      {
-        "name": "valid_seq_len",
-        "file": "src/mcp/utf8_sanitize.cpp",
-        "version": "2.1.0"
-      },
-      {
-        "name": "su8_seq_len",
-        "file": "src/storage/backend.cpp",
-        "version": "2.9.9"
-      }
-    ]
-  },
-  {
-    "req_id": "REQ-STOR-002",
-    "req_name": "Serialized, parameter-bound statement execution",
-    "functions": [
-      {
-        "name": "prepare",
-        "file": "src/storage/database.cpp",
-        "version": "2.0.0"
-      }
-    ]
-  },
-  {
-    "req_id": "REQ-STOR-003",
-    "req_name": "Conversation and message persistence with generated identity",
-    "functions": [
-      {
-        "name": "build_message_row",
-        "file": "src/storage/backend.cpp",
-        "version": "2.3.7"
-      },
-      {
-        "name": "bind_message_insert",
-        "file": "src/storage/backend.cpp",
-        "version": "2.3.7"
-      },
-      {
-        "name": "conversation_row_to_json",
-        "file": "src/storage/backend.cpp",
-        "version": "2.3.7"
-      },
-      {
-        "name": "message_row_to_json",
-        "file": "src/storage/backend.cpp",
-        "version": "2.3.7"
-      }
-    ]
-  },
-  {
-    "req_id": "REQ-STOR-005",
-    "req_name": "Delegation record lifecycle with parent-conversation guard",
-    "functions": [
-      {
-        "name": "bind_delegation_insert",
-        "file": "src/storage/backend.cpp",
-        "version": "2.3.7"
-      },
-      {
-        "name": "guard_parent_conversation",
-        "file": "src/storage/backend.cpp",
-        "version": "2.1.12"
-      }
-    ]
-  },
-  {
-    "req_id": "REQ-STOR-008",
-    "req_name": "Append-only JSONL audit log with rotation and untruncated payloads",
-    "functions": [
-      {
-        "name": "extract_parent_id",
-        "file": "src/storage/audit_entry.cpp",
-        "version": "1.9.5"
-      },
-      {
-        "name": "parse_result_fields",
-        "file": "src/storage/audit_entry.cpp",
-        "version": "1.9.5"
-      },
-      {
-        "name": "write_line",
-        "file": "src/storage/audit_logger.cpp",
-        "version": "1.9.5"
-      },
-      {
-        "name": "populate_from_hook_context",
-        "file": "src/storage/audit_logger.cpp",
-        "version": "1.9.5"
-      }
-    ]
-  },
-  {
-    "req_id": "REQ-TYPE-006",
-    "req_name": "Multimodal message vocabulary keeps text readable to text-only callers",
-    "functions": [
-      {
-        "name": "parse_one_message",
-        "file": "src/types/messages_json.cpp",
-        "version": "2.13.0"
-      }
-    ]
-  },
-  {
-    "req_id": "REQ-VALID-002",
-    "req_name": "Critique-and-revise loop with typed verdicts and content safety valve",
-    "functions": [
-      {
-        "name": "append_turn_evidence",
-        "file": "src/core/constitutional_validator.cpp",
-        "version": "2.13.0"
-      },
-      {
-        "name": "build_revision_messages",
-        "file": "src/core/constitutional_validator.cpp",
-        "version": "1.9.8"
-      },
-      {
-        "name": "extract_compliant_field",
-        "file": "src/core/constitutional_validator.cpp",
-        "version": "2.0.0"
-      },
-      {
-        "name": "extract_violations",
-        "file": "src/core/constitutional_validator.cpp",
-        "version": "1.9.8"
-      },
-      {
-        "name": "extract_revised_field",
-        "file": "src/core/constitutional_validator.cpp",
-        "version": "1.9.8"
-      }
-    ]
-  }
-]
+{
+  "schema_version": 1,
+  "entries": [
+    {
+      "req_id": "REQ-INFER-002",
+      "req_name": "Teardown releases every model, context and adapter handle",
+      "functions": [
+        {
+          "name": "teardown_mtp_draft",
+          "file": "src/inference/llama_cpp_backend.cpp",
+          "version": "2.9.1"
+        }
+      ]
+    },
+    {
+      "req_id": "REQ-INFER-005",
+      "req_name": "Every decode path honours cooperative cancellation within one token",
+      "functions": [
+        {
+          "name": "do_generate_text_only",
+          "file": "src/inference/llama_cpp_backend.cpp",
+          "version": "2.13.2"
+        },
+        {
+          "name": "do_generate_streaming_text_only",
+          "file": "src/inference/llama_cpp_backend.cpp",
+          "version": "2.13.2"
+        },
+        {
+          "name": "generate_mtp",
+          "file": "src/inference/llama_cpp_backend.cpp",
+          "version": "2.14.6"
+        }
+      ]
+    },
+    {
+      "req_id": "REQ-INFER-006",
+      "req_name": "Sampler chain construction has a fixed order and default-preserving gating",
+      "functions": [
+        {
+          "name": "to_common_sampling",
+          "file": "src/inference/llama_cpp_backend.cpp",
+          "version": "2.10.4"
+        },
+        {
+          "name": "create",
+          "file": "src/inference/llama_cpp_sampler.cpp",
+          "version": "2.14.6"
+        },
+        {
+          "name": "create",
+          "file": "src/inference/llama_cpp_sampler.cpp",
+          "version": "2.14.6"
+        }
+      ]
+    },
+    {
+      "req_id": "REQ-INFER-008",
+      "req_name": "Every declared grammar source reaches the sampler and exactly one wins",
+      "functions": [
+        {
+          "name": "to_common_sampling",
+          "file": "src/inference/llama_cpp_backend.cpp",
+          "version": "2.10.4"
+        },
+        {
+          "name": "active_tool_grammar",
+          "file": "src/inference/llama_cpp_backend.h",
+          "version": "2.14.6"
+        },
+        {
+          "name": "add_tool_call_grammar",
+          "file": "src/inference/llama_cpp_sampler.cpp",
+          "version": "2.14.6"
+        },
+        {
+          "name": "create",
+          "file": "src/inference/llama_cpp_sampler.cpp",
+          "version": "2.14.6"
+        },
+        {
+          "name": "create",
+          "file": "src/inference/llama_cpp_sampler.cpp",
+          "version": "2.14.6"
+        },
+        {
+          "name": "create",
+          "file": "src/inference/llama_cpp_sampler.h",
+          "version": "2.14.6"
+        }
+      ]
+    },
+    {
+      "req_id": "REQ-INFER-009",
+      "req_name": "Tool staging drives a native render whose parse context is captured",
+      "functions": [
+        {
+          "name": "to_common_chat",
+          "file": "src/inference/llama_cpp_backend.cpp",
+          "version": "2.14.6"
+        },
+        {
+          "name": "mcp_tools_to_common_chat",
+          "file": "src/inference/llama_cpp_backend.cpp",
+          "version": "2.7.0"
+        }
+      ]
+    },
+    {
+      "req_id": "REQ-INFER-015",
+      "req_name": "MTP speculative decode fails loud and never silently falls back",
+      "functions": [
+        {
+          "name": "effective_n_draft",
+          "file": "src/inference/llama_cpp_backend.cpp",
+          "version": "2.11.0"
+        },
+        {
+          "name": "mtp_guard",
+          "file": "src/inference/llama_cpp_backend.cpp",
+          "version": "2.11.0"
+        },
+        {
+          "name": "generate_mtp",
+          "file": "src/inference/llama_cpp_backend.cpp",
+          "version": "2.14.6"
+        }
+      ]
+    },
+    {
+      "req_id": "REQ-INFER-025",
+      "req_name": "Multimodal input is bounded, tier-gated and degrades gracefully",
+      "functions": [
+        {
+          "name": "generate_multimodal",
+          "file": "src/inference/llama_cpp_backend.cpp",
+          "version": "2.12.0"
+        }
+      ]
+    },
+    {
+      "req_id": "REQ-INFER-026",
+      "req_name": "A prompt that cannot fit the tier context is refused, never decoded",
+      "functions": [
+        {
+          "name": "prefill_error",
+          "file": "src/inference/llama_cpp_backend.cpp",
+          "version": "2.13.0"
+        }
+      ]
+    },
+    {
+      "req_id": "REQ-INFER-027",
+      "req_name": "Expert-tensor offload places routed experts on the host while attention and KV stay resident (EXPERIMENTAL)",
+      "functions": [
+        {
+          "name": "build_load_mparams",
+          "file": "src/inference/llama_cpp_backend.cpp",
+          "version": "2.13.0"
+        },
+        {
+          "name": "model_expert_count",
+          "file": "src/inference/llama_cpp_backend.cpp",
+          "version": "2.13.0"
+        },
+        {
+          "name": "expert_offload_admits",
+          "file": "src/inference/llama_cpp_backend.cpp",
+          "version": "2.13.0"
+        },
+        {
+          "name": "load_gpu_model",
+          "file": "src/inference/llama_cpp_backend.cpp",
+          "version": "2.13.0 [reviewed]"
+        }
+      ]
+    },
+    {
+      "req_id": "REQ-LOOP-010",
+      "req_name": "Session conversations are readable, writable, and losslessly round-trippable",
+      "functions": [
+        {
+          "name": "forget_session_kv",
+          "file": "src/inference/llama_cpp_backend.cpp",
+          "version": "2.13.0"
+        }
+      ]
+    },
+    {
+      "req_id": "REQ-TYPE-004",
+      "req_name": "Sentinel count members bound enum validity and force exhaustive wiring",
+      "functions": [
+        {
+          "name": "do_supports",
+          "file": "src/inference/llama_cpp_backend.cpp",
+          "version": "1.9.13"
+        }
+      ]
+    }
+  ]
+}

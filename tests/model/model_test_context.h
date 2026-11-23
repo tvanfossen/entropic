@@ -249,6 +249,35 @@ inline bool load_harness_inputs(ModelTestContext& ctx,
  * @version 1.10.2
  */
 /**
+ * @brief Give a repointed tier the substitute model's own projector.
+ *
+ * The registry entry's `mmproj_key` is used when it names a file on disk.
+ * Otherwise the stale projector is dropped along with the `vision`
+ * capability, since no projector means no vision.
+ *
+ * @param ctx Test context (registry).
+ * @param tier Tier config being repointed (mutated).
+ * @param entry Registry entry of the substitute model.
+ * @param name Tier name (for the log line).
+ * @utility
+ * @version 2.14.6
+ */
+inline void repoint_mmproj(ModelTestContext& ctx, ModelConfig& tier,
+                           const BundledModelEntry& entry,
+                           const std::string& name) {
+    auto mmproj = entry.mmproj_key.empty()
+        ? fs::path{} : ctx.registry.resolve(entry.mmproj_key);
+    if (!mmproj.empty() && !fs::is_regular_file(mmproj)) { mmproj.clear(); }
+    if (mmproj.empty() && !tier.mmproj_path.empty()) {
+        auto& caps = tier.capabilities;
+        caps.erase(std::remove(caps.begin(), caps.end(), "vision"), caps.end());
+    }
+    spdlog::info("Test harness: tier '{}' mmproj '{}' -> '{}'", name,
+                 tier.mmproj_path.string(), mmproj.string());
+    tier.mmproj_path = mmproj;
+}
+
+/**
  * @brief Repoint large default tiers to a small model for generic tests.
  *
  * gh#87 (v2.7.0): the generic subsystem + engine-loop tests validate ENGINE
@@ -294,6 +323,11 @@ inline void use_small_default_model(ModelTestContext& ctx) {
                          name, small_key, sz);
             tier.path = small_path;
             tier.adapter = entry->adapter;
+            // v2.14.6: the tier's projector belongs to the model it USED to
+            // name. Keeping Qwen's mmproj on E4B (n_embd 2048 vs 2560) failed
+            // every activation and leaked ~1.1 GB VRAM each time, until a
+            // delegation round-trip aborted the process in clip load.
+            repoint_mmproj(ctx, tier, *entry, name);
         }
     }
 }

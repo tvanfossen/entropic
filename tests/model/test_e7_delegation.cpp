@@ -263,14 +263,19 @@ SCENARIO("gh#160: an isolated delegation never writes the project, and "
         // then never entered and the containment CHECK fails on a write
         // that had nothing to do with isolation.
         const std::string registry = servers.list_tools();
+        // v2.14.6: the lead is also STAGED entropic.complete, as the
+        // production lead is (its allowlist below already held it). Without
+        // it a lead that owes a completion call could never make one, and the
+        // forced retry after a prose answer had nothing to conclude with.
         TierToolsets toolsets{
             tools_named(registry,
-                        {"entropic.delegate", "filesystem.read_file"}),
+                        {"entropic.delegate", "filesystem.read_file",
+                         "entropic.complete"}),
             tools_named(registry,
                         {"filesystem.read_file", "filesystem.write_file"})};
         // Fixture self-check: a renamed tool would otherwise silently stage
         // an empty menu and look like a model that declined to delegate.
-        REQUIRE(nlohmann::json::parse(toolsets.lead).size() == 2);
+        REQUIRE(nlohmann::json::parse(toolsets.lead).size() == 3);
         REQUIRE(nlohmann::json::parse(toolsets.eng).size() == 2);
 
         auto iface = make_real_interface();
@@ -441,6 +446,165 @@ SCENARIO("gh#160: an isolated delegation never writes the project, and "
                       != std::string::npos);
                 CHECK(evidence.find("REWRITTEN BY ENG")
                       == std::string::npos);
+                end_test_log();
+            }
+        }
+
+        fs::remove_all(project);
+    }
+}
+
+// ── v2.14.6: a prose answer's forced retry may only conclude ────────────
+
+namespace complete_only_model {
+
+/**
+ * @brief Did the conversation run @p tool? (a tool result names it)
+ * @param msgs Conversation after the turn.
+ * @param tool Fully-qualified tool name.
+ * @return true when a tool-result message carries tool_name == @p tool.
+ * @utility
+ * @version 2.14.6
+ */
+inline bool ran_tool(const std::vector<Message>& msgs, const std::string& tool) {
+    for (const auto& m : msgs) {
+        auto name = m.metadata.find("tool_name");
+        if (name != m.metadata.end() && name->second == tool) { return true; }
+    }
+    return false;
+}
+
+/**
+ * @brief Lead tool menu for this scenario: delegate + complete.
+ * @param tier Tier being generated for (unused: one menu).
+ * @param result Output: heap JSON array. Caller frees via free_fn.
+ * @param ud std::string pointer holding the menu.
+ * @return 0.
+ * @callback
+ * @version 2.14.6
+ */
+inline int lead_tool_prompt(const char* /*tier*/, char** result, void* ud) {
+    *result = alloc_cstr(*static_cast<const std::string*>(ud));
+    return 0;
+}
+
+} // namespace complete_only_model
+
+SCENARIO("v2.14.6: a lead that answers in prose is nudged, and its forced "
+         "retry concludes with entropic.complete instead of delegating",
+         "[model][engine][delegation][explicit_completion][2.14.6]")
+{
+    using namespace complete_only_model;
+    using gh160_model::tools_named;
+    namespace fs = std::filesystem;
+
+    GIVEN("the production lead contract: explicit_completion, delegate + complete") {
+        REQUIRE(g_ctx.initialized);
+        const std::string log_name = "v2146_complete_only";
+        start_test_log(log_name);
+
+        auto project = fs::temp_directory_path() /
+                       ("entropic_v2146_model_" + std::to_string(::getpid()));
+        fs::remove_all(project);
+        fs::create_directories(project);
+
+        entropic::PermissionsConfig perms;
+        perms.allow = {"*"};
+        entropic::ServerManager servers(perms, project);
+        entropic::MCPConfig mcp_cfg;
+        servers.init_builtins(mcp_cfg, {"eng"},
+                              (fs::path(MODEL_PATH) / "data").string());
+        servers.initialize();
+        std::string menu = tools_named(servers.list_tools(),
+                                       {"entropic.delegate", "entropic.complete"});
+        REQUIRE(nlohmann::json::parse(menu).size() == 2);  // fixture self-check
+
+        auto iface = make_real_interface();
+        iface.get_tool_prompt = lead_tool_prompt;
+        iface.tool_prompt_data = &menu;
+        LoopConfig lc;
+        lc.max_iterations = 8;
+        lc.stream_output = false;
+        lc.auto_approve_tools = true;
+        CompactionConfig cc;
+        AgentEngine engine(iface, lc, cc);
+        engine.set_project_dir(project);
+
+        CallbackState state;
+        EngineCallbacks cbs{};
+        wire_callbacks(cbs, state);
+        engine.set_callbacks(cbs);
+
+        TierResolutionInterface tri;
+        tri.resolve_tier = mock_resolve_tier;
+        tri.tier_exists = mock_tier_exists;
+        tri.get_tier_param = [](const std::string& tier, const std::string& param,
+                                void* /*ud*/) -> std::string {
+            return (tier == g_ctx.default_tier && param == "explicit_completion")
+                ? "true" : "";
+        };
+        engine.set_tier_resolution(tri);
+
+        const std::unordered_map<std::string, std::vector<std::string>>
+            tier_allowed{{g_ctx.default_tier,
+                          {"entropic.delegate", "entropic.complete"}}};
+        entropic::ToolExecutor executor(
+            servers, engine.loop_config(), engine.callbacks(),
+            engine.build_directive_hooks());
+        executor.set_tier_allowed_tools(&tier_allowed);
+        ToolExecutionInterface tei;
+        tei.process_tool_calls = [](LoopContext& ctx,
+                                    const std::vector<ToolCall>& calls,
+                                    void* ud) {
+            return static_cast<entropic::ToolExecutor*>(ud)
+                ->process_tool_calls(ctx, calls);
+        };
+        tei.user_data = &executor;
+        engine.set_tool_executor(tei);
+
+        int delegations = 0;
+        engine.set_delegation_callbacks(
+            nullptr,
+            [](const ent_delegation_result_t*, void* ud) {
+                ++*static_cast<int*>(ud);
+                return ENT_DECISION_ACCEPT;
+            }, &delegations);
+
+        WHEN("the lead is asked something it answers directly, twice") {
+            // A greeting invites prose, which the explicit_completion contract
+            // nudges; the forced retry is then offered entropic.complete only.
+            auto messages = make_messages(
+                "You are a friendly lead engineer.",
+                "Say hello to me in one short sentence.");
+            auto after_turn1 = engine.run(std::move(messages));
+            const bool engaged_turn1 = test_log_contains(
+                log_name, "forced retry offers only 'entropic.complete'");
+            // The restriction is only real if the grammar reached the
+            // sampler; plain decode dropped it before v2.14.6.
+            const bool grammar_turn1 = test_log_contains(
+                log_name, "Tool-call grammar applied");
+
+            after_turn1.push_back([] {
+                Message m;
+                m.role = "user";
+                m.content = "Thanks. Now say goodbye in one short sentence.";
+                return m;
+            }());
+            auto after_turn2 = engine.run(std::move(after_turn1));
+
+            THEN("the narrowed retry engaged, and both turns concluded") {
+                INFO("delegations=" << delegations
+                     << " turn-2 answer: " << after_turn2.back().content);
+                // Engagement first: a run where the model called complete on
+                // its first try never reached the code under test.
+                REQUIRE(engaged_turn1);
+                REQUIRE(grammar_turn1);
+                CHECK_FALSE(test_log_contains(log_name, "turn failed"));
+                CHECK_FALSE(test_log_contains(log_name,
+                                              "but the tier is not offered it"));
+                CHECK(ran_tool(after_turn2, "entropic.complete"));
+                CHECK(delegations == 0);
+                CHECK(after_turn2.back().role == "assistant");
                 end_test_log();
             }
         }

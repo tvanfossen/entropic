@@ -233,7 +233,8 @@ add_model_test(test-e7-delegation         test_e7_delegation.cpp)
 # model taking a worse path. A multi-tier delegation turn re-prefills each
 # tier's tail; at ~24k prefill tokens it is the slowest scenario in the
 # suite by construction.
-set_tests_properties(model/test-e7-delegation PROPERTIES TIMEOUT 300)
+# v2.14.6: 300 -> 480 for the third scenario (complete-only forced retry).
+set_tests_properties(model/test-e7-delegation PROPERTIES TIMEOUT 480)
 add_model_test(test-e8-mcp-auth           test_e8_mcp_auth.cpp)
 add_model_test(test-hook-lifecycle        test_hook_lifecycle.cpp)
 add_model_test(test-e9-dynamic-identity   test_e9_dynamic_identity.cpp)

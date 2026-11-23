@@ -1927,16 +1927,38 @@ std::string LlamaCppBackend::apply_chat_template_lowlevel(
  * ACTIVE-only code paths, where do_activate has already
  * installed the production factory).
  *
+ * v2.14.6: gh#134 applied the render's tool-call grammar only on the
+ * common_sampler path (speculative / MTP). Plain decode built its chain
+ * from `params.grammar` alone, so `require_tool_call` tiers and the forced
+ * retry after a no-tool-call nudge decoded unconstrained, behind a
+ * "tool call FORCED" log line. The tool grammar now reaches the production
+ * factory here, by the same precedence rule (request grammar wins, a
+ * collision is an ERROR). A test-injected factory gets params only.
+ *
  * @param params Generation parameters.
- * @return Owned Sampler, or nullptr if no factory installed.
+ * @return Owned Sampler, or nullptr if no factory installed or the tool
+ *         grammar cannot be applied.
  * @utility
- * @version 2.3.10
+ * @version 2.14.6
  */
 std::unique_ptr<Sampler> LlamaCppBackend::create_sampler(
     const GenerationParams& params) const
 {
     if (!sampler_factory_) { return nullptr; }
-    return sampler_factory_->create(params);
+    const std::string tool_grammar = active_tool_grammar();
+    if (grammar_sources_collide(params.grammar, tool_grammar)) {
+        logger->error("Both a request grammar and a tool-call grammar are "
+                      "active; the request grammar is used and the staged "
+                      "tools are NOT structurally enforced this turn.");
+    }
+    auto* production =
+        dynamic_cast<LlamaCppSamplerFactory*>(sampler_factory_.get());
+    if (production == nullptr || tool_grammar.empty()) {
+        return sampler_factory_->create(params);
+    }
+    return production->create(
+        params, ToolCallGrammar{tool_grammar, tool_grammar_lazy_,
+                                parse_generation_prompt_});
 }
 
 // ── Decode loop ────────────────────────────────────────────
@@ -4563,8 +4585,12 @@ static GenerationResult spec_run_from_tokens(
 
 /**
  * @brief Speculative generation against a draft model (gh#36).
+ *
+ * v2.14.6: reads the tool grammar through active_tool_grammar(), so a
+ * toolless call is not handed the sticky capture of an earlier tooled one.
+ *
  * @utility
- * @version 2.12.0
+ * @version 2.14.6
  */
 GenerationResult LlamaCppBackend::generate_speculative_with_draft(
     const std::vector<Message>& messages,
@@ -4599,7 +4625,8 @@ GenerationResult LlamaCppBackend::generate_speculative_with_draft(
             result = spec_run_from_tokens(
                 ctx_, draft.ctx_, model_, tokens, params, on_token,
                 cancel, n_draft_max, draft_path, t0,
-                tool_grammar_, tool_grammar_lazy_, parse_generation_prompt_);
+                active_tool_grammar(), tool_grammar_lazy_,   // v2.14.6
+                parse_generation_prompt_);
         }
     }
     return result;
@@ -5007,7 +5034,7 @@ int LlamaCppBackend::mtp_reuse_cut(
  *         this route owns the outcome and never degrades to plain decode.
  * @req REQ-INFER-015
  * @req REQ-INFER-005
- * @version 2.12.0-rc1
+ * @version 2.14.6
  */
 GenerationResult LlamaCppBackend::generate_mtp(
     const std::vector<Message>& messages,
@@ -5040,7 +5067,7 @@ GenerationResult LlamaCppBackend::generate_mtp(
         ctx_, mtp_draft_ctx_, model_, tokens, params,
         on_token, cancel, mtp_n_max_,
         effective_stop(params), t0,  // gh#108: honor stops
-        tool_grammar_, tool_grammar_lazy_,   // gh#134
+        active_tool_grammar(), tool_grammar_lazy_,   // gh#134; v2.14.6
         parse_generation_prompt_, reuse_cut);
     // gh#144 (v2.12.0): publish it so last_prefill_tokens() is meaningful
     // under speculative.mtp, exactly as it is on the plain decode path.

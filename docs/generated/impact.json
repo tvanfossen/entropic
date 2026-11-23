@@ -2,139 +2,35 @@
   "schema_version": 1,
   "entries": [
     {
-      "req_id": "REQ-API-004",
-      "req_name": "Three configure entry points, one shared body, one-shot per handle",
+      "req_id": "REQ-COMPACT-002",
+      "req_name": "Fill-gated tool-result pruning and persistent context anchors",
       "functions": [
         {
-          "name": "validate_prompt_sources",
-          "file": "src/facade/entropic.cpp",
+          "name": "dir_anchor",
+          "file": "src/core/engine.cpp",
           "version": "2.13.0"
         }
       ]
     },
     {
-      "req_id": "REQ-API-005",
-      "req_name": "Uniform precondition guard on every exported entry point",
+      "req_id": "REQ-DELEG-002",
+      "req_name": "Delegation lifecycle from preconditions to result fold-back",
       "functions": [
         {
-          "name": "entropic_release_model",
-          "file": "src/facade/entropic.cpp",
-          "version": "2.14.6"
+          "name": "ensure_sandbox_manager",
+          "file": "src/core/engine.cpp",
+          "version": "2.13.0"
         }
       ]
     },
     {
-      "req_id": "REQ-API-009",
-      "req_name": "Run entry-point family, result contract, and cross-thread interruptibility",
+      "req_id": "REQ-DELEG-003",
+      "req_name": "Relay-single-delegate promotion with coverage-gap suppression",
       "functions": [
         {
-          "name": "try_begin_turn",
-          "file": "include/entropic/core/engine.h",
-          "version": "2.14.6"
-        }
-      ]
-    },
-    {
-      "req_id": "REQ-BRIDGE-001",
-      "req_name": "External bridge exposes the engine over a peer-authenticated unix socket",
-      "functions": [
-        {
-          "name": "configure_server",
-          "file": "src/facade/http_listener.cpp",
-          "version": "2.14.0"
-        },
-        {
-          "name": "bind_loopback",
-          "file": "src/facade/http_listener.cpp",
-          "version": "2.14.6"
-        },
-        {
-          "name": "tool_definitions",
-          "file": "src/facade/external_bridge.cpp",
-          "version": "2.14.6"
-        },
-        {
-          "name": "session_tool_names",
-          "file": "src/facade/external_bridge.cpp",
-          "version": "2.14.5"
-        },
-        {
-          "name": "mark_tasks_cancelling",
-          "file": "src/facade/external_bridge.cpp",
-          "version": "2.0.6-rc16"
-        },
-        {
-          "name": "any_cancelling_left",
-          "file": "src/facade/external_bridge.cpp",
-          "version": "2.0.6-rc16"
-        },
-        {
-          "name": "turn_timeout_result",
-          "file": "src/facade/external_bridge.cpp",
-          "version": "2.12.0"
-        },
-        {
-          "name": "bind_session_workspace",
-          "file": "src/facade/external_bridge.cpp",
-          "version": "2.14.0"
-        },
-        {
-          "name": "handle_shutdown",
-          "file": "src/facade/external_bridge.cpp",
-          "version": "2.14.6"
-        },
-        {
-          "name": "tool_handlers",
-          "file": "src/facade/external_bridge.cpp",
-          "version": "2.14.6"
-        },
-        {
-          "name": "initialize_result",
-          "file": "src/facade/external_bridge.cpp",
-          "version": "2.12.0"
-        },
-        {
-          "name": "sentinel_suffix_for_status",
-          "file": "src/facade/external_bridge.cpp",
+          "name": "dir_complete",
+          "file": "src/core/engine.cpp",
           "version": "2.1.4"
-        }
-      ]
-    },
-    {
-      "req_id": "REQ-CFG-001",
-      "req_name": "Layered configuration resolution with most-specific-layer-wins precedence",
-      "functions": [
-        {
-          "name": "apply_env",
-          "file": "src/config/env_overrides.cpp",
-          "version": "2.3.7"
-        },
-        {
-          "name": "apply_mcp_external_env",
-          "file": "src/config/env_overrides.cpp",
-          "version": "2.14.6"
-        }
-      ]
-    },
-    {
-      "req_id": "REQ-CFG-005",
-      "req_name": "Per-tier knobs override global defaults without an all-or-nothing switch",
-      "functions": [
-        {
-          "name": "parse_gpu_layers",
-          "file": "src/config/loader.cpp",
-          "version": "2.13.0"
-        }
-      ]
-    },
-    {
-      "req_id": "REQ-DELEG-005",
-      "req_name": "Opt-in delegation sandbox isolation, wired end to end",
-      "functions": [
-        {
-          "name": "parse_delegation_config",
-          "file": "src/config/loader.cpp",
-          "version": "2.13.0"
         }
       ]
     },
@@ -146,6 +42,11 @@
           "name": "fire_hook_info",
           "file": "src/core/engine.cpp",
           "version": "1.9.1"
+        },
+        {
+          "name": "dir_complete",
+          "file": "src/core/engine.cpp",
+          "version": "2.1.4"
         },
         {
           "name": "build_tool_manifest",
@@ -170,224 +71,24 @@
       "functions": [
         {
           "name": "build_params_json",
-          "file": "src/core/response_generator.cpp",
-          "version": "2.14.6"
+          "file": "include/entropic/core/response_generator.h",
+          "version": "2.14.6 [reviewed]"
         },
         {
           "name": "build_params_json",
-          "file": "include/entropic/core/response_generator.h",
-          "version": "2.14.6"
+          "file": "src/core/response_generator.cpp",
+          "version": "2.14.6 [reviewed]"
         }
       ]
     },
     {
-      "req_id": "REQ-INFER-002",
-      "req_name": "Teardown releases every model, context and adapter handle",
+      "req_id": "REQ-LOOP-001",
+      "req_name": "Agent state machine with observable, dual-channel transitions",
       "functions": [
         {
-          "name": "teardown_mtp_draft",
-          "file": "src/inference/llama_cpp_backend.cpp",
-          "version": "2.9.1"
-        }
-      ]
-    },
-    {
-      "req_id": "REQ-INFER-007",
-      "req_name": "Named grammars are registered, validated, and resolved by a fixed precedence",
-      "functions": [
-        {
-          "name": "normalize_grammar_key",
-          "file": "src/inference/orchestrator.cpp",
-          "version": "1.9.3"
-        },
-        {
-          "name": "warn_tier_grammars_step",
-          "file": "src/facade/entropic.cpp",
-          "version": "2.13.0"
-        }
-      ]
-    },
-    {
-      "req_id": "REQ-INFER-008",
-      "req_name": "Every declared grammar source reaches the sampler and exactly one wins",
-      "functions": [
-        {
-          "name": "apply_grammar_source",
-          "file": "src/inference/llama_cpp_backend.cpp",
-          "version": "2.13.0"
-        }
-      ]
-    },
-    {
-      "req_id": "REQ-INFER-009",
-      "req_name": "Tool staging drives a native render whose parse context is captured",
-      "functions": [
-        {
-          "name": "resolve_and_stage",
-          "file": "src/inference/orchestrator.cpp",
-          "version": "2.14.6"
-        },
-        {
-          "name": "to_common_chat",
-          "file": "src/inference/llama_cpp_backend.cpp",
-          "version": "2.14.6"
-        },
-        {
-          "name": "mcp_tools_to_common_chat",
-          "file": "src/inference/llama_cpp_backend.cpp",
-          "version": "2.7.0"
-        }
-      ]
-    },
-    {
-      "req_id": "REQ-INFER-010",
-      "req_name": "One template-first / adapter-second rule parses every raw emission",
-      "functions": [
-        {
-          "name": "apply_fenced_fallbacks",
-          "file": "src/inference/interface_factory.cpp",
-          "version": "2.10.0"
-        }
-      ]
-    },
-    {
-      "req_id": "REQ-INFER-015",
-      "req_name": "MTP speculative decode fails loud and never silently falls back",
-      "functions": [
-        {
-          "name": "effective_n_draft",
-          "file": "src/inference/llama_cpp_backend.cpp",
-          "version": "2.11.0"
-        }
-      ]
-    },
-    {
-      "req_id": "REQ-INFER-019",
-      "req_name": "Model pool dedup and VRAM residency policy govern which tier is resident",
-      "functions": [
-        {
-          "name": "log_fit_recommendation",
-          "file": "src/inference/orchestrator.cpp",
-          "version": "2.11.0"
-        },
-        {
-          "name": "resolve_auto_gpu_layers",
-          "file": "src/inference/orchestrator.cpp",
-          "version": "2.13.2"
-        },
-        {
-          "name": "config_admits",
-          "file": "src/inference/orchestrator.cpp",
-          "version": "2.13.1"
-        },
-        {
-          "name": "refuse_residency",
-          "file": "src/inference/orchestrator.cpp",
-          "version": "2.13.0"
-        },
-        {
-          "name": "release_backend",
-          "file": "src/inference/orchestrator.cpp",
-          "version": "2.13.0"
-        },
-        {
-          "name": "announce_eviction",
-          "file": "src/inference/orchestrator.cpp",
-          "version": "2.13.0"
-        },
-        {
-          "name": "resolve_vram_budget_bytes",
-          "file": "src/inference/orchestrator.cpp",
-          "version": "2.11.1"
-        },
-        {
-          "name": "ensure_vram_budget",
-          "file": "src/inference/orchestrator.cpp",
-          "version": "2.14.0"
-        },
-        {
-          "name": "footprint_inputs_for",
-          "file": "src/inference/orchestrator.cpp",
-          "version": "2.13.1"
-        },
-        {
-          "name": "estimate_footprint_bytes",
-          "file": "src/inference/orchestrator.cpp",
-          "version": "2.11.0"
-        },
-        {
-          "name": "require_ready_backend",
-          "file": "src/facade/entropic.cpp",
-          "version": "2.13.0"
-        },
-        {
-          "name": "entropic_release_model",
-          "file": "src/facade/entropic.cpp",
-          "version": "2.14.6"
-        }
-      ]
-    },
-    {
-      "req_id": "REQ-INFER-020",
-      "req_name": "Tier routing, handoff rules and secondary model roles",
-      "functions": [
-        {
-          "name": "extract_latest_user_message",
-          "file": "src/inference/orchestrator.cpp",
-          "version": "1.8.2"
-        },
-        {
-          "name": "ensure_secondary_roles",
-          "file": "src/inference/orchestrator.cpp",
-          "version": "2.13.0"
-        }
-      ]
-    },
-    {
-      "req_id": "REQ-INFER-021",
-      "req_name": "Per-tier sampler configuration applies only where the caller did not decide",
-      "functions": [
-        {
-          "name": "apply_if_default",
-          "file": "src/inference/orchestrator.cpp",
-          "version": "2.5.3"
-        }
-      ]
-    },
-    {
-      "req_id": "REQ-INFER-023",
-      "req_name": "LoRA adapters hot-swap under a single-HOT-per-context constraint",
-      "functions": [
-        {
-          "name": "preload_adapters_for_model",
-          "file": "src/inference/orchestrator.cpp",
-          "version": "2.13.0"
-        }
-      ]
-    },
-    {
-      "req_id": "REQ-INFER-027",
-      "req_name": "Expert-tensor offload places routed experts on the host while attention and KV stay resident (EXPERIMENTAL)",
-      "functions": [
-        {
-          "name": "build_load_mparams",
-          "file": "src/inference/llama_cpp_backend.cpp",
-          "version": "2.13.0"
-        },
-        {
-          "name": "model_expert_count",
-          "file": "src/inference/llama_cpp_backend.cpp",
-          "version": "2.13.0"
-        },
-        {
-          "name": "expert_offload_admits",
-          "file": "src/inference/llama_cpp_backend.cpp",
-          "version": "2.13.0"
-        },
-        {
-          "name": "load_gpu_model",
-          "file": "src/inference/llama_cpp_backend.cpp",
-          "version": "2.13.0 [reviewed]"
+          "name": "run_streaming",
+          "file": "src/core/engine.cpp",
+          "version": "2.14.2"
         }
       ]
     },
@@ -414,7 +115,12 @@
         {
           "name": "record_explicit_completion_failure",
           "file": "src/core/engine.cpp",
-          "version": "2.14.6 [reviewed]"
+          "version": "2.14.6 [reviewed 2]"
+        },
+        {
+          "name": "restrict_tools",
+          "file": "src/core/response_generator.cpp",
+          "version": "2.14.6"
         }
       ]
     },
@@ -428,13 +134,8 @@
           "version": "2.13.0"
         },
         {
-          "name": "this_thread_run",
-          "file": "src/core/engine.cpp",
-          "version": "2.13.0"
-        },
-        {
-          "name": "this_thread_run",
-          "file": "include/entropic/core/engine.h",
+          "name": "handle_pause",
+          "file": "src/core/response_generator.cpp",
           "version": "2.13.0"
         }
       ]
@@ -446,7 +147,7 @@
         {
           "name": "prepare_prompts",
           "file": "src/core/response_generator.cpp",
-          "version": "2.14.6"
+          "version": "2.14.6 [reviewed]"
         },
         {
           "name": "inject_engine_state_reminder",
@@ -456,18 +157,13 @@
       ]
     },
     {
-      "req_id": "REQ-LOOP-009",
-      "req_name": "Per-session-key run concurrency, on by default, with one lock on the generation path",
+      "req_id": "REQ-LOOP-008",
+      "req_name": "Family-aware streaming reasoning filter with UTF-8 alignment",
       "functions": [
         {
-          "name": "execute_tool",
-          "file": "src/mcp/tool_executor.cpp",
-          "version": "2.14.6 [reviewed]"
-        },
-        {
-          "name": "try_begin_turn",
-          "file": "include/entropic/core/engine.h",
-          "version": "2.14.6"
+          "name": "run_streaming",
+          "file": "src/core/engine.cpp",
+          "version": "2.14.2"
         }
       ]
     },
@@ -478,104 +174,6 @@
         {
           "name": "set_session_messages",
           "file": "src/core/engine.cpp",
-          "version": "2.13.0"
-        }
-      ]
-    },
-    {
-      "req_id": "REQ-MCP-002",
-      "req_name": "Tool results always cross boundaries as a ServerResponse JSON envelope",
-      "functions": [
-        {
-          "name": "execute_tool",
-          "file": "src/mcp/tool_executor.cpp",
-          "version": "2.14.6 [reviewed]"
-        }
-      ]
-    },
-    {
-      "req_id": "REQ-MCP-010",
-      "req_name": "Per-identity MCP key authorization is opt-in but default-deny once enabled",
-      "functions": [
-        {
-          "name": "check_mcp_authorization",
-          "file": "src/mcp/tool_executor.cpp",
-          "version": "2.14.6"
-        }
-      ]
-    },
-    {
-      "req_id": "REQ-MCP-011",
-      "req_name": "Every tool declares its required access level, defaulting to WRITE",
-      "functions": [
-        {
-          "name": "check_mcp_authorization",
-          "file": "src/mcp/tool_executor.cpp",
-          "version": "2.14.6"
-        }
-      ]
-    },
-    {
-      "req_id": "REQ-MCP-012",
-      "req_name": "Tool calls pass an ordered precondition pipeline with typed rejection kinds",
-      "functions": [
-        {
-          "name": "check_mcp_authorization",
-          "file": "src/mcp/tool_executor.cpp",
-          "version": "2.14.6"
-        }
-      ]
-    },
-    {
-      "req_id": "REQ-MCP-015",
-      "req_name": "Duplicates, errors, and denials return corrective guidance, not bare failure",
-      "functions": [
-        {
-          "name": "create_denied_message",
-          "file": "src/mcp/tool_executor.cpp",
-          "version": "2.14.6"
-        },
-        {
-          "name": "create_error_message",
-          "file": "src/mcp/tool_executor.cpp",
-          "version": "2.14.6"
-        },
-        {
-          "name": "create_duplicate_message",
-          "file": "src/mcp/tool_executor.cpp",
-          "version": "2.14.6"
-        }
-      ]
-    },
-    {
-      "req_id": "REQ-MCP-020",
-      "req_name": "A bounded, thread-safe ring buffer retains recent tool calls for introspection",
-      "functions": [
-        {
-          "name": "execute_tool",
-          "file": "src/mcp/tool_executor.cpp",
-          "version": "2.14.6 [reviewed]"
-        }
-      ]
-    },
-    {
-      "req_id": "REQ-MCP-027",
-      "req_name": "Named workspaces bind a session to its own tool root and servers",
-      "functions": [
-        {
-          "name": "execute_tool",
-          "file": "src/mcp/tool_executor.cpp",
-          "version": "2.14.6 [reviewed]"
-        }
-      ]
-    },
-    {
-      "req_id": "REQ-TYPE-005",
-      "req_name": "Config types declare their own defaults; optional means absent, not default",
-      "functions": [
-        {
-          "name": "parse_gpu_layers",
-          "file": "src/config/loader.cpp",
           "version": "2.13.0"
         }
       ]

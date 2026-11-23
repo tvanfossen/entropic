@@ -396,7 +396,7 @@ static std::string resolve_stream_finish_reason(int rc,
  * @param mode Label for the log line ("stream"/"batch").
  * @return {messages_json, params_json}.
  * @req REQ-LOOP-007
- * @version 2.14.6
+ * @version 2.14.6 [reviewed]
  */
 std::pair<std::string, std::string> ResponseGenerator::prepare_prompts(
     LoopContext& ctx, const char* mode) {
@@ -408,10 +408,16 @@ std::pair<std::string, std::string> ResponseGenerator::prepare_prompts(
     logger->info("Generate ({}): tier={}, {} messages",
                  mode, ctx.locked_tier, messages.size());
     log_prompt(messages, ctx.locked_tier);
+    // v2.14.6: "1" forces any tool call; "complete" (the nudged turn already
+    // answered in prose) forces the call AND offers entropic.complete only.
+    auto force = ctx.metadata.find("force_tool_call");
+    const std::string mode_value =
+        force != ctx.metadata.end() ? force->second : "";
     return {serialize_messages(messages),
             build_params_json(ctx.locked_tier, ctx.session_key,
-                              ctx.metadata.count("force_tool_call") > 0
-                                  && ctx.metadata.at("force_tool_call") == "1")};
+                              !mode_value.empty(),
+                              mode_value == "complete" ? "entropic.complete"
+                                                       : "")};
 }
 
 /**
@@ -857,6 +863,47 @@ std::string ResponseGenerator::serialize_messages(
 }
 
 /**
+ * @brief Narrow a tier's tool defs to the one named tool (v2.14.6).
+ *
+ * The forced retry after a prose answer may only conclude, so it is offered
+ * entropic.complete alone and the forced grammar has nothing else to pick.
+ * When the tier was never offered that tool the defs are returned unchanged
+ * and the miss is logged as an ERROR: offering no tools would force a call
+ * nothing can satisfy. configure refusing such a tier is gh#213.
+ *
+ * @param tools_json Tier tool defs (MCP JSON array string).
+ * @param only_tool Tool name to keep.
+ * @param tier Tier name (for the log line).
+ * @return Array holding only @p only_tool, or @p tools_json unchanged.
+ * @req REQ-LOOP-004
+ * @version 2.14.6
+ */
+static std::string restrict_tools(const std::string& tools_json,
+                                  const std::string& only_tool,
+                                  const std::string& tier) {
+    auto all = nlohmann::json::parse(tools_json, nullptr, false);
+    auto kept = nlohmann::json::array();
+    if (all.is_array()) {
+        for (const auto& t : all) {
+            if (t.is_object() && t.value("name", "") == only_tool) {
+                kept.push_back(t);
+            }
+        }
+    }
+    std::string out = tools_json;
+    if (kept.empty()) {
+        logger->error("[tools] tier '{}': forced retry may only call '{}', "
+                      "but the tier is not offered it; keeping its tools {}",
+                      tier, only_tool, tools_json);
+    } else {
+        logger->info("[tools] tier '{}': forced retry offers only '{}'",
+                     tier, only_tool);
+        out = kept.dump();
+    }
+    return out;
+}
+
+/**
  * @brief Build generation params JSON, including per-tier tool defs.
  *
  * gh#87 (v2.7.0): embeds the tier's structured tool definitions (from the
@@ -868,13 +915,14 @@ std::string ResponseGenerator::serialize_messages(
  * @param tier Locked tier name.
  * @param session_key Session key ("" omitted).
  * @param force_tool_call v2.14.6: force this generation's tool call.
+ * @param only_tool v2.14.6: when non-empty, offer only this tool.
  * @return JSON string {tier, session?, force_tool_call?, tools?}.
  * @req REQ-IDEN-001
- * @version 2.14.6
+ * @version 2.14.6 [reviewed]
  */
 std::string ResponseGenerator::build_params_json(
     const std::string& tier, const std::string& session_key,
-    bool force_tool_call) {
+    bool force_tool_call, const std::string& only_tool) {
     nlohmann::json j = nlohmann::json::object();
     if (!tier.empty()) { j["tier"] = tier; }
     if (force_tool_call) { j["force_tool_call"] = true; }  // v2.14.6
@@ -887,7 +935,9 @@ std::string ResponseGenerator::build_params_json(
         int rc = inference_.get_tool_prompt(
             tier.c_str(), &tools, inference_.tool_prompt_data);
         if (rc == 0 && tools != nullptr) {
-            j["tools"] = std::string(tools);
+            j["tools"] = only_tool.empty()
+                ? std::string(tools)
+                : restrict_tools(tools, only_tool, tier);
             if (inference_.free_fn) { inference_.free_fn(tools); }
         }
     }

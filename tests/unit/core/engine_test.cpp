@@ -690,6 +690,108 @@ SCENARIO("v2.14.6: after a nudge, a tier that owes a tool call is forced to make
     }
 }
 
+// ── v2.14.6: a prose answer's forced retry may only conclude ────
+
+namespace {
+
+/// Tool defs a lead sees: one working tool plus the completion tool.
+const char* kLeadTools =
+    R"([{"name":"entropic.delegate","description":"d","inputSchema":{}},)"
+    R"({"name":"entropic.complete","description":"c","inputSchema":{}}])";
+
+/**
+ * @brief Names in the params' tools array of generation @p i.
+ * @param mock Mock that recorded the params.
+ * @param i Generation index.
+ * @return Tool names, in order (empty when the params carry no tools).
+ * @utility
+ * @version 2.14.6
+ */
+std::vector<std::string> tool_names_sent(const MockInference& mock, size_t i) {
+    std::vector<std::string> names;
+    auto params = nlohmann::json::parse(mock.seen_params.at(i));
+    if (params.contains("tools")) {
+        const auto tools = nlohmann::json::parse(params["tools"].get<std::string>());
+        for (const auto& t : tools) { names.push_back(t.value("name", "")); }
+    }
+    return names;
+}
+
+/**
+ * @brief Run a lead that owes a tool call through @p turns of scripted output.
+ * @param mock Mock to script and inspect.
+ * @param turns Scripted generations, in order.
+ * @param tools Tool defs the lead is offered.
+ * @utility
+ * @version 2.14.6
+ */
+void run_owing_lead(MockInference& mock, std::vector<std::string> turns,
+                    const std::string& tools) {
+    mock.response_queue = std::move(turns);
+    mock.tier = "lead";
+    mock.is_complete = true;
+    mock.tools_json = tools;
+    auto iface = make_mock_interface(mock);
+    LoopConfig lc;
+    lc.max_iterations = 6;
+    CompactionConfig cc;
+    AgentEngine engine(iface, lc, cc);
+    TierResolutionInterface tri{};
+    tri.get_tier_param = [](const std::string& tier, const std::string& param,
+                            void*) -> std::string {
+        return (tier == "lead" && param == "explicit_completion") ? "true" : "";
+    };
+    engine.set_tier_resolution(tri);
+    engine.run(make_messages());
+}
+
+} // namespace
+
+SCENARIO("v2.14.6: after a prose answer is nudged, the forced retry may only "
+         "call entropic.complete",
+         "[engine][explicit_completion][2.14.6]")
+{
+    // e7 flake: the lead answered in prose, was nudged, and the forced retry
+    // re-delegated instead of concluding. The prose already IS the answer, so
+    // the user's decision: the forced retry offers entropic.complete only.
+    GIVEN("a lead that owes a tool call, answers in prose, and is nudged") {
+        MockInference mock;
+        run_owing_lead(mock, {"Here is the answer.", "still prose"}, kLeadTools);
+        THEN("the first generation sees every tool, the retry only complete") {
+            REQUIRE(mock.seen_params.size() >= 2);
+            CHECK(tool_names_sent(mock, 0)
+                  == std::vector<std::string>{"entropic.delegate",
+                                              "entropic.complete"});
+            CHECK(tool_names_sent(mock, 1)
+                  == std::vector<std::string>{"entropic.complete"});
+            CHECK(mock.seen_params[1].find("\"force_tool_call\":true")
+                  != std::string::npos);
+        }
+    }
+    GIVEN("a lead that owes a tool call and emits an EMPTY turn") {
+        MockInference mock;
+        run_owing_lead(mock, {"", "still nothing"}, kLeadTools);
+        THEN("the forced retry keeps every tool: no answer exists to conclude with") {
+            REQUIRE(mock.seen_params.size() >= 2);
+            CHECK(tool_names_sent(mock, 1)
+                  == std::vector<std::string>{"entropic.delegate",
+                                              "entropic.complete"});
+            CHECK(mock.seen_params[1].find("\"force_tool_call\":true")
+                  != std::string::npos);
+        }
+    }
+    GIVEN("a prose answer from a lead whose tools lack entropic.complete") {
+        MockInference mock;
+        run_owing_lead(mock, {"Here is the answer.", "still prose"},
+                       R"([{"name":"entropic.delegate","description":"d","inputSchema":{}}])");
+        THEN("the retry keeps the tools it has rather than offering none") {
+            REQUIRE(mock.seen_params.size() >= 2);
+            CHECK(tool_names_sent(mock, 1)
+                  == std::vector<std::string>{"entropic.delegate"});
+        }
+    }
+}
+
 // ── P1-6 regression: zero-tool-call loop bounded (2.0.6-rc16.2) ─
 
 SCENARIO("zero-tool-call with explicit_completion halts within retry cap",

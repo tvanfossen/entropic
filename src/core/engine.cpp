@@ -1259,10 +1259,11 @@ std::string AgentEngine::empty_turn_nudge(const LoopContext& ctx,
  *
  * @param ctx Loop context (metadata is mutated).
  * @param finish_reason Generation finish reason (for logging).
- * @param content The turn's visible content.
+ * @param content The turn's visible content; non-empty means the forced
+ *        retry may only call entropic.complete.
  * @return true if the turn was nudged or failed (caller returns).
  * @req REQ-LOOP-004
- * @version 2.14.6 [reviewed]
+ * @version 2.14.6 [reviewed 2]
  */
 bool AgentEngine::record_explicit_completion_failure(
     LoopContext& ctx, const std::string& finish_reason,
@@ -1292,7 +1293,11 @@ bool AgentEngine::record_explicit_completion_failure(
                  finish_reason);
     // v2.14.6: the nudge only ASKED; a stalled model kept emitting
     // thinking-only turns. The retry for a tier that owes a call is forced.
-    if (owes_call) { ctx.metadata["force_tool_call"] = "1"; }
+    // A turn that already answered in prose may only conclude: its forced
+    // retry is offered entropic.complete alone (e7 re-delegated instead).
+    if (owes_call) {
+        ctx.metadata["force_tool_call"] = content.empty() ? "1" : "complete";
+    }
     Message correction;
     correction.role = "user";
     correction.content = empty_turn_nudge(ctx, owes_call);

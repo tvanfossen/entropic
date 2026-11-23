@@ -178,13 +178,16 @@ private:
      * @param tier Locked tier name (embedded in params for orchestrator).
      * @param session_key Session key ("" omitted).
      * @param force_tool_call v2.14.6: force this generation's tool call.
+     * @param only_tool v2.14.6: when non-empty, offer only this tool (the
+     *        forced retry after a prose answer may only conclude).
      * @return JSON string {tier, session?, force_tool_call?, tools?}.
      * @req REQ-IDEN-001
-     * @version 2.14.6
+     * @version 2.14.6 [reviewed]
      */
     std::string build_params_json(const std::string& tier,
                                   const std::string& session_key = "",
-                                  bool force_tool_call = false);
+                                  bool force_tool_call = false,
+                                  const std::string& only_tool = "");
 
     /**
      * @brief Append an "[engine] iteration N/MAX..." reminder to the

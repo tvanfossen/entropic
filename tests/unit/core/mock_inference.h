@@ -62,6 +62,9 @@ struct MockInference {
     std::vector<std::string> seen_messages;
     /// @brief v2.14.6: every params_json the generate callbacks received.
     std::vector<std::string> seen_params;
+    /// @brief v2.14.6: the tier's tool defs (MCP JSON array) that
+    ///        get_tool_prompt hands out; empty = no tools (callback returns 1).
+    std::string tools_json;
 
     /// @brief gh#208 (v2.14.2): sleep this long before each streamed token,
     ///        so two concurrent streaming runs overlap deterministically.
@@ -288,10 +291,29 @@ inline int mock_is_complete(
 }
 
 /**
+ * @brief Mock get_tool_prompt — hands out MockInference::tools_json.
+ * @param tier Tier name (unused).
+ * @param result Output: heap copy of tools_json.
+ * @param user_data MockInference pointer.
+ * @return 0 when tools_json is set, 1 (no tools) otherwise.
+ * @internal
+ * @version 2.14.6
+ */
+inline int mock_get_tool_prompt(const char* /*tier*/, char** result,
+                                void* user_data) {
+    auto* mock = static_cast<MockInference*>(user_data);
+    std::lock_guard<std::mutex> lock(mock->mutex);
+    *result = nullptr;
+    if (mock->tools_json.empty()) { return 1; }
+    *result = mock_strdup(mock->tools_json);
+    return 0;
+}
+
+/**
  * @brief Build an InferenceInterface wired to a MockInference.
  * @param mock Mock state (caller must keep alive).
  * @return Wired interface with all callbacks.
- * @version 1.10.1
+ * @version 2.14.6
  */
 inline entropic::InferenceInterface make_mock_interface(
     MockInference& mock) {
@@ -303,6 +325,8 @@ inline entropic::InferenceInterface make_mock_interface(
     iface.parse_tool_calls = mock_parse_tool_calls;
     iface.is_response_complete = mock_is_complete;
     iface.free_fn = mock_free;
+    iface.get_tool_prompt = mock_get_tool_prompt;  // v2.14.6
+    iface.tool_prompt_data = &mock;
     iface.backend_data = &mock;
     iface.orchestrator_data = &mock;
     iface.adapter_data = &mock;

@@ -33,8 +33,10 @@
  *
  *  4. **Hybrid-arch KV.** Every KV-touching change is retested on a
  *     recurrent/hybrid architecture, never on plain-KV gemma alone (the rule
- *     gh#96/gh#97 bought). qwen35moe at gpu_layers=15, asserting the
- *     deterministic desync gate `kv_pos_max < input + max_tokens`.
+ *     gh#96/gh#97 bought). nemotron_h (Nemotron-3-Nano-4B, Mamba2 +
+ *     attention) at full offload, asserting the deterministic desync gate
+ *     `kv_pos_max < input + max_tokens`. v2.14.6: was qwen35moe
+ *     (Qwen3.6-35B-A3B) at gpu_layers=15, which left the pared model set.
  *
  * NOT run at pre-commit: GPU, real GGUFs, minutes. This is a G3 gate test.
  *
@@ -68,7 +70,7 @@
  * for B. Each arm now sets `explicit_completion = false`, and FacadeProject
  * writes `permissions.auto_approve: true`.
  *
- * Requires: GPU + gemma-4-E4B QAT GGUF (arms 1-4) and Qwen3.6-35B-A3B
+ * Requires: GPU + gemma-4-E4B QAT GGUF (arms 1-4) and Nemotron-3-Nano-4B
  * (arm 5). Run: ctest -L model -R gh158
  *
  * @version 2.13.0
@@ -461,21 +463,21 @@ SCENARIO("gh#158: a batch does not wipe another session's resident KV",
 SCENARIO("gh#158: concurrent sessions on a HYBRID arch keep KV in sync",
          "[model][gh158][hybrid]")
 {
-    GIVEN("the hybrid repro model (Qwen3.6-35B-A3B, arch qwen35moe)") {
+    GIVEN("a hybrid model (Nemotron-3-Nano-4B, arch nemotron_h)") {
         const char* home = std::getenv("HOME");
         REQUIRE(home != nullptr);
         fs::path gguf = fs::path(home) / ".entropic" / "models"
-                        / "Qwen3.6-35B-A3B-UD-IQ3_XXS.gguf";
+                        / "NVIDIA-Nemotron-3-Nano-4B-UD-Q4_K_XL.gguf";
         if (!fs::is_regular_file(gguf)) {
-            SKIP("Qwen3.6-35B-A3B GGUF not present at " + gguf.string());
+            SKIP("Nemotron-3-Nano-4B GGUF not present at " + gguf.string());
         }
 
         entropic::LlamaCppBackend backend;
         entropic::ModelConfig cfg;
         cfg.path = gguf;
-        cfg.adapter = "qwen36";
+        cfg.adapter = "nemotron3";
         cfg.context_length = 4096;
-        cfg.gpu_layers = 15;  // ~13GB IQ3_XXS — OOM-safe partial offload
+        cfg.gpu_layers = 99;  // 3.1 GB — fits the 11GB card whole (the 13GB Qwen3.6 needed 15)
         cfg.flash_attn = false;
         cfg.max_sessions = 2;
         REQUIRE(backend.load(cfg));

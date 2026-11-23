@@ -37,7 +37,7 @@
  * precisely how the session-pool bug in this same release stayed invisible to
  * 1739 CPU tests.
  *
- * Requires: GPU + gemma4_e2b QAT trunk + mtp_e2b head.
+ * Requires: GPU + gemma4_e4b_qat trunk + mtp_e4b head.
  * Run: ctest -L model -R gh144-mtp
  *
  * @version 2.12.0

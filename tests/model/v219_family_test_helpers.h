@@ -66,7 +66,7 @@ inline uint64_t host_available_bytes() {
  * `ctx.skip_reason`; the SCENARIOs read that instead of assuming the second.
  *
  * @param ctx Test context to update (including `skip_reason` on failure).
- * @param key Registry key (e.g. "qwen3_6_a3b").
+ * @param key Registry key (e.g. "qwen3_5_0_8b").
  * @return true on success, false if the GGUF isn't present or the
  *         orchestrator failed to load it.
  * @utility
@@ -104,6 +104,11 @@ inline bool init_orchestrator_for_v219_family(ModelTestContext& ctx,
     auto& tier = ctx.config.models.tiers[ctx.config.models.default_tier];
     tier.path = path;
     tier.adapter = entry->adapter;
+    // v2.14.6: the default tier's projector belongs to the model it USED to
+    // name (gemma4_e4b_mmproj in the dev config, n_embd 2560). Left on the
+    // A4B (2816), Nemotron (3136) or Qwen3.5-0.8B (1024) it fails mmproj init
+    // at activation — the same defect use_small_default_model guards against.
+    repoint_mmproj(ctx, tier, *entry, ctx.config.models.default_tier);
     // v2.1.9 family tests are smoke + single-shot tool-call fixtures —
     // prompts are tens of tokens and max_tokens is 256. Override the
     // tier's default context_length (typically 32K) down to a small
@@ -137,10 +142,11 @@ inline bool init_orchestrator_for_v219_family(ModelTestContext& ctx,
     // for the model — production configs override `gpu_layers`
     // explicitly via YAML.
     //
-    // Threshold rationale: ~10 GB matches gemma4_a4b (13.6 GB) and
-    // qwen3_6_a3b (13.2 GB) on the upper side; the e4b (4.5 GB),
-    // e4b_q4 (4.8 GB), e2b (2.5 GB), nemotron3 (3.1 GB) all stay
-    // well below and continue full GPU offload (the prior behavior).
+    // Threshold rationale: 10 GiB caught gemma4_a4b (13.6 GB) and the
+    // retired qwen3_6_a3b (13.2 GB) on the upper side. Every model in the
+    // v2.14.6 set stays below and runs at full GPU offload: gemma4_a4b_iq2
+    // (9.33 GiB — just under), gemma4_e4b_qat (3.9 GiB), nemotron3
+    // (2.9 GiB), qwen3_5_0_8b (0.76 GiB).
     constexpr uintmax_t LARGE_GGUF_BYTES = 10ULL * 1024 * 1024 * 1024;
     // v2.7.0: 20 → 15. At 20 the 13GB A3B/A4B GGUFs need ~8.8GB VRAM +
     // a ~0.5GB compute buffer; with the desktop GPU at ~1.8GB the 11GB
@@ -156,6 +162,10 @@ inline bool init_orchestrator_for_v219_family(ModelTestContext& ctx,
     // and only the ACTIVE reload honours the partial-offload split. So peak
     // host usage is the whole file, and on a 31 GB box already holding ~15 GB
     // that is a coin flip rather than a clean failure.
+    //
+    // v2.14.6: no on-disk model reaches this gate any more (the only
+    // qwen36-adapter model, the 13 GB Qwen3.6-35B-A3B, left the set); it
+    // stays as the rule for anyone who loads one.
     //
     // Scoped to the hybrid/recurrent Qwen family deliberately: the dense
     // gemma4 26B-A4B is LARGER (13.6 GB vs 12.3 GB) and passes, so this is

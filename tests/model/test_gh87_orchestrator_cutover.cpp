@@ -10,7 +10,7 @@
  * `render_with_tools` → common_chat → `apply_adapter_parse`
  * (`has_common_chat_params()` → `parse_response`) and lands in
  * `result.tool_calls`. This is the exact path the agent loop drives in
- * production. SKIPs if the gemma4_a4b GGUF is absent.
+ * production. SKIPs if the gemma4_a4b_iq2 GGUF is absent (v2.14.6: was gemma4_a4b_qat).
  *
  * @version 2.7.0
  */
@@ -19,14 +19,14 @@
 
 #include <entropic/types/tool_call.h>
 
-namespace { constexpr char K_GEMMA4_A4B[] = "gemma4_a4b_qat"; }
+namespace { constexpr char K_GEMMA4_A4B[] = "gemma4_a4b_iq2"; }
 CATCH_REGISTER_LISTENER(V219FamilyListener<K_GEMMA4_A4B>)
 
 SCENARIO("gh#87 cutover: params.tools drives common_chat through the orchestrator",
          "[model][gh87][cutover]")
 {
     if (!g_ctx.initialized) {
-        SKIP(skip_reason_or_default("gemma4_a4b_qat"));
+        SKIP(skip_reason_or_default("gemma4_a4b_iq2"));
     }
     GIVEN("a read_file tool supplied via params.tools (no system-msg injection)") {
         start_test_log("gh87_orchestrator_cutover");

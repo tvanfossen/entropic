@@ -613,7 +613,10 @@ SCENARIO("v2.14.6: a lead that answers in prose is nudged, and its forced "
                 CHECK(count_log_lines(log_name, "[EXECUTE] entropic.complete")
                       == 2);
                 CHECK(delegations == 0);
-                CHECK(after_turn2.back().role == "assistant");
+                // A turn that concludes with a completion call ends on that
+                // call's result, not on assistant prose.
+                CHECK(after_turn2.back().content.find(
+                          "complete directive accepted") != std::string::npos);
                 end_test_log();
             }
         }

@@ -75,8 +75,9 @@ inline const char* read_file_tool_json() {
  *
  * @param gguf Model filename under ~/.entropic/models.
  * @param adapter Adapter key (identity only; parsing goes via common_chat).
- * @param gpu_layers GPU offload (99 = all for small models; 15 partial for the
- *        13GB qwen36 — == PARTIAL_GPU_LAYERS, OOM-safe on an 11GB card).
+ * @param gpu_layers GPU offload (99 = all; every family on the v2.14.6 model
+ *        set fits an 11GB card whole. A >10GB GGUF would need a partial
+ *        value such as 15 == PARTIAL_GPU_LAYERS to stay OOM-safe).
  * @version 2.8.2
  */
 inline void verify_family_common_chat(const std::string& gguf,
@@ -163,9 +164,9 @@ inline void verify_family_common_chat(const std::string& gguf,
     params.enable_thinking = true;
 
     // gh#87 family models occasionally emit a non-parseable tool call (GPU
-    // greedy is non-deterministic run-to-run, esp. the 13GB qwen36 at partial
-    // offload under suite load). Retry the generate+parse a few times on the
-    // already-loaded backend (no reload) and require at least one clean call —
+    // greedy is non-deterministic run-to-run, and was worst on the (since
+    // retired) 13GB qwen36 at partial offload under suite load). Retry the
+    // generate+parse a few times on the already-loaded backend (no reload) and require at least one clean call —
     // tolerates the non-determinism without weakening the parse assertions.
     bool captured = false;
     std::string raw, name, path_arg;

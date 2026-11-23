@@ -29,7 +29,7 @@
  *      interrupt must NOT wait behind the turn it is cancelling, so nothing
  *      outside dispatch_ask may take turn_mutex_.
  *
- * Requires: GPU + gemma4_e2b QAT trunk. Run: ctest -L model -R gh144-bridge
+ * Requires: GPU + gemma4_e4b_qat trunk. Run: ctest -L model -R gh144-bridge
  *
  * @version 2.12.0
  */

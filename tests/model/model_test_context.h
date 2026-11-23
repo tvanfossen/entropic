@@ -48,6 +48,7 @@
 #include <spdlog/sinks/stdout_color_sinks.h>
 
 #include <atomic>
+#include <cctype>
 #include <cstdlib>
 #include <cstring>
 #include <algorithm>
@@ -801,6 +802,37 @@ inline bool test_log_contains(const std::string& test_name,
         if (line.find(needle) != std::string::npos) { return true; }
     }
     return false;
+}
+
+/**
+ * @brief The integer that follows `prefix` on the first log line holding it.
+ *
+ * v2.14.6: lets a model test read a NUMBER the engine logged — the layer
+ * count `gpu_layers: auto` chose, an `n_past` — instead of trusting a figure
+ * the test computed for itself. Same file and flush rule as
+ * test_log_contains.
+ *
+ * @param test_name The name passed to start_test_log (the log file stem).
+ * @param prefix Text immediately before the integer.
+ * @return The integer, or -1 when no line carries `prefix` followed by digits.
+ * @utility
+ * @version 2.14.6
+ */
+inline long test_log_int_after(const std::string& test_name,
+                               const std::string& prefix) {
+    if (g_file_sink) { g_file_sink->flush(); }
+    std::ifstream in((LOG_DIR / (test_name + ".log")).string());
+    std::string line;
+    long value = -1;
+    while (value < 0 && std::getline(in, line)) {
+        const auto at = line.find(prefix);
+        const auto start = at == std::string::npos ? at : at + prefix.size();
+        if (start != std::string::npos && start < line.size()
+            && std::isdigit(static_cast<unsigned char>(line[start])) != 0) {
+            value = std::stol(line.substr(start));
+        }
+    }
+    return value;
 }
 
 // ── Catch2 event listener for model lifecycle ───────────────

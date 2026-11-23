@@ -16,7 +16,7 @@
  * 32k, q4_0 K/V — because that is the combination least exercised in
  * llama.cpp: non-unified KV plus interleaved sliding-window attention.
  *
- * Requires: GPU + gemma4_e2b GGUF. Run: ctest -L model -R gh144
+ * Requires: GPU + gemma4_e4b_qat GGUF. Run: ctest -L model -R gh144
  *
  * @version 2.12.0
  */
@@ -45,15 +45,8 @@ namespace fs = std::filesystem;
 /// the E2B: it recalled one session's secret and produced "one" or
 /// "Understood, I will repeat the..." for the other two. A model that cannot
 /// recall makes the cross-contamination assertions pass VACUOUSLY, which is
-/// worse than a failure. The instrumentation tests keep the smaller E2B.
-///
-/// The other gh#144 tests use the E2B QAT Q4_K_XL (2.4 GB) rather than the E2B
-/// Q8_0 (4.7 GB) the older model tests use. Same gemma4 architecture, so
-/// warm-keep behaviour is representative, but half the resident footprint —
-/// these tests must survive a developer box that is also running a browser,
-/// and a 4.7 GB load was reliably reaching the OOM killer here. The QAT
-/// Q4_K_XL is also the registry's recommended quant; the smaller TQ2_0
-/// mobile build has no CUDA kernel on the current llama.cpp pin.
+/// worse than a failure. v2.14.6: the E2B left the pared model set, so the
+/// other gh#144 tests now use this same E4B QAT Q4_K_XL too.
 /// @utility
 /// @version 2.12.0
 fs::path test_gguf() {

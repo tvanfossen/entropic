@@ -30,7 +30,7 @@
  * expected until prefix retention lands, and is exactly the baseline this
  * measurement exists to establish.
  *
- * Requires: GPU + gemma4_e2b GGUF. Run: ctest -L model -R gh144
+ * Requires: GPU + gemma4_e4b_qat GGUF. Run: ctest -L model -R gh144
  *
  * @version 2.12.0
  */
@@ -53,13 +53,14 @@ namespace fs = std::filesystem;
 
 /// @brief Locate the test GGUF.
 ///
-/// gh#144 (v2.12.0) uses the E2B QAT Q4_K_XL (2.4 GB) rather than the E2B
-/// Q8_0 (4.7 GB) the older model tests use. Same gemma4 architecture, so
-/// warm-keep behaviour is representative, but half the resident footprint —
-/// these tests must survive a developer box that is also running a browser,
-/// and a 4.7 GB load was reliably reaching the OOM killer here. The QAT
-/// Q4_K_XL is also the registry's recommended quant; the smaller TQ2_0
-/// mobile build has no CUDA kernel on the current llama.cpp pin.
+/// gh#144 (v2.12.0) chose the E2B QAT Q4_K_XL (2.4 GB) over the E2B Q8_0
+/// (4.7 GB) for half the resident footprint — these tests must survive a
+/// developer box that is also running a browser, and a 4.7 GB load was
+/// reliably reaching the OOM killer here. v2.14.6: the E2B left the pared
+/// model set, so this is the E4B QAT Q4_K_XL (3.9 GiB), the set's dense
+/// workhorse. Same gemma4 architecture, so warm-keep behaviour is
+/// representative; the smaller TQ2_0 mobile build has no CUDA kernel on the
+/// current llama.cpp pin.
 /// @utility
 /// @version 2.12.0
 fs::path test_gguf() {

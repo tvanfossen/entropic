@@ -14,13 +14,18 @@
  *   [mtp-e4b]        gh#153: MTP vs plain decode throughput on Gemma 4 E4B QAT,
  *                    fully offloaded — four arms, asserted against a
  *                    same-config floor.
- *   [mtp-a4b]        gh#153: the same comparison on Gemma 4 26B-A4B QAT,
- *                    partially offloaded with `gpu_layers: auto`.
- *   [mtp-a4b-experts] gh#153 #42(iii): the same comparison on the same A4B at
- *                    `gpu_layers: 31` (every layer) with `cpu_moe_layers: 31`
- *                    — the EXPERIMENTAL experts-to-host split (decision #75).
+ *   [mtp-a4b-iq2]    gh#153: the same comparison on Gemma 4 26B-A4B UD-IQ2_M,
+ *                    fully resident.
+ *   [mtp-a4b-partial] v2.14.6: the same A4B forced PARTIALLY resident by a
+ *                    device-derived `vram_reserve_mb`, `gpu_layers: auto` —
+ *                    the regime the deleted QAT [mtp-a4b] case measured.
  *
- * The three gh#153 cases run the SAME code and are judged by DIFFERENT rules,
+ * v2.14.6: [mtp-a4b] (QAT Q4, partial because it did not fit) and
+ * [mtp-a4b-experts] (QAT Q4, forced `cpu_moe_layers`) were deleted with the
+ * QAT trunk; the experts case skips itself by design on a card that holds the
+ * IQ2_M, and the reserve now produces partial residency on demand.
+ *
+ * The gh#153 cases run the SAME code and are judged by DIFFERENT rules,
  * selected from the residency the engine resolved rather than from the case:
  * a fully resident trunk must show MTP clearing the floor, a partially
  * resident one must only show MTP not being materially worse than plain.
@@ -44,9 +49,11 @@
 #include "model_test_context.h"   // helpers only — NO CATCH_REGISTER_LISTENER
 
 // src/inference is on this binary's include path (tests/model/CMakeLists.txt):
-// the engine's own free-VRAM query, which the expert-offload engagement check
-// measures against rather than inventing a second one.
+// the engine's own free-VRAM query, which the recorded expert-offload figures
+// (expert_offload_json) measure against rather than inventing a second one.
 #include "device_memory.h"
+// v2.14.6: the reserve that forces partial residency on a model that fits.
+#include "partial_offload_reserve.h"
 
 #include <entropic/config/bundled_models.h>
 #include <entropic/config/loader.h>
@@ -424,14 +431,9 @@ struct BenchModel {
     int max_tokens;          ///< Per-generation cap
     int measured_rounds;     ///< Rounds after the discarded warm-up (x4)
 
-    /// @brief EXPERIMENTAL experts-to-host count; 0 leaves the key OUT of the
-    ///        YAML entirely, so every pre-existing case's config is unchanged
-    ///        byte for byte and their recorded `yaml` field still matches.
-    int cpu_moe_layers = 0;
-
     /// @brief Physical micro-batch (`ModelConfig::n_ubatch`) for EVERY arm of
-    ///        this case. Same omission rule as `cpu_moe_layers`: 0 leaves the
-    ///        key out of the YAML entirely, so the three cases that do not set
+    ///        this case. 0 leaves the key out of the YAML entirely, so the
+    ///        cases that do not set
     ///        it emit byte-identical tier blocks to before this field existed
     ///        and their recorded `yaml` still matches their measured figures.
     ///        Non-zero is how a case that does not fit its compute buffer at
@@ -447,6 +449,13 @@ struct BenchModel {
     /// `auto` has to place against, so a claim made at 131k is not tested by a
     /// run at 8k. Non-zero is how a case states which context it is about.
     int context_length = 0;
+
+    /// @brief Handle-wide `vram_reserve_mb`; 0 leaves the key OUT of the YAML
+    ///        (engine default 512), so every other case's config is unchanged.
+    ///        v2.14.6: non-zero is how [mtp-a4b-partial] forces partial
+    ///        residency on a trunk that fits — derived from the device by
+    ///        `reserve_forced_partial`, never written by hand.
+    int vram_reserve_mb = 0;
 };
 
 /// @brief One generation, as the engine recorded it.
@@ -595,11 +604,7 @@ std::string tier_yaml(const BenchModel& m, const ArmSpec& arm) {
         "    use_mlock: false\n";
     // Every arm carries it, because the four tiers share one GGUF and the
     // orchestrator pools backends BY PATH: a tier that differed here would
-    // silently decode on the other tier's placement.
-    if (m.cpu_moe_layers > 0) {
-        y += "    cpu_moe_layers: " + std::to_string(m.cpu_moe_layers) + "\n";
-    }
-    // Same reasoning, and the same all-arms-or-none rule: the head that
+    // silently decode on the other tier's placement. The head that
     // `speculative.mtp` builds inherits the TIER's cparams (build_mtp_head →
     // build_cparams(config())), so an arm that differed here would size its
     // draft context differently from the arm it is compared against.
@@ -616,9 +621,12 @@ std::string tier_yaml(const BenchModel& m, const ArmSpec& arm) {
 
 /// @brief The whole config, as YAML — parsed by the production loader.
 std::string config_yaml(const BenchModel& m, const fs::path& dir) {
-    std::string y = "config_dir: " + dir.string() + "\n"
-        "models:\n"
-        "  default: plain\n";
+    std::string y = "config_dir: " + dir.string() + "\n";
+    if (m.vram_reserve_mb > 0) {
+        y += "vram_reserve_mb: " + std::to_string(m.vram_reserve_mb) + "\n";
+    }
+    y += "models:\n"
+         "  default: plain\n";
     for (const auto& arm : arms()) { y += tier_yaml(m, arm); }
     y += "routing:\n"
          "  enabled: false\n"
@@ -730,6 +738,11 @@ RunInfo describe_run(const BenchModel& m,
 // Did `cpu_moe_layers` actually DO anything?
 // ────────────────────────────────────────────────────────────────────────────
 //
+// v2.14.6: the forced-override case that ASSERTED this ([mtp-a4b-experts]) was
+// deleted with the QAT trunk. The figures below are still computed and
+// recorded (expert_offload_json) whenever `auto` itself puts experts
+// host-side; the reasoning is kept because it is what those figures mean.
+//
 // A prototype knob that silently did nothing must FAIL this case, never report
 // a throughput number. llama.cpp offers no post-load per-tensor buffer query,
 // so there is no direct "where did tensor X land". The strongest signal
@@ -805,97 +818,6 @@ Engagement judge_engagement(const RunInfo& info) {
         e.engaged = e.used_mib <= e.bound_mib;
     }
     return e;
-}
-
-/**
- * @brief Pre-flight for an expert-offload case, BEFORE the model is loaded.
- *
- * Fails loudly when there is no VRAM reading to be had, and SKIPs when this
- * card is large enough to hold the trunk — on such a card device memory
- * cannot distinguish an engaged override from a no-op, and a case that cannot
- * prove its knob did something has no business reporting a throughput figure.
- *
- * @param m The bench model, carrying `cpu_moe_layers` (0 = not this case).
- * @param target_bytes The trunk's size on disk.
- * @param pre Both pre-load VRAM readings.
- */
-void require_measurable_expert_offload(const BenchModel& m,
-                                       uint64_t target_bytes,
-                                       const PreLoadVram& pre) {
-    if (m.cpu_moe_layers <= 0) { return; }
-    {
-        INFO("cpu_moe_layers=" << m.cpu_moe_layers << " is EXPERIMENTAL and "
-             "this case's only proof that it engaged is device memory, but "
-             "nvidia-smi reported " << pre.used_mib << " MiB used and ggml "
-             "reported " << pre.free_mib << " MiB free. Without both, a knob "
-             "that did nothing would report a throughput number instead of "
-             "failing — the one outcome this case may not produce.");
-        REQUIRE(pre.used_mib >= 0);
-        REQUIRE(pre.free_mib > 0);
-    }
-    const long weights_mib = to_mib(target_bytes);
-    if (weights_mib > pre.free_mib) { return; }
-    SKIP("expert-offload engagement cannot be proven on this card: the trunk "
-         "is " + std::to_string(weights_mib) + " MiB and " +
-         std::to_string(pre.free_mib) + " MiB of VRAM is free, so a load with "
-         "every layer resident FITS and a low VRAM reading would not "
-         "distinguish an engaged override from a no-op. This case measures "
-         "the experts-only split on a card that cannot hold the model — the "
-         "situation cpu_moe_layers exists for. Run it on one, or re-derive "
-         "the assertion from something other than device memory.");
-}
-
-/// @brief Print the engagement figures, then assert them. Every number that
-///        the verdict rests on is on screen before the verdict is.
-void require_expert_offload_engaged(const BenchModel& m, const RunInfo& info,
-                                    const Engagement& e) {
-    if (m.cpu_moe_layers <= 0) { return; }
-    std::printf(
-        "----------------------------------------------------------------\n"
-        "EXPERT OFFLOAD ENGAGEMENT — cpu_moe_layers=%d (requested %d)\n"
-        "  trunk weights          %8ld MiB  on disk\n"
-        "  VRAM free before load  %8ld MiB  (ggml, this device)\n"
-        "  overflow               %8ld MiB  weights - free: bytes that CANNOT "
-        "be on this card\n"
-        "  bound                  %8ld MiB  free - overflow: the ceiling, "
-        "cleared by the overflow again\n"
-        "  VRAM this load took    %8ld MiB  (nvidia-smi device-wide, after - "
-        "before)\n"
-        "  gpu_layers resolved    %8d      of %d layers, every one requested "
-        "RESIDENT\n"
-        "  ENGAGED                %8s\n",
-        info.cpu_moe_layers, m.cpu_moe_layers, e.weights_mib, e.free_mib,
-        e.overflow_mib, e.bound_mib, e.used_mib, info.model.gpu_layers,
-        info.n_layer, e.engaged ? "YES" : "NO");
-    {
-        INFO("the loader did not carry cpu_moe_layers to the backend: asked "
-             "for " << m.cpu_moe_layers << ", the backend's post-admission "
-             "config holds " << info.cpu_moe_layers);
-        REQUIRE(info.cpu_moe_layers == m.cpu_moe_layers);
-    }
-    {
-        INFO("a VRAM reading went missing between the pre-flight and the load "
-             "(weights=" << e.weights_mib << " MiB, free=" << e.free_mib
-             << " MiB, taken=" << e.used_mib << " MiB), so there is no "
-             "engagement proof left and no figure may be reported");
-        REQUIRE(e.measurable);
-    }
-    {
-        INFO("gpu_layers resolved to " << info.model.gpu_layers << " of "
-             << info.n_layer << " layers, so this is an ordinary PARTIAL "
-             "offload and the VRAM reading cannot be attributed to the expert "
-             "override. This case requires every layer to be REQUESTED "
-             "resident, so that the override is the only thing left that can "
-             "put trunk weights on the host.");
-        REQUIRE(info.resident_layers == info.n_layer);
-    }
-    INFO("expert offload did NOT engage: the load took " << e.used_mib
-         << " MiB of VRAM, above the " << e.bound_mib << " MiB bound derived "
-         "from a " << e.weights_mib << " MiB trunk and " << e.free_mib
-         << " MiB of free VRAM (overflow " << e.overflow_mib << " MiB, cleared "
-         "again). With every layer requested resident, a load that takes that "
-         "much device memory is holding the expert weights on the card.");
-    REQUIRE(e.engaged);
 }
 
 /// @brief True when `text` has the grammar's shape: it opens `{"summary":`
@@ -1511,11 +1433,13 @@ PrefillPoint measure_cold_prefill(const BenchModel& m,
     PrefillPoint p;
     p.gpu_layers = m.gpu_layers;
     p.n_ubatch = m.n_ubatch;
-    p.cpu_moe_layers = m.cpu_moe_layers;
-
     BenchProject project(m.label + "_" + m.gpu_layers);
     auto orch = build_orchestrator(config_yaml(m, project.dir()), registry);
-    p.resolved_layers = describe_run(m, registry, *orch).resident_layers;
+    const RunInfo run = describe_run(m, registry, *orch);
+    p.resolved_layers = run.resident_layers;
+    // v2.14.6: what the engine resolved, not what was asked for — `auto` can
+    // move experts host-side on its own.
+    p.cpu_moe_layers = run.cpu_moe_layers;
 
     entropic::Message u;
     u.role = "user";
@@ -1616,6 +1540,51 @@ void run_prefill_residency_bench(
     }
 }
 
+/**
+ * @brief Set `vram_reserve_mb` so `auto` places this trunk PARTIALLY (v2.14.6).
+ *
+ * Derived from the device's free VRAM and the trunk's GGUF shape with the
+ * same footprint inputs this file's YAML gives the engine (context, q4_0 KV,
+ * the MTP head as a resident draft), then checked against the engine's own
+ * solver — see partial_offload_reserve.h. Fails, not skips, when the card
+ * leaves no window: the model is on disk, so the case must run.
+ *
+ * @param m Bench model with `gpu_layers: auto`.
+ * @return The same model with `vram_reserve_mb` set.
+ * @utility
+ * @version 2.14.6
+ */
+BenchModel reserve_forced_partial(BenchModel m) {
+    entropic::config::BundledModels registry;
+    REQUIRE(load_registry(registry));
+    const auto target = registry.resolve(m.target_key);
+    const auto head = registry.resolve(m.head_key);
+    skip_if_absent(m.target_key, target);
+    skip_if_absent(m.head_key, head);
+    const entropic::GgufShape shape = entropic::read_gguf_shape(target.string());
+    REQUIRE(shape.known);
+    entropic::FootprintInputs in;
+    in.weights_bytes = fs::file_size(target);
+    in.context_length = m.context_length > 0 ? m.context_length : kContextLength;
+    in.cache_type_k = "q4_0";
+    in.cache_type_v = "q4_0";
+    in.draft_bytes = fs::file_size(head);
+    in.block_count = shape.block_count;
+    in.block_bytes = shape.block_bytes;
+    in.non_block_bytes = shape.non_block_bytes;
+    const auto dev = entropic::test::query_device_vram();
+    const auto r = entropic::test::choose_partial_reserve(shape, in, dev.free,
+                                                          m.n_ubatch);
+    INFO("free=" << dev.free / (1024 * 1024) << " MiB; window lo="
+         << r.lo_bytes / (1024 * 1024) << " hi=" << r.hi_bytes / (1024 * 1024)
+         << " MiB; reserve=" << r.reserve_mb << " MiB; solver predicts "
+         << r.predicted.gpu_layers << " of " << shape.block_count << " ("
+         << r.predicted.reason << ")");
+    REQUIRE(r.ok);
+    m.vram_reserve_mb = r.reserve_mb;
+    return m;
+}
+
 void run_four_arm_bench(const BenchModel& m) {
     entropic::config::BundledModels registry;
     REQUIRE(load_registry(registry));
@@ -1641,7 +1610,6 @@ void run_four_arm_bench(const BenchModel& m) {
     // cannot be proven on this card is skipped HERE, before paying for a
     // multi-minute load that could not have told anyone anything.
     const auto pre = sample_pre_load_vram();
-    require_measurable_expert_offload(m, target_bytes, pre);
 
     BenchProject project(m.label);
     const auto yaml = config_yaml(m, project.dir());
@@ -1669,7 +1637,6 @@ void run_four_arm_bench(const BenchModel& m) {
     // Before a single token is generated: an experimental knob that did
     // nothing must fail here, not produce a throughput figure that reads as a
     // measurement of a split that never happened. No-op for every other case.
-    require_expert_offload_engaged(m, info, judge_engagement(info));
 
     entropic::GenerationParams params;
     params.temperature = 0.0f;
@@ -1745,26 +1712,23 @@ TEST_CASE("gh#153 MTP vs plain decode throughput — four arms, Gemma 4 E4B "
 }
 
 TEST_CASE("gh#153 MTP vs plain decode throughput — four arms, Gemma 4 26B-A4B "
-          "QAT partially offloaded (gpu_layers auto)",
-          "[.][model][gh153][benchmark][mtp-a4b]") {
-    // 14.25 GB on the 11 GB floor card: `gpu_layers: auto` (decision #65)
-    // derives the split from free VRAM and the summary records what it chose.
-    // Shorter generations than E4B — a partially offloaded MoE decodes several
-    // times slower — so the four arms still fit a bounded run.
+          "IQ2_M forced partially resident by the VRAM reserve",
+          "[.][model][gh153][benchmark][mtp-a4b-partial]") {
+    // v2.14.6: the regime the deleted QAT [mtp-a4b] case measured — MTP on a
+    // PARTIALLY resident MoE, where verification pays for the drafted batch on
+    // CPU-resident layers (decision #74) — rebuilt on the trunk that fits.
+    // QAT figures for that regime, 1080 Ti at 18 of 30 layers: plain 18.86 /
+    // control 18.68 / mtp 18.68 tok/s, floor 1.00 %, effect -0.92 %, accept
+    // 0.473. They are the QAT's and do not transfer to this quant.
     //
-    // This case does NOT assert a speedup, and the reason is measured rather
-    // than assumed (decision #74). On the same 1080 Ti at 18 of 31 layers:
-    // plain 18.86 / control 18.68 / mtp 18.68 tok/s, floor 1.00 %, effect
-    // -0.92 % — with an accept rate of 0.473, HIGHER than the fully resident
-    // E4B's 0.331. Drafting works; the verify is what costs, on the 13 layers
-    // that are not on the card. The MTP head itself was fully resident (5/5
-    // layers offloaded), so a CPU-side drafter is not the explanation.
-    //
-    // The same rule is expected to hold on a 12 GB card, where this model is
-    // still partial at a better fraction: a better number, under this rule,
-    // not a different rule.
-    gh153::run_four_arm_bench(
-        {"a4b", "gemma4_a4b_qat", "mtp_a4b", "auto", 256, 4});
+    // test_auto_placement_offload_real proves the reserve yields a partial
+    // load; it does not run MTP, so it says nothing about this.
+    // `reserve_forced_partial` aims the budget between two whole layers and
+    // "every layer, every expert host-side", so `auto` resolves to
+    // 0 < gpu_layers < 30, and the engine selects the PARTIAL rule from what
+    // it resolved: MTP must only be no worse than plain.
+    gh153::run_four_arm_bench(gh153::reserve_forced_partial(
+        {"a4b_partial", "gemma4_a4b_iq2", "mtp_a4b", "auto", 256, 4}));
 }
 
 // gh#197 — does `gpu_layers: auto` OOM an MTP-paired 26B-A4B at load?
@@ -1779,7 +1743,8 @@ TEST_CASE("gh#153 MTP vs plain decode throughput — four arms, Gemma 4 26B-A4B 
 // room. Whether the reservation is big enough is the real question — its
 // constant was measured on an E4B MTP context, never on this head.
 //
-// So these are the [mtp-a4b] case with ONE thing changed: context. Each is its
+// So these were the (since deleted) [mtp-a4b] case with ONE thing changed:
+// context. Each is its
 // own TEST_CASE and its own ctest entry, so each loads in a fresh process —
 // arms sharing a process accumulate VRAM and once produced a false OOM in this
 // very file, which would make a failure here meaningless.
@@ -1805,99 +1770,39 @@ TEST_CASE("gh#153 MTP vs plain decode throughput — four arms, Gemma 4 26B-A4B 
 // -> 823.9 from 64k to 128k) and the allowance does not scale with context at
 // all, so headroom shrinks as context rises. Two points are not a slope; this
 // is why the 128k case stays in the file.
-TEST_CASE("gh#197 auto + MTP head on the 26B-A4B QAT at 32768 context",
+//
+// v2.14.6: the QAT Q4 trunk left the pared model set, so these three now load
+// the UD-IQ2_M (gemma4_a4b_iq2) with the same head. The table above is the
+// QAT's and does not transfer: the IQ2 is fully resident at short context and
+// only goes partial as the KV grows, so its split must be re-measured. The
+// question is unchanged — does `auto` with the MTP head reserved OOM at load.
+TEST_CASE("gh#197 auto + MTP head on the 26B-A4B IQ2_M at 32768 context",
           "[.][model][gh197][benchmark][mtp-a4b-ctx32k]") {
     gh153::run_four_arm_bench(
-        {"a4b_ctx32k", "gemma4_a4b_qat", "mtp_a4b", "auto", 256, 4, 0, 0,
+        {"a4b_ctx32k", "gemma4_a4b_iq2", "mtp_a4b", "auto", 256, 4, 0,
          32768});
 }
 
-TEST_CASE("gh#197 auto + MTP head on the 26B-A4B QAT at 65536 context",
+TEST_CASE("gh#197 auto + MTP head on the 26B-A4B IQ2_M at 65536 context",
           "[.][model][gh197][benchmark][mtp-a4b-ctx64k]") {
     gh153::run_four_arm_bench(
-        {"a4b_ctx64k", "gemma4_a4b_qat", "mtp_a4b", "auto", 256, 4, 0, 0,
+        {"a4b_ctx64k", "gemma4_a4b_iq2", "mtp_a4b", "auto", 256, 4, 0,
          65536});
 }
 
-TEST_CASE("gh#197 auto + MTP head on the 26B-A4B QAT at 131072 context",
+TEST_CASE("gh#197 auto + MTP head on the 26B-A4B IQ2_M at 131072 context",
           "[.][model][gh197][benchmark][mtp-a4b-ctx128k]") {
     // The consumer's own context — the one their incident actually OOMed at.
     gh153::run_four_arm_bench(
-        {"a4b_ctx128k", "gemma4_a4b_qat", "mtp_a4b", "auto", 256, 4, 0, 0,
+        {"a4b_ctx128k", "gemma4_a4b_iq2", "mtp_a4b", "auto", 256, 4, 0,
          131072});
-}
-
-TEST_CASE("gh#153 MTP vs plain decode throughput — four arms, Gemma 4 26B-A4B "
-          "QAT with every layer placed and the routed experts on the host",
-          "[.][model][gh153][benchmark][mtp-a4b-experts]") {
-    // The same model, card, prompt, arms, floor and rules as [mtp-a4b]. One
-    // thing changes: `cpu_moe_layers` sends the routed-expert FFN tensors of
-    // all 31 layers to the host so attention, its KV, the router, the
-    // shared/dense FFN and the norms can stay on the card (decision #75).
-    // That is the split #42(iii) says its figures do not cover, and this case
-    // exists so the comparison against #42(b)'s 18-of-31 run can be made.
-    //
-    // `gpu_layers: 31` is an EXPLICIT COUNT, and the three ways of writing
-    // "all of them" are each wrong here:
-    //   -1 / 99  classify as `Offload::full` in vram_footprint.h, so the gh#148
-    //            admission gate prices the whole 14.25 GB file against an
-    //            11 GiB card and refuses the tier before the knob can help.
-    //   auto     is refused by design in this combination: the residency math
-    //            prices a layer as a WHOLE layer and has no model of expert
-    //            placement, so the split it derives would not describe the
-    //            load (expert_offload_conflict_reason).
-    // 31 classifies as `partial_unknown`, which leaves the gate open — the
-    // engine declines to price what it cannot price. The count also has to be
-    // the model's real layer count, and `require_expert_offload_engaged`
-    // asserts that it resolved to exactly `n_layer`: with every layer REQUESTED
-    // resident, the expert override is the only thing left that can put trunk
-    // weights on the host, which is what makes the VRAM reading mean something.
-    //
-    // context_length is the shared kContextLength (8192), NOT the 4096 of the
-    // prototype's illustrative snippet. This case is a controlled comparison
-    // against [mtp-a4b] on the same card, and a controlled comparison changes
-    // ONE variable; max_tokens 256 matches it for the same reason.
-    //
-    // NO expectation is stated here, deliberately. Whether an experts-only
-    // split moves MTP's -0.92 % is the open question #42(iii) names, and a
-    // case that printed the answer it wanted before measuring would be the
-    // fourth way this issue has gone wrong. The residency rule that judges it
-    // is chosen by the engine (decision #74) and, because the experts are
-    // host-side, it is the PARTIAL rule — 31 of 31 layers notwithstanding.
-    // 30, not 31: gemma4 26B-A4B has THIRTY layers. The first run of this case
-    // asked for 31 and the engine refused it — "cpu_moe_layers=31 exceeds the
-    // model's 30 layers … it is not clamped, because a count that cannot be
-    // honoured is a configuration error, not a preference" — which is the
-    // refusal working, and the count being wrong. #42(b)'s "18 of 31" prose is
-    // the same slip; the JSON it was taken from recorded 18/30.
-    //
-    // MEASURED 2026-09-22 on the 1080 Ti, sweeping cpu_moe_layers by hand
-    // (1080 Ti, gpu_layers=30, ctx 8192, max_tokens 256, 4 trials):
-    //   N=30  2767 MiB VRAM   plain 17.68  mtp 18.18   effect -0.29 % (floor 3.11 %)
-    //   N=20  6775 MiB VRAM   plain 22.62  mtp 23.76   effect +4.16 % (floor 0.83 %)
-    //   N=12  9446 MiB VRAM   — engagement assertion refused the run, see below
-    // Two things fall out. Throughput rises as experts come BACK onto the card
-    // (18.2 -> 22.6 plain), and MTP's benefit rises with it (-0.29 % -> +4.16 %),
-    // which is decision #74's resident-fraction rule showing up inside a single
-    // model. Whole-layer offload at 18/30 measured 18.7 tok/s (#42(b)), so
-    // experts-on-host at N=30 buys nothing by itself — its value is the 5 GB of
-    // VRAM it frees, which only pays once that VRAM holds experts again.
-    //
-    // N is 30 here, not the faster 20, deliberately: this case is a STABLE
-    // comparison against #42(b), and `require_expert_offload_engaged`'s bound
-    // (free - overflow) assumes most weights are host-side. At N=20 the load
-    // lands 300 MiB under that bound and at N=12 it exceeds it — not because
-    // the knob failed, but because 18 layers of experts ARE resident and the
-    // bound cannot tell "engaged and partly resident" from "never engaged".
-    // Sweeping N is gh#167/gh#180's job and needs a residency-aware bound.
-    gh153::run_four_arm_bench(
-        {"a4b_experts", "gemma4_a4b_qat", "mtp_a4b", "30", 256, 4, 30});
 }
 
 TEST_CASE("gh#153 MTP vs plain decode throughput — four arms, Gemma 4 26B-A4B "
           "at IQ2_M, the quant that fits an 11 GiB card whole",
           "[.][model][gh153][benchmark][mtp-a4b-iq2]") {
-    // The "make it fit" lever against [mtp-a4b]'s "place it better" one, on
+    // The "make it fit" lever against [mtp-a4b]'s (deleted in v2.14.6)
+    // "place it better" one, on
     // the same card, same prompt, same arms, same floor.
     //
     // Every A4B figure before this one was taken PARTIALLY resident, because
@@ -1963,8 +1868,8 @@ TEST_CASE("gh#153 MTP vs plain decode throughput — four arms, Gemma 4 26B-A4B 
     // intra-case, so neither can move because of it.
     gh153::run_four_arm_bench(
         // label, trunk, head, gpu_layers, max_tokens, measured_rounds,
-        // cpu_moe_layers (0 — every layer whole and on the card), n_ubatch.
-        {"a4b_iq2", "gemma4_a4b_iq2", "mtp_a4b", "-1", 256, 4, 0, 128});
+        // n_ubatch.
+        {"a4b_iq2", "gemma4_a4b_iq2", "mtp_a4b", "-1", 256, 4, 128});
 }
 
 // gh#193: the figure the warm-decode arms above cannot see.
@@ -1986,8 +1891,8 @@ TEST_CASE("gh#193: what cold prefill costs at each residency level",
           "[benchmark][.][prefill-residency]") {
     gh153::run_prefill_residency_bench(
         // label, trunk, head, gpu_layers/n_ubatch replaced per point,
-        // max_tokens, measured_rounds, cpu_moe_layers, n_ubatch.
-        {"a4b_iq2_prefill", "gemma4_a4b_iq2", "mtp_a4b", "-1", 1, 1, 0, 128},
+        // max_tokens, measured_rounds, n_ubatch.
+        {"a4b_iq2_prefill", "gemma4_a4b_iq2", "mtp_a4b", "-1", 1, 1, 128},
         // {gpu_layers, n_ubatch}. Compute buffers scale with n_ubatch and
         // compete with weights for the same VRAM: ~1222 MiB per context at
         // 512 against ~305 at 128, doubled by the MTP head's second context.

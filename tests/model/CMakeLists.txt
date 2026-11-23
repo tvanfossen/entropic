@@ -170,6 +170,19 @@ add_model_test(test-backend-capabilities  test_backend_capabilities.cpp)
 add_model_test(test-adapter-lifecycle     test_adapter_lifecycle.cpp)
 add_model_test(test-constitutional-validation test_constitutional_validation.cpp)
 add_model_test(test-multimodal-fallback   test_multimodal_fallback.cpp)
+# v2.14.6: the vision path for real — an image through E4B QAT and its own
+# projector (gemma4_e4b_mmproj). The fallback test above only proves a
+# text-only tier strips an image it cannot see.
+add_model_test(test-v2146-e4b-vision      test_v2146_e4b_vision.cpp)
+set_tests_properties(model/test-v2146-e4b-vision PROPERTIES TIMEOUT 300)
+# v2.14.6: the Gemma 4 tool_choice=REQUIRED grammar forces one call then EOG
+# (root patched to mirror llama.cpp f072b10371). Vocab-only E4B: no weights,
+# no GPU. Links llama + reads chat.h directly for the common_chat render.
+add_model_test(test-v2146-gemma4-required-grammar
+               test_v2146_gemma4_required_grammar.cpp)
+target_link_libraries(test-v2146-gemma4-required-grammar PRIVATE llama)
+target_include_directories(test-v2146-gemma4-required-grammar PRIVATE
+    ${PROJECT_SOURCE_DIR}/extern/llama.cpp/common)
 add_model_test(test-context-bleed         test_delegation_context_bleed.cpp)
 
 # ── v2.1.9 new family tests (gh#44/#45/#46/#47) ─────────────
@@ -177,8 +190,9 @@ add_model_test(test-context-bleed         test_delegation_context_bleed.cpp)
 # (Qwen 3.6, Gemma 4, Nemotron 3) and validates the corresponding
 # adapter end-to-end. SKIP cleanly if the GGUF isn't present;
 # developer runs `entropic download <key>` first.
-add_model_test(test-v219-qwen36       test_v219_qwen36_family.cpp)
-add_model_test(test-v219-gemma4-e2b   test_v219_gemma4_family.cpp)
+add_model_test(test-v219-qwen35       test_v219_qwen35_family.cpp)
+# v2.14.6: test-v219-gemma4-e2b removed with its model — retargeted to E4B QAT it
+# only duplicated test-v219-gemma4-e4b (user, 2026-11-23).
 add_model_test(test-v219-gemma4-e4b   test_v219_gemma4_e4b_family.cpp)
 # v2.14.6: test-v219-gemma4-e4b-q4 (cross-quant, UD-Q4_K_XL) removed with its
 # model — the pared model set tests one quant per family (user, 2026-10-17).
@@ -278,10 +292,11 @@ add_model_test(test-gh87-backend-generate-tools
 # each family's native tool-call format — the precondition for retiring the
 # hand-rolled adapters. Shared logic in gh87_verify_helpers.h; one thin
 # executable per family (one model load each, per the reload-SEGV constraint).
-add_model_test(test-gh87-verify-qwen36    test_gh87_verify_qwen36.cpp)
+add_model_test(test-gh87-verify-qwen35    test_gh87_verify_qwen35.cpp)
 add_model_test(test-gh87-verify-nemotron3 test_gh87_verify_nemotron3.cpp)
-# qwen36 is a 13GB A3B MoE under partial offload — give it headroom.
-set_tests_properties(model/test-gh87-verify-qwen36 PROPERTIES TIMEOUT 360)
+# v2.14.6: the qwen35 verify runs Qwen3.5-0.8B at full offload (it was the
+# 13GB Qwen3.6-A3B under partial offload, which needed TIMEOUT 360), so the
+# add_model_test default applies.
 
 # gh#106 (v2.9.0): observe QAT thinking-model tool-call structure (TEMP/TDD).
 add_model_test(test-gh106-qat-thinking     test_gh106_qat_thinking.cpp)
@@ -317,28 +332,25 @@ add_model_test_per_case(test-gh108-mtp-stream-grammar test_gh108_mtp_stream_gram
     "gh#134 (v2.10.4) require_tool_call forces a tool call under MTP")
 
 # Decode-configuration benchmarks, one entry (one process) per case — each
-# loads its own model, and the A4B case alone maps a 14 GB GGUF:
+# loads its own model:
 #   mtp-e4b        gh#153: four-arm MTP vs plain throughput (plain, control,
 #                  mtp, mtp-under-tier-grammar) on E4B QAT, fully offloaded.
-#   mtp-a4b        gh#153: the same four arms on 26B-A4B QAT, gpu_layers auto.
-#   mtp-a4b-experts
-#                  gh#153 #42(iii): the same four arms on the same A4B at
-#                  gpu_layers 31 (every layer) + cpu_moe_layers 31 — the
-#                  EXPERIMENTAL experts-to-host split (decision #75). Skips
-#                  itself on a card large enough to hold the trunk, where
-#                  device memory cannot prove the override engaged.
+#   mtp-a4b-partial
+#                  v2.14.6: the same four arms on 26B-A4B UD-IQ2_M with
+#                  gpu_layers auto, forced PARTIALLY resident by a
+#                  device-derived vram_reserve_mb.
+#   mtp-a4b-iq2    gh#153: the same four arms on the IQ2_M fully resident.
+# v2.14.6: mtp-a4b (QAT Q4, partial because it did not fit) and
+# mtp-a4b-experts (QAT Q4, forced cpu_moe_layers) left with the QAT trunk.
 # The gh#153 entries write build/test-reports/bench/gh153_mtp_<model>.json.
 #
-# NOTE for `inv bench --filter`: ctest -R takes a REGEX, so
-# `-mtp-a4b` also selects `-mtp-a4b-experts`. Anchor it (`mtp-a4b$`) to run
-# only the auto-offload case.
+# NOTE for `inv bench --filter`: ctest -R takes a REGEX, so `-mtp-a4b`
+# selects every A4B entry. Anchor it (`mtp-a4b-partial$`) to run one.
 add_bench_executable(test-gh108-config-benchmark test_gh108_config_benchmark.cpp)
 add_bench_entry(test-gh108-config-benchmark
     test-gh108-config-benchmark-mtp-e4b "[mtp-e4b]")
 add_bench_entry(test-gh108-config-benchmark
-    test-gh108-config-benchmark-mtp-a4b "[mtp-a4b]")
-add_bench_entry(test-gh108-config-benchmark
-    test-gh108-config-benchmark-mtp-a4b-experts "[mtp-a4b-experts]")
+    test-gh108-config-benchmark-mtp-a4b-partial "[mtp-a4b-partial]")
 # gh#197: one entry per context so each loads in its own process.
 add_bench_entry(test-gh108-config-benchmark
     test-gh108-config-benchmark-mtp-a4b-ctx32k "[mtp-a4b-ctx32k]")
@@ -441,7 +453,7 @@ set_tests_properties(model/test-gh97-hybrid-cache PROPERTIES TIMEOUT 300)
 
 # gh#158 (v2.13.0): the EMERGENT multi-turn test for per-session concurrency.
 # Two sessions on two threads through the real C ABI, plus the batch KV
-# counter and a hybrid-arch (qwen35moe) desync gate. Interleaving cannot
+# counter and a hybrid-arch (nemotron_h) desync gate. Interleaving cannot
 # catch what this is for — see the file header.
 add_model_test(test-gh158-concurrent test_gh158_concurrent_sessions.cpp)
 set_tests_properties(model/test-gh158-concurrent PROPERTIES TIMEOUT 1200)
@@ -509,7 +521,7 @@ add_model_test(test-gh99-run-as test_gh99_run_as.cpp)
 set_tests_properties(model/test-gh99-run-as PROPERTIES TIMEOUT 300)
 
 # gh#98 (v2.8.0): same-prefix batch — prefill-once + correctness + hybrid
-# serial fallback (the qwen35moe case needs the larger partial-offload timeout).
+# serial fallback (hybrid case on nemotron_h; v2.14.6 — was qwen35moe at partial offload).
 add_model_test(test-gh98-batch test_gh98_batch.cpp)
 set_tests_properties(model/test-gh98-batch PROPERTIES TIMEOUT 600)
 
@@ -525,8 +537,8 @@ set_tests_properties(model/test-gh93-behavioral PROPERTIES TIMEOUT 300)
 
 # gh#103 (v2.8.2): EMERGENT multi-turn proof that "sequential" tool_call_mode
 # hard-stops generation at the first tool call, through the combined orchestrator
-# path, on qwen35moe (PEG_NATIVE close marker + hybrid-arch coherence). 13GB
-# partial-offload + 3-turn loop → generous timeout.
+# path, on nemotron_h (PEG_NATIVE close marker + hybrid-arch coherence; v2.14.6 —
+# was the 13GB qwen35moe at partial offload). 3-turn loop → generous timeout.
 add_model_test(test-gh103-sequential-stop test_gh103_sequential_stop.cpp)
 set_tests_properties(model/test-gh103-sequential-stop PROPERTIES TIMEOUT 600)
 
@@ -544,7 +556,8 @@ set_tests_properties(model/test-gh103-gemma-sequential PROPERTIES TIMEOUT 600)
 add_model_test(test-gh105-validator-clobbers test_gh105_validator_clobbers.cpp)
 set_tests_properties(model/test-gh105-validator-clobbers PROPERTIES TIMEOUT 600)
 
-# gh#87 (v2.7.0): generous timeout for the 13GB A3B/A4B tests.
+# gh#87 (v2.7.0): generous timeout for the 13GB A3B/A4B tests (as written in
+# v2.7.0; see the v2.14.6 note below for what these load now).
 #
 # The 120s default (add_model_test) was calibrated for FULL-GPU offload. The
 # Qwen3.6-35B-A3B and Gemma-4-26B-A4B GGUFs (~13GB) live on the dev box's HDD
@@ -556,14 +569,18 @@ set_tests_properties(model/test-gh105-validator-clobbers PROPERTIES TIMEOUT 600)
 # the GPU context corrupted, and the next heavy GPU test (the speculative
 # pair) then faults and takes down the terminal. A generous ceiling lets these
 # exit cleanly; a genuine hang (>600s) still trips it.
+#
+# v2.14.6: the A4B tests now load the 10GB UD-IQ2_M — v219 + cutover at full
+# offload (it fits the card), the backend-direct gh87 three still at
+# gpu_layers=15. Still a ~10GB cold read, so they keep the ceiling. The
+# Qwen entries left this list with the 13GB Qwen3.6-A3B; their qwen35
+# replacements load a 0.8GB model.
 set_tests_properties(
     model/test-v219-gemma4-a4b
-    model/test-v219-qwen36
     model/test-gh87-common-chat-e2e
     model/test-gh87-backend-common-chat
     model/test-gh87-backend-generate-tools
     model/test-gh87-orchestrator-cutover
-    model/test-gh87-verify-qwen36
     PROPERTIES TIMEOUT 600)
 
 # gh#137 (v2.11.0): a tier with enable_thinking:false generated 77-154 chars
@@ -580,6 +597,20 @@ add_model_test(test-gh137-thinking-strip test_gh137_thinking_strip.cpp)
 # tests feed it synthetic shapes, which proves the arithmetic and nothing
 # about whether the metadata read returns what the model actually is.
 add_model_test(test-auto-placement-real test_auto_placement_real.cpp)
+
+# v2.14.6: the same `auto` against a REAL load. No model in the pared set is
+# larger than the card, so `vram_reserve_mb` (derived from the device, never
+# pinned) shrinks the budget instead: one case must resolve a genuine partial
+# offload and stay inside total - reserve, the other must be refused with
+# TIER_MODEL_TOO_LARGE. Per-case so each load gets a fresh process (gh#142).
+add_model_test_per_case(test-auto-placement-offload-real
+    test_auto_placement_offload_real.cpp
+    "gh#148 auto: a VRAM reserve forces a real partial offload that stays inside its budget"
+    "gh#148 auto: a reserve no placement can fit is refused with a typed error")
+set_tests_properties(
+    model/test-auto-placement-offload-real-c1
+    model/test-auto-placement-offload-real-c2
+    PROPERTIES TIMEOUT 600)
 
 # gh#194 (v2.13.2): prefill_tokens must reach a consumer and AGREE with the
 # engine's own log. Two counters that cannot be compared is how it stayed

@@ -50,8 +50,8 @@ std::vector<entropic::Message> one_turn(const std::string& content) {
 
 TEST_CASE("gh#108 MTP guards: out-of-envelope requests fail loud",
           "[model][gh108][mtp][guards]") {
-    auto target = gh87verify::model_path("gemma-4-E2B-it-Q8_0.gguf");
-    auto head = gh87verify::model_path("mtp-gemma-4-E2B-it.gguf");
+    auto target = gh87verify::model_path("gemma-4-E4B-it-qat-UD-Q4_K_XL.gguf");
+    auto head = gh87verify::model_path("mtp-gemma-4-E4B-it.gguf");
     if (!std::filesystem::is_regular_file(target)) {
         SKIP("MTP target GGUF not present: " + target.string());
     }
@@ -183,8 +183,8 @@ TEST_CASE("gh#108 MTP guards: out-of-envelope requests fail loud",
 
 TEST_CASE("gh#108 MTP greedy holds across a multi-turn context",
           "[model][gh108][mtp][multiturn]") {
-    auto target = gh87verify::model_path("gemma-4-E2B-it-Q8_0.gguf");
-    auto head = gh87verify::model_path("mtp-gemma-4-E2B-it.gguf");
+    auto target = gh87verify::model_path("gemma-4-E4B-it-qat-UD-Q4_K_XL.gguf");
+    auto head = gh87verify::model_path("mtp-gemma-4-E4B-it.gguf");
     if (!std::filesystem::is_regular_file(target) ||
         !std::filesystem::is_regular_file(head)) {
         SKIP("MTP target/head GGUF not present");
@@ -229,8 +229,8 @@ TEST_CASE("gh#108 MTP greedy holds across a multi-turn context",
 
 TEST_CASE("gh#108 MTP + flash attention succeeds (v2.9.3, upstream #25148)",
           "[model][gh108][mtp][flash]") {
-    auto target = gh87verify::model_path("gemma-4-E2B-it-Q8_0.gguf");
-    auto head = gh87verify::model_path("mtp-gemma-4-E2B-it.gguf");
+    auto target = gh87verify::model_path("gemma-4-E4B-it-qat-UD-Q4_K_XL.gguf");
+    auto head = gh87verify::model_path("mtp-gemma-4-E4B-it.gguf");
     if (!std::filesystem::is_regular_file(target) ||
         !std::filesystem::is_regular_file(head)) {
         SKIP("MTP target/head GGUF not present");
@@ -263,7 +263,7 @@ TEST_CASE("gh#108 MTP + flash attention succeeds (v2.9.3, upstream #25148)",
     backend.unload();
 }
 
-TEST_CASE("gh#108 MTP + flash + q4 KV succeeds on E4B Q2-mobile "
+TEST_CASE("gh#108 MTP + flash + q4 KV succeeds on E4B QAT Q4 "
           "(the target consumer config)",
           "[model][gh108][mtp][flash]") {
     // This is the exact config gh#108 asked for: Gemma-4 E4B Q2-mobile
@@ -294,7 +294,7 @@ TEST_CASE("gh#108 MTP + flash + q4 KV succeeds on E4B Q2-mobile "
     p.temperature = 0.0f;
     auto r = backend.generate_mtp(one_turn("Hello."), p, no_stream, cancel,
                                   head.string(), 4);
-    std::printf("[gh108] mtp+flash+q4kv(E4B Q2-mobile) → code=%d msg=%s n_drafted=%d\n",
+    std::printf("[gh108] mtp+flash+q4kv(E4B QAT Q4) → code=%d msg=%s n_drafted=%d\n",
                 r.error_code, r.error_message.c_str(), r.n_drafted);
     REQUIRE(r.error_code == 0);
     REQUIRE_FALSE(r.content.empty());
@@ -312,8 +312,8 @@ TEST_CASE("gh#108 MTP is lossless at temperature>0 (empirical distribution check
     // stochastic, not a point mass), the accept step's exact-match shortcut
     // stops being lossless and this test should start failing the band check
     // below — that is its job, not a false positive to silence.
-    auto target = gh87verify::model_path("gemma-4-E2B-it-Q8_0.gguf");
-    auto head = gh87verify::model_path("mtp-gemma-4-E2B-it.gguf");
+    auto target = gh87verify::model_path("gemma-4-E4B-it-qat-UD-Q4_K_XL.gguf");
+    auto head = gh87verify::model_path("mtp-gemma-4-E4B-it.gguf");
     if (!std::filesystem::is_regular_file(target) ||
         !std::filesystem::is_regular_file(head)) {
         SKIP("MTP target/head GGUF not present");

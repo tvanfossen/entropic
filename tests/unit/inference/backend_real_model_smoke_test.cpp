@@ -143,6 +143,33 @@ TEST_CASE("LlamaCppBackend lifecycle on a small real model (one load)",
         (void)call_count;
     }
 
+    // v2.14.6: a decode that runs to max_tokens reports "length", on every
+    // plain path. GenerationResult defaults finish_reason to "stop", so the
+    // loops' `finish_reason.empty()` length check never fired: a forced E4B
+    // retry ran 4096/4096 tokens and logged finish=stop.
+    {
+        std::vector<entropic::Message> msgs;
+        entropic::Message u;
+        u.role = "user";
+        u.content = "Count from 1 to 100, separated by commas.";
+        msgs.push_back(u);
+        entropic::GenerationParams params;
+        params.max_tokens = 3;
+        params.temperature = 0.0f;
+        params.enable_thinking = false;
+        std::atomic<bool> cancel{false};
+        auto plain = backend.generate(msgs, params);
+        CHECK(plain.token_count == 3);
+        CHECK(plain.finish_reason == "length");
+        auto cancellable = backend.generate(msgs, params, cancel);
+        CHECK(cancellable.token_count == 3);
+        CHECK(cancellable.finish_reason == "length");
+        auto streamed = backend.generate_streaming(
+            msgs, params, [](std::string_view) {}, cancel);
+        CHECK(streamed.token_count == 3);
+        CHECK(streamed.finish_reason == "length");
+    }
+
     // min_p sampler branch (v2.3.10 gh#23) — exercises the new sampler chain entry.
     {
         entropic::GenerationParams params;

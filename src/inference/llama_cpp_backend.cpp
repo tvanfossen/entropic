@@ -17,6 +17,7 @@
 #include <entropic/mcp/utf8_sanitize.h>
 #include "generation_summary.h"  // gh#151: one summary line, both paths
 #include "grammar_source.h"
+#include "gemma4_required_grammar.h"  // v2.14.6: f072b10371 root mirror
 #include "llama_cpp_sampler.h"
 #include "llama_cpp_tokenizer.h"
 #include "session_pool_util.h"
@@ -144,6 +145,31 @@ void finalize_result(GenerationResult& result,
 }
 
 /**
+ * @brief Report a decode that ran to max_tokens as finish_reason "length".
+ *
+ * v2.14.6: the loops checked `finish_reason.empty()`, but GenerationResult
+ * defaults finish_reason to "stop", so the check never fired and a decode
+ * cut off at the cap reported "stop" (a forced E4B retry logged 4096 tokens,
+ * finish=stop). Every loop breaks with n_generated < max_tokens, so reaching
+ * the cap means the loop condition ended it and the reason is still the
+ * default. An explicit "error"/"cancelled" is never overwritten.
+ *
+ * @param result Result accumulated by the loop (mutated).
+ * @param n_generated Tokens generated.
+ * @param max_tokens Token cap for this generation.
+ * @utility
+ * @version 2.14.6
+ */
+void mark_length_finish(GenerationResult& result, int n_generated,
+                        int max_tokens) {
+    const bool untouched = result.finish_reason.empty()
+        || result.finish_reason == "stop";
+    if (n_generated >= max_tokens && untouched) {
+        result.finish_reason = "length";
+    }
+}
+
+/**
  * @brief Apply the terminal length-finish + content/token-count fields and
  *        finalize timing on a completed text-generation result.
  *
@@ -153,15 +179,16 @@ void finalize_result(GenerationResult& result,
  * "ran to the token cap => finish_reason=length" convention lives in one place.
  *
  * @param result      Result accumulated by the loop. finish_reason is set by
- *                    the loop on EOS/stop/error/cancel; empty here means the
- *                    loop ran to the token cap (=> "length").
+ *                    the loop on EOS/stop/error/cancel; reaching the cap
+ *                    with it still the default means "length" (v2.14.6,
+ *                    see mark_length_finish).
  * @param generated   Accumulated decoded text.
  * @param n_generated Tokens generated.
  * @param params      Generation params (max_tokens for the length check).
  * @param t0          Loop start time, passed through to finalize_result.
  * @param prefill_tokens Prompt tokens this turn actually decoded (gh#194).
  * @utility
- * @version 2.13.2
+ * @version 2.14.6
  */
 void finalize_generation(GenerationResult& result,
     const std::string& generated, int n_generated,
@@ -184,10 +211,7 @@ void finalize_generation(GenerationResult& result,
     // twice while writing this fix — the overload pair is exactly the seam a
     // per-path fix falls through.
     result.prefill_tokens = prefill_tokens;
-    if (n_generated >= params.max_tokens
-            && result.finish_reason.empty()) {
-        result.finish_reason = "length";
-    }
+    mark_length_finish(result, n_generated, params.max_tokens);  // v2.14.6
     // gh#136 (4th type_error.316 recurrence): sanitize at INGRESS, where model
     // bytes first become a std::string, rather than at each of the ~18 .dump()
     // sites downstream. gh#112/113 were closed as "permanent closure of the
@@ -1608,6 +1632,45 @@ void LlamaCppBackend::set_active_tools(const std::string& tools_json) {
 }
 
 /**
+ * @brief The render's tool-call grammar, with the Gemma 4 REQUIRED root fixed.
+ *
+ * v2.14.6: at the pinned llama.cpp the Gemma 4 REQUIRED root
+ * (`start message* scan-to-toolcall tool-call`) accepts any text and only
+ * masks EOG until a valid call appears, so a call in the wrong string syntax
+ * runs to max_tokens. Upstream fixed it in f072b10371; this mirrors that fix
+ * (see gemma4_required_grammar.h). A root of any other shape is left alone
+ * and reported, since a newer pin may already carry the fix.
+ *
+ * @param rendered Render output (format + grammar).
+ * @param require_tool_call Tier's tool_choice=REQUIRED flag.
+ * @return The grammar to store as tool_grammar_.
+ * @req REQ-INFER-008
+ * @version 2.14.6
+ */
+static std::string tool_grammar_for(const common_chat_params& rendered,
+                                    bool require_tool_call) {
+    std::string grammar = rendered.grammar;
+    const bool gemma4_required = require_tool_call && !grammar.empty()
+        && rendered.format == COMMON_CHAT_FORMAT_PEG_GEMMA4;
+    if (gemma4_required) {
+        std::string patched = entropic::patch_gemma4_required_root(grammar);
+        if (patched != grammar) {
+            logger->info("Gemma 4 REQUIRED tool grammar: root rewritten to "
+                         "'{}' (mirrors llama.cpp f072b10371)",
+                         entropic::gemma4_required_root_fixed_shape());
+            grammar = std::move(patched);
+        } else {
+            logger->warn("Gemma 4 REQUIRED tool grammar: root is not the "
+                         "expected pre-f072b10371 shape, so it is left "
+                         "unpatched (a newer llama.cpp pin may already carry "
+                         "f072b10371). Root line found: '{}'",
+                         entropic::gbnf_root_line(grammar));
+        }
+    }
+    return grammar;
+}
+
+/**
  * @brief Render messages through common_chat WITH active tools (gh#87).
  *
  * Captures the rendered params (format/generation_prompt/parser) so
@@ -1621,12 +1684,15 @@ void LlamaCppBackend::set_active_tools(const std::string& tools_json) {
  * otherwise clobbered the parser arena and the main call extracted zero
  * tool calls.
  *
+ * v2.14.6: the stored tool grammar goes through tool_grammar_for, which
+ * fixes the Gemma 4 REQUIRED root.
+ *
  * @param messages Conversation history.
  * @param params Generation parameters.
  * @return Formatted prompt string; the low-level template render when
  *         common_chat could not be applied (no capture is written then).
  * @req REQ-INFER-009
- * @version 2.10.6
+ * @version 2.14.6
  */
 std::string LlamaCppBackend::render_with_tools(
     const std::vector<Message>& messages,
@@ -1652,7 +1718,7 @@ std::string LlamaCppBackend::render_with_tools(
         // gh#134 (v2.10.4): keep the tool-call grammar the render derived from
         // the staged schemas. Discarding it is why tools-staged tiers decode
         // unconstrained today.
-        tool_grammar_ = rendered->grammar;
+        tool_grammar_ = tool_grammar_for(*rendered, require_tool_call_);
         tool_grammar_lazy_ = rendered->grammar_lazy;
         prompt = rendered->prompt;
         logger->info("render_with_tools: format={}, {} tool(s), captured "
@@ -2108,7 +2174,7 @@ GenerationResult LlamaCppBackend::decode_loop(
  *         finish_reason "cancelled" and ENTROPIC_ERROR_CANCELLED when the
  *         flag was observed set, "stop"/"length"/"error" otherwise.
  * @req REQ-INFER-005
- * @version 2.10.4
+ * @version 2.14.6
  */
 GenerationResult LlamaCppBackend::generate_after_prefill(
     Sampler& sampler,
@@ -2141,9 +2207,7 @@ GenerationResult LlamaCppBackend::generate_after_prefill(
         }
     }
 
-    if (n_generated >= params.max_tokens && result.finish_reason.empty()) {
-        result.finish_reason = "length";
-    }
+    mark_length_finish(result, n_generated, params.max_tokens);  // v2.14.6
 
     // gh#136 (4th type_error.316 recurrence): sanitize at INGRESS, where model
     // bytes first become a std::string, rather than at each of the ~18 .dump()

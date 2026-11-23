@@ -162,6 +162,8 @@ add_executable(entropic-inference-tests
     # Closes the fail-open previously only caught by GPU model tests that
     # SKIP on CI. Links `llama` (already linked) + uses ENTROPIC_SOURCE_DIR.
     inference/grammar_engagement_test.cpp
+    # v2.14.6: Gemma 4 REQUIRED root-rule patch (pure string function).
+    inference/gemma4_required_grammar_test.cpp
     # v2.3.10: REAL llama.cpp paths for LlamaCppTokenizer + do_load /
     # do_unload using vocab-only ggml-vocab-*.gguf fixtures (CPU-only,
     # sub-100MB). Pushes llama_cpp_tokenizer.cpp 0% → ~100% and the

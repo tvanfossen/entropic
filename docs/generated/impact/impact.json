@@ -6,9 +6,24 @@
       "req_name": "Teardown releases every model, context and adapter handle",
       "functions": [
         {
+          "name": "do_load_active",
+          "file": "src/inference/llama_cpp_backend.cpp",
+          "version": "2.13.0 [reviewed]"
+        },
+        {
           "name": "teardown_mtp_draft",
           "file": "src/inference/llama_cpp_backend.cpp",
           "version": "2.9.1"
+        },
+        {
+          "name": "~LlamaCppBackend",
+          "file": "src/inference/llama_cpp_backend.cpp",
+          "version": "2.2.8"
+        },
+        {
+          "name": "do_unload",
+          "file": "src/inference/llama_cpp_backend.cpp",
+          "version": "2.12.0"
         }
       ]
     },
@@ -16,6 +31,11 @@
       "req_id": "REQ-INFER-005",
       "req_name": "Every decode path honours cooperative cancellation within one token",
       "functions": [
+        {
+          "name": "generate_after_prefill",
+          "file": "src/inference/llama_cpp_backend.cpp",
+          "version": "2.14.6"
+        },
         {
           "name": "do_generate_text_only",
           "file": "src/inference/llama_cpp_backend.cpp",
@@ -41,16 +61,6 @@
           "name": "to_common_sampling",
           "file": "src/inference/llama_cpp_backend.cpp",
           "version": "2.10.4"
-        },
-        {
-          "name": "create",
-          "file": "src/inference/llama_cpp_sampler.cpp",
-          "version": "2.14.6"
-        },
-        {
-          "name": "create",
-          "file": "src/inference/llama_cpp_sampler.cpp",
-          "version": "2.14.6"
         }
       ]
     },
@@ -59,34 +69,19 @@
       "req_name": "Every declared grammar source reaches the sampler and exactly one wins",
       "functions": [
         {
+          "name": "patch_gemma4_required_root",
+          "file": "src/inference/gemma4_required_grammar.h",
+          "version": "2.14.6"
+        },
+        {
+          "name": "tool_grammar_for",
+          "file": "src/inference/llama_cpp_backend.cpp",
+          "version": "2.14.6"
+        },
+        {
           "name": "to_common_sampling",
           "file": "src/inference/llama_cpp_backend.cpp",
           "version": "2.10.4"
-        },
-        {
-          "name": "active_tool_grammar",
-          "file": "src/inference/llama_cpp_backend.h",
-          "version": "2.14.6"
-        },
-        {
-          "name": "add_tool_call_grammar",
-          "file": "src/inference/llama_cpp_sampler.cpp",
-          "version": "2.14.6"
-        },
-        {
-          "name": "create",
-          "file": "src/inference/llama_cpp_sampler.cpp",
-          "version": "2.14.6"
-        },
-        {
-          "name": "create",
-          "file": "src/inference/llama_cpp_sampler.cpp",
-          "version": "2.14.6"
-        },
-        {
-          "name": "create",
-          "file": "src/inference/llama_cpp_sampler.h",
-          "version": "2.14.6"
         }
       ]
     },
@@ -100,9 +95,14 @@
           "version": "2.14.6"
         },
         {
-          "name": "mcp_tools_to_common_chat",
+          "name": "render_with_tools",
           "file": "src/inference/llama_cpp_backend.cpp",
-          "version": "2.7.0"
+          "version": "2.14.6"
+        },
+        {
+          "name": "parse_response",
+          "file": "src/inference/llama_cpp_backend.cpp",
+          "version": "2.9.0"
         }
       ]
     },
@@ -143,7 +143,7 @@
       "req_name": "A prompt that cannot fit the tier context is refused, never decoded",
       "functions": [
         {
-          "name": "prefill_error",
+          "name": "refuse_over_context",
           "file": "src/inference/llama_cpp_backend.cpp",
           "version": "2.13.0"
         }
@@ -164,6 +164,11 @@
           "version": "2.13.0"
         },
         {
+          "name": "do_load_active",
+          "file": "src/inference/llama_cpp_backend.cpp",
+          "version": "2.13.0 [reviewed]"
+        },
+        {
           "name": "expert_offload_admits",
           "file": "src/inference/llama_cpp_backend.cpp",
           "version": "2.13.0"
@@ -172,17 +177,6 @@
           "name": "load_gpu_model",
           "file": "src/inference/llama_cpp_backend.cpp",
           "version": "2.13.0 [reviewed]"
-        }
-      ]
-    },
-    {
-      "req_id": "REQ-LOOP-010",
-      "req_name": "Session conversations are readable, writable, and losslessly round-trippable",
-      "functions": [
-        {
-          "name": "forget_session_kv",
-          "file": "src/inference/llama_cpp_backend.cpp",
-          "version": "2.13.0"
         }
       ]
     },

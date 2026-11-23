@@ -459,19 +459,26 @@ SCENARIO("gh#160: an isolated delegation never writes the project, and "
 namespace complete_only_model {
 
 /**
- * @brief Did the conversation run @p tool? (a tool result names it)
- * @param msgs Conversation after the turn.
- * @param tool Fully-qualified tool name.
- * @return true when a tool-result message carries tool_name == @p tool.
+ * @brief How many lines of the active test log contain @p needle?
+ *
+ * A completion call ends the loop and need not leave a tool-result message
+ * behind, so the execution log line is the evidence that it ran.
+ *
+ * @param test_name The name passed to start_test_log.
+ * @param needle Substring to count.
+ * @return Matching line count.
  * @utility
  * @version 2.14.6
  */
-inline bool ran_tool(const std::vector<Message>& msgs, const std::string& tool) {
-    for (const auto& m : msgs) {
-        auto name = m.metadata.find("tool_name");
-        if (name != m.metadata.end() && name->second == tool) { return true; }
+inline int count_log_lines(const std::string& test_name,
+                           const std::string& needle) {
+    if (g_file_sink) { g_file_sink->flush(); }
+    std::ifstream in((LOG_DIR / (test_name + ".log")).string());
+    int n = 0;
+    for (std::string line; std::getline(in, line);) {
+        if (line.find(needle) != std::string::npos) { ++n; }
     }
-    return false;
+    return n;
 }
 
 /**
@@ -602,7 +609,9 @@ SCENARIO("v2.14.6: a lead that answers in prose is nudged, and its forced "
                 CHECK_FALSE(test_log_contains(log_name, "turn failed"));
                 CHECK_FALSE(test_log_contains(log_name,
                                               "but the tier is not offered it"));
-                CHECK(ran_tool(after_turn2, "entropic.complete"));
+                // One completion per turn, each a real tool execution.
+                CHECK(count_log_lines(log_name, "[EXECUTE] entropic.complete")
+                      == 2);
                 CHECK(delegations == 0);
                 CHECK(after_turn2.back().role == "assistant");
                 end_test_log();

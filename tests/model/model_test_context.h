@@ -262,8 +262,8 @@ inline bool load_harness_inputs(ModelTestContext& ctx,
  * @utility
  * @version 2.14.6
  */
-inline void repoint_mmproj(ModelTestContext& ctx, ModelConfig& tier,
-                           const BundledModelEntry& entry,
+inline void repoint_mmproj(ModelTestContext& ctx, TierConfig& tier,
+                           const entropic::config::BundledModelEntry& entry,
                            const std::string& name) {
     auto mmproj = entry.mmproj_key.empty()
         ? fs::path{} : ctx.registry.resolve(entry.mmproj_key);

@@ -12,7 +12,7 @@ cite them.
 
 ---
 
-## Current State (v2.14.4 on `main`)
+## Current State (v2.14.5 on `main`)
 
 - C++20 engine, pure C ABI at every `.so` boundary
 - Unit + regression tests (CPU pre-commit gate), ThreadSanitizer preset
@@ -21,7 +21,10 @@ cite them.
   a GitHub Release artifact at each x.y.0 bump)
 - Per-library coverage gates enforced via gcovr
 - Requirement traceability: `docs/requirements.yaml` catalog checked by
-  `inv check-requirements` against the `@req` tags in source
+  the `clew-guard` pre-commit hook against the `@req` tags in source
+  (from v2.14.6; was doxygen-guard + `inv check-requirements`)
+- Documentation site: the clew wiki, built by `.github/workflows/docs.yml`
+  on each published release (from v2.14.6; replaces the doxygen site)
 - Single shared library `librentropic.so` plus `entropic` CLI binary
   plus pure-Python ctypes wrapper (`pip install entropic-engine`)
 - MCP servers built-in: filesystem, bash, git, web, diagnostics,
@@ -53,7 +56,27 @@ cite them.
 
 ---
 
-## v2.14.5 — failed turns are failures (gh#209, gh#212)
+## Planned releases (v2.14.6 → 3.0.0)
+
+Each release is a GitHub milestone of the same name; the milestone is the
+authoritative issue list, this table is the overview. Patch releases run unit
+tests plus the targeted multi-turn model tests for loop/tool changes; minor
+releases run the full model gate (02:00–06:00 window).
+
+| Release | Scope | Issues |
+|---|---|---|
+| **v2.14.6** | clew 2.0.0 adoption (`clew-guard` replaces doxygen-guard and `check_requirements`; the clew wiki replaces the doxygen Pages site). Host robustness. After a nudged turn that already had prose, the forced retry may only call `entropic.complete` | #229, #214, #216, #217, #220 |
+| **v2.14.7** | Conversations persisted (resume_delegation has messages to load); dynamic identities reachable; VRAM-pressure hook fires; a missing required tool argument is an error the model sees; download verifies size; CPU thread settings; repeated re-delegation capped; two-handle CPU+GPU model test | #224, #225, #226, #222, #184, #228, #187, #235 |
+| **v2.14.8** | Delegation and config bugs: child todos, routed-lead overrides, completion-summary schema, configure refuses an unfinishable `explicit_completion`. install-engine checks files not a stamp; MTP head/trunk mismatch is a typed error; git tool timeout; KV state blob validated. Test integrity: coverage gate re-measures, gh#93 assertions can fail | #177, #185, #191, #213, #219, #221, #140, #146, #170, #176 |
+| **v2.15.0** | Full external MCP results (images, resources, structuredContent); per-session context usage + event; per-call grammar + JSON-schema → GBNF; delegation crash recovery | #227, #230, #231, #232 |
+| **v2.16.0** | Session-scoped pause/resume; hot reload of static identities and the constitution | #233, #234 |
+| **v2.17.0** | Latest MCP revision (2026-07-28): negotiation in the client and the bridge, older revisions still accepted until 3.0.0; client disconnect cancels its turn | #238, #218 |
+| **v2.18.0** | Performance and VRAM: release frees the device context, ubatch ladder under partial offload, partial-offload variance, expert-tensor offload, batched multi-session decode, placement query, incremental decode as baseline, gemma QAT partial-offload abort, MTP sweeps | #210, #196, #195, #180, #178, #223, #102, #139, #167, #147 |
+| **3.0.0** | Inference backend as a plugin boundary (see *Deferred to 3.0.0*); embedded runtimes; pipeline correction loop; image-generation output tier; drop pre-2026-07-28 MCP revisions | #215, #128, #43 |
+
+---
+
+## v2.14.5 — failed turns are failures (gh#209, gh#212) (SHIPPED)
 
 - `ENTROPIC_ERROR_TURN_FAILED`; reason + unconfirmed text in last_error;
   failed turn rolled out of the session; turn-bounded answer selection that

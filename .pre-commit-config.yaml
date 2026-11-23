@@ -80,11 +80,8 @@ repos:
   # below guard.coverage.min_req_ratio fails the commit.
   # Pinned, never a branch: a mutable ref once meant CI and local disagreed
   # 3 violations vs 578 on identical code.
-  # PRE-RELEASE PIN: local clew tree at a feat/1.3.1 commit, for migrating
-  # against clew 2.0.0 before it is tagged. Switch to
-  # https://github.com/tvanfossen/clew at the v2.0.0 tag before merging.
-  - repo: /home/tvanfossen/Projects/clew
-    rev: 926dc6fe
+  - repo: https://github.com/tvanfossen/clew
+    rev: v2.0.0
     hooks:
       - id: clew-guard
         files: \.(h|hpp|c|cpp|cc|cxx|py)$

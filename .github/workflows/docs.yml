@@ -17,9 +17,6 @@ name: Docs — clew wiki → GitHub Pages
 #
 # Public URL: https://tvanfossen.github.io/entropic/
 #
-# PRE-RELEASE: pinned to clew v2.0.0, which is not tagged yet. This workflow
-# merges only after that tag exists (same gate as the clew-guard hook pin in
-# .pre-commit-config.yaml).
 
 on:
   release:

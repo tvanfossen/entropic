@@ -25,7 +25,7 @@ namespace entropic {
 /**
  * @brief Construct with a pre-built definition.
  * @param def Tool definition.
- * @dg_internal
+ * @utility
  * @version 1.8.5
  */
 ToolBase::ToolBase(ToolDefinition def)
@@ -34,7 +34,7 @@ ToolBase::ToolBase(ToolDefinition def)
 /**
  * @brief Get the tool name.
  * @return Tool name from definition.
- * @dg_internal
+ * @utility
  * @version 1.8.5
  */
 const std::string& ToolBase::name() const {
@@ -44,7 +44,7 @@ const std::string& ToolBase::name() const {
 /**
  * @brief Get the full tool definition.
  * @return Tool definition reference.
- * @dg_internal
+ * @utility
  * @version 1.8.5
  */
 const ToolDefinition& ToolBase::definition() const {
@@ -91,7 +91,7 @@ std::string render_shape(const ojson& schema);
  * @brief Render a `type` keyword (a name, or an array of names).
  * @param type The keyword's value.
  * @return e.g. "integer" or "string|null".
- * @dg_internal
+ * @utility
  * @version 2.14.0
  */
 std::string render_type(const ojson& type) {
@@ -108,7 +108,7 @@ std::string render_type(const ojson& type) {
  * @param alts Array of alternatives.
  * @param literal true for enum values, false for sub-schemas.
  * @return Alternatives joined with `|`.
- * @dg_internal
+ * @utility
  * @version 2.14.0
  */
 std::string render_alternatives(const ojson& alts, bool literal) {
@@ -124,7 +124,7 @@ std::string render_alternatives(const ojson& alts, bool literal) {
  * @brief Render an object schema as `{"key": shape, "opt"?: shape}`.
  * @param schema Object schema.
  * @return Rendered object.
- * @dg_internal
+ * @utility
  * @version 2.14.0
  */
 std::string render_object(const ojson& schema) {
@@ -148,7 +148,7 @@ std::string render_object(const ojson& schema) {
  * @brief Render a schema node by its `type` (object, array, or a name).
  * @param schema Schema node without enum/oneOf.
  * @return Rendered shape; "any" when no type is declared.
- * @dg_internal
+ * @utility
  * @version 2.14.0
  */
 std::string render_typed(const ojson& schema) {
@@ -168,7 +168,7 @@ std::string render_typed(const ojson& schema) {
  * @brief Render any supported schema node compactly.
  * @param schema Schema node.
  * @return Rendered shape.
- * @dg_internal
+ * @utility
  * @version 2.14.0
  */
 std::string render_shape(const ojson& schema) {
@@ -187,7 +187,7 @@ std::string render_shape(const ojson& schema) {
  * @brief Collect "`key`: description" notes, depth first.
  * @param schema Schema node.
  * @param[out] notes Accumulated notes.
- * @dg_internal
+ * @utility
  * @version 2.14.0
  */
 void collect_notes(const ojson& schema, std::vector<std::string>& notes) {
@@ -209,7 +209,7 @@ void collect_notes(const ojson& schema, std::vector<std::string>& notes) {
  * @brief Render the variant lines: one per top-level oneOf branch.
  * @param schema Top-level output schema.
  * @return Lines, each "- <title>: <shape>".
- * @dg_internal
+ * @utility
  * @version 2.14.0
  */
 std::string render_variants(const ojson& schema) {

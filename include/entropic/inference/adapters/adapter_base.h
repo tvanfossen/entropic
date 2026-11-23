@@ -143,12 +143,6 @@ public:
     /* ── Tool call parsing (subclass overrides) ──────────── */
 
     /**
-     * @brief Parse tool calls from model output.
-     * @param content Raw model output.
-     * @return ParseResult with cleaned content and tool calls.
-     * @version 1.8.2
-     */
-    /**
      * @brief This family's reasoning-block delimiters (gh#108).
      *
      * Default is the `<think>` pair used by Qwen and Nemotron. Override in a
@@ -241,6 +235,7 @@ protected:
 
     /**
      * @brief Parse <tool_call>JSON</tool_call> tagged blocks.
+     * @return One ToolCall per parseable tagged block, in emission order.
      * @version 1.8.2
      */
     std::vector<ToolCall> parse_tagged_tool_calls(
@@ -251,6 +246,7 @@ protected:
 
     /**
      * @brief Attempt JSON recovery on malformed tool call string.
+     * @return Recovered ToolCall if any repair produced a named call; nullopt otherwise.
      * @version 1.8.2
      */
     std::optional<ToolCall> try_recover_json(

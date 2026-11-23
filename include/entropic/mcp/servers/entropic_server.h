@@ -110,18 +110,18 @@ private:
     entropic_state_provider_t state_provider_{};  ///< Stored copy for lifetime
 
     /** @brief Register core tools (todo, complete, phase_change, prune).
-     * @dg_internal @version 1.9.12 */
+     * @utility @version 1.9.12 */
     int register_core_tools(const std::string& tools_dir);
 
     /** @brief Register delegation tools if multi-tier.
-     * @dg_internal @version 1.9.12 */
+     * @utility @version 1.9.12 */
     int register_delegation_tools(
         const std::string& tools_dir,
         const std::vector<std::string>& tier_names,
         const std::vector<std::string>& require_context_tiers = {});
 
     /** @brief Register introspection tools (diagnose, inspect, context_inspect).
-     * @dg_internal @version 2.0.6-rc16 */
+     * @utility @version 2.0.6-rc16 */
     int register_introspection_tools(const std::string& tools_dir);
 };
 

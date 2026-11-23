@@ -70,7 +70,8 @@ inline bool first_cont_in_range(uint8_t lead, uint8_t c1) {
  * Caller guarantees ``p`` is in [start, end). Returns 1 for ASCII,
  * 2/3/4 for valid multi-byte. Returns 0 on any malformedness; caller
  * advances by one byte and emits a replacement for that byte.
- * @utility
+ * @return Sequence length 1-4 when valid, 0 when malformed.
+ * @req REQ-SAFE-001
  * @version 2.1.0
  */
 size_t valid_seq_len(const uint8_t* p, const uint8_t* end) {

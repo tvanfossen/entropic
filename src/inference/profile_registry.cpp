@@ -25,7 +25,7 @@ auto logger = entropic::log::get("inference.profile_registry");
  * at call time. If hardware_concurrency() returns 0 (unknown platform),
  * falls back to 2 threads.
  *
- * @dg_internal
+ * @utility
  * @version 1.9.7
  */
 void ProfileRegistry::load_bundled() {
@@ -61,7 +61,7 @@ void ProfileRegistry::load_bundled() {
  * @brief Register a custom profile.
  * @param profile Profile to register. profile.name is the key.
  * @return true on success. false if name already exists.
- * @dg_internal
+ * @utility
  * @version 1.9.7
  */
 bool ProfileRegistry::register_profile(const GPUResourceProfile& profile) {
@@ -81,7 +81,7 @@ bool ProfileRegistry::register_profile(const GPUResourceProfile& profile) {
  * @brief Remove a profile by name.
  * @param name Profile name.
  * @return true if removed. false if not found.
- * @dg_internal
+ * @utility
  * @version 1.9.7
  */
 bool ProfileRegistry::deregister(const std::string& name) {
@@ -99,7 +99,7 @@ bool ProfileRegistry::deregister(const std::string& name) {
  * @brief Get a profile by name with fallback.
  * @param name Profile name.
  * @return Profile struct. Falls back to "balanced" with WARNING on miss.
- * @dg_internal
+ * @utility
  * @version 1.9.7
  */
 GPUResourceProfile ProfileRegistry::get(const std::string& name) const {
@@ -123,7 +123,7 @@ GPUResourceProfile ProfileRegistry::get(const std::string& name) const {
  * @brief Check if a profile name exists.
  * @param name Profile name.
  * @return true if registered.
- * @dg_internal
+ * @utility
  * @version 1.9.7
  */
 bool ProfileRegistry::has(const std::string& name) const {
@@ -134,7 +134,7 @@ bool ProfileRegistry::has(const std::string& name) const {
 /**
  * @brief List all registered profile names.
  * @return Sorted vector of profile names.
- * @dg_internal
+ * @utility
  * @version 1.9.7
  */
 std::vector<std::string> ProfileRegistry::list() const {
@@ -151,7 +151,7 @@ std::vector<std::string> ProfileRegistry::list() const {
 /**
  * @brief Number of registered profiles.
  * @return Count of profiles.
- * @dg_internal
+ * @utility
  * @version 1.9.7
  */
 size_t ProfileRegistry::size() const {

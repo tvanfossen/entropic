@@ -2,7 +2,7 @@
 
 > Local-first agentic inference engine — your models, your hardware, your control
 
-**API reference:** [tvanfossen.github.io/entropic](https://tvanfossen.github.io/entropic/) — auto-generated from doxygen on every release
+**API reference:** [tvanfossen.github.io/entropic](https://tvanfossen.github.io/entropic/) — the clew wiki (API reference, requirements and their tests), rebuilt on every release
 
 ## What Is Entropic?
 
@@ -376,13 +376,13 @@ Hook semantics:
 - `entropic_throughput_tok_per_sec()` facade query — `src/facade/entropic.cpp`
 - 20+ hook points doubling as telemetry consumption points — `src/core/hook_registry.cpp`
 - `session.log` + `session_model.log` per project_dir — `src/types/session_logger.cpp`
-- `doxygen-guard` enforces inline documentation on every function (`@brief`, exemption tag, `@version` bumped on body change) — `.doxygen-guard.yaml`, `.pre-commit-config.yaml`
+- `clew guard` enforces inline documentation on every function (`@brief`, `@req` or exemption tag, `@version` bumped on body change) and requirements traceability (no dead `@req`, every catalog entry implemented, `@req` share ≥ 0.50) — `.clew.yaml`, `.pre-commit-config.yaml`
 - `knots` enforces code-quality budget per function (cognitive complexity ≤ 15, McCabe ≤ 15, nesting ≤ 4, SLOC ≤ 50, ABC ≤ 10, returns ≤ 3) — `.pre-commit-config.yaml`
 - Per-library coverage gates via `gcovr` enforced by `inv check-coverage` — `tasks.py::check_coverage`, `.pre-commit-config.yaml`
 
 ### Quality / Testing
 
-- 16 pre-commit hooks: trim whitespace, end-of-file, ruff, ruff-format, flake8, knots, doxygen-guard, build, unit tests, per-library coverage, plus standard pre-commit checks — `.pre-commit-config.yaml`
+- Pre-commit hooks: trim whitespace, end-of-file, ruff, ruff-format, flake8, knots, clew-guard, bindings drift, build, unit tests, per-library coverage, plus standard pre-commit checks — `.pre-commit-config.yaml`
 - Unit + regression tests (Catch2 v3 BDD style) — `tests/unit/`
 - Model tests, GPU-recommended (CPU works but is impractically slow), developer-run; results attached to the GitHub Release as `model-results-vX.Y.Z.json` at each x.y.0 — `tests/model/`, `tasks.py::test`
 - `tests/distribution-smoke-consumer/` exercises the `find_package(entropic)` consumer experience end-to-end — `tests/distribution-smoke-consumer/`

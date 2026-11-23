@@ -19,7 +19,7 @@ namespace entropic {
  * @param max_delay_ms Maximum delay cap.
  * @param max_retries Maximum attempts (0 = infinite).
  * @param backoff_factor Exponential multiplier.
- * @dg_internal
+ * @utility
  * @version 1.8.7
  */
 ReconnectPolicy::ReconnectPolicy(
@@ -35,7 +35,7 @@ ReconnectPolicy::ReconnectPolicy(
 /**
  * @brief Construct from config struct.
  * @param config ReconnectConfig.
- * @dg_internal
+ * @utility
  * @version 1.8.7
  */
 ReconnectPolicy::ReconnectPolicy(const ReconnectConfig& config)

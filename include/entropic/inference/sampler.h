@@ -72,7 +72,7 @@ public:
      * are created fresh per generation, so this is largely a
      * test-facing hook.
      *
-     * @dg_internal
+     * @utility
      * @version 2.3.10
      */
     virtual void reset() {}

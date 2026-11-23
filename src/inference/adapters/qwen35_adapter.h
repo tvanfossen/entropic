@@ -58,6 +58,7 @@ public:
 
     /**
      * @brief Wrap tool result in <tool_response> tags.
+     * @return User-role message carrying the result wrapped in <tool_response> tags.
      * @version 1.8.2
      */
     Message format_tool_result(
@@ -67,6 +68,7 @@ public:
 protected:
     /**
      * @brief Format tools in <tools> tags with OpenAI function JSON.
+     * @return The tool definitions wrapped in a <tools> block.
      * @version 1.8.2
      */
     std::string format_tools(
@@ -75,6 +77,7 @@ protected:
 private:
     /**
      * @brief Parse <function=name><parameter=key>value</parameter></function>.
+     * @return One ToolCall per parsed <function=...> block.
      * @version 1.8.2
      */
     std::vector<ToolCall> parse_xml_function_calls(
@@ -82,6 +85,7 @@ private:
 
     /**
      * @brief Extract parameter pairs from function body.
+     * @return Parameter name to raw value.
      * @version 1.8.2
      */
     std::unordered_map<std::string, std::string> extract_xml_parameters(
@@ -89,6 +93,7 @@ private:
 
     /**
      * @brief Remove tool calls and think blocks from content.
+     * @return Content with tool-call markup and think blocks removed.
      * @version 1.8.2
      */
     std::string clean_content(const std::string& content) const;

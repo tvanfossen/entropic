@@ -27,7 +27,7 @@ namespace entropic {
 
 /**
  * @brief Tool for fetching web page content by URL.
- * @dg_internal
+ * @utility
  * @version 1.8.5
  */
 class WebFetchTool : public ToolBase {
@@ -35,7 +35,7 @@ public:
     /**
      * @brief Construct from tool definition.
      * @param def Tool definition loaded from web/web_fetch.json.
-     * @dg_internal
+     * @utility
      * @version 1.8.5
      */
     explicit WebFetchTool(ToolDefinition def)
@@ -56,7 +56,7 @@ public:
      * @brief Fetch web page content (placeholder).
      * @param args_json JSON with "url" and optional "max_length".
      * @return ServerResponse with placeholder text.
-     * @dg_internal
+     * @utility
      * @version 1.8.5
      */
     ServerResponse execute(const std::string& args_json) override;
@@ -66,7 +66,7 @@ public:
  * @brief Parse fetch args and return the declared not_implemented error.
  * @param args_json JSON with "url" and optional "max_length".
  * @return ServerResponse with `{"error":"not_implemented",...}`.
- * @dg_internal
+ * @utility
  * @version 2.14.0
  */
 ServerResponse WebFetchTool::execute(const std::string& args_json) {
@@ -93,7 +93,7 @@ ServerResponse WebFetchTool::execute(const std::string& args_json) {
 
 /**
  * @brief Tool for web search queries.
- * @dg_internal
+ * @utility
  * @version 1.8.5
  */
 class WebSearchTool : public ToolBase {
@@ -101,7 +101,7 @@ public:
     /**
      * @brief Construct from tool definition.
      * @param def Tool definition loaded from web/web_search.json.
-     * @dg_internal
+     * @utility
      * @version 1.8.5
      */
     explicit WebSearchTool(ToolDefinition def)
@@ -122,7 +122,7 @@ public:
      * @brief Execute web search (placeholder).
      * @param args_json JSON with "query" and optional "max_results".
      * @return ServerResponse with placeholder text.
-     * @dg_internal
+     * @utility
      * @version 1.8.5
      */
     ServerResponse execute(const std::string& args_json) override;
@@ -132,7 +132,7 @@ public:
  * @brief Parse search args and return the declared not_implemented error.
  * @param args_json JSON with "query" and optional "max_results".
  * @return ServerResponse with `{"error":"not_implemented",...}`.
- * @dg_internal
+ * @utility
  * @version 2.14.0
  */
 ServerResponse WebSearchTool::execute(const std::string& args_json) {
@@ -192,7 +192,7 @@ WebServer::WebServer(const std::string& data_dir)
 
 /**
  * @brief Destructor.
- * @dg_internal
+ * @utility
  * @version 1.8.5
  */
 WebServer::~WebServer() = default;

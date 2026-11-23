@@ -100,7 +100,7 @@ static std::string serialize_config(
 
 /**
  * @brief Lightweight cursor into a JSON string.
- * @dg_internal
+ * @utility
  * @version 1.9.9
  */
 struct JsonCursor {
@@ -462,7 +462,7 @@ static bool parse_messages(const char* json,
 /**
  * @brief Construct with default compactor wrapping CompactionManager.
  * @param default_manager v1.8.4 CompactionManager reference.
- * @dg_internal
+ * @utility
  * @version 1.9.9
  */
 CompactorRegistry::CompactorRegistry(
@@ -637,7 +637,7 @@ bool CompactorRegistry::has_custom_compactor(
  * @param compactor C function pointer.
  * @param user_data Opaque pointer.
  * @return C++ callable wrapping the C callback.
- * @dg_internal
+ * @utility
  * @version 1.9.9
  */
 CompactorFn CompactorRegistry::wrap_c_compactor(

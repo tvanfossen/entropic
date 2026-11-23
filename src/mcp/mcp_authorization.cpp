@@ -17,7 +17,7 @@ namespace entropic {
 /**
  * @brief Register an empty key set for an identity.
  * @param identity_name Identity/tier name.
- * @dg_internal
+ * @utility
  * @version 1.9.4
  */
 void MCPAuthorizationManager::register_identity(
@@ -51,7 +51,7 @@ bool MCPAuthorizationManager::is_enforced(
  * @param pattern Tool pattern.
  * @param level Access level.
  * @return ENTROPIC_OK or ENTROPIC_ERROR_IDENTITY_NOT_FOUND.
- * @dg_internal
+ * @utility
  * @version 1.9.4
  */
 entropic_error_t MCPAuthorizationManager::grant(
@@ -72,7 +72,7 @@ entropic_error_t MCPAuthorizationManager::grant(
  * @param identity_name Target identity.
  * @param pattern Tool pattern.
  * @return ENTROPIC_OK or ENTROPIC_ERROR_IDENTITY_NOT_FOUND.
- * @dg_internal
+ * @utility
  * @version 1.9.4
  */
 entropic_error_t MCPAuthorizationManager::revoke(
@@ -131,7 +131,7 @@ bool MCPAuthorizationManager::check_access(
  * @param pattern Tool pattern.
  * @param level Access level.
  * @return ENTROPIC_OK, NOT_FOUND, or PERMISSION_DENIED.
- * @dg_internal
+ * @utility
  * @version 1.9.4
  */
 entropic_error_t MCPAuthorizationManager::grant_from(
@@ -162,7 +162,7 @@ entropic_error_t MCPAuthorizationManager::grant_from(
  * @brief List all keys for an identity.
  * @param identity_name Identity to query.
  * @return Vector of MCPKey entries.
- * @dg_internal
+ * @utility
  * @version 1.9.4
  */
 std::vector<MCPKey> MCPAuthorizationManager::list_keys(
@@ -178,7 +178,7 @@ std::vector<MCPKey> MCPAuthorizationManager::list_keys(
 /**
  * @brief Serialize all identity key sets to JSON.
  * @return JSON object string.
- * @dg_internal
+ * @utility
  * @version 1.9.4
  */
 std::string MCPAuthorizationManager::serialize_all() const {
@@ -195,7 +195,7 @@ std::string MCPAuthorizationManager::serialize_all() const {
  * @brief Deserialize all identity key sets from JSON.
  * @param json JSON object string.
  * @return true if parsed successfully.
- * @dg_internal
+ * @utility
  * @version 1.9.4
  */
 bool MCPAuthorizationManager::deserialize_all(
@@ -223,7 +223,7 @@ bool MCPAuthorizationManager::deserialize_all(
 /**
  * @brief Remove an identity's key set.
  * @param identity_name Identity to unregister.
- * @dg_internal
+ * @utility
  * @version 1.9.4
  */
 void MCPAuthorizationManager::unregister_identity(

@@ -19,7 +19,7 @@ namespace entropic {
 /**
  * @brief Construct with server name.
  * @param name Server name.
- * @dg_internal
+ * @utility
  * @version 1.8.5
  */
 MCPServerBase::MCPServerBase(std::string name)
@@ -28,7 +28,7 @@ MCPServerBase::MCPServerBase(std::string name)
 /**
  * @brief Get the server name.
  * @return Server name.
- * @dg_internal
+ * @utility
  * @version 1.8.5
  */
 const std::string& MCPServerBase::name() const {
@@ -103,7 +103,7 @@ std::string MCPServerBase::list_tools() const {
  * @return `{}` when `raw` is empty/whitespace or a literal JSON null;
  *         otherwise `raw` unchanged.
  * @req REQ-MCP-013
- * @dg_internal
+ * @utility
  * @version 2.12.0
  */
 std::string MCPServerBase::normalize_args(
@@ -266,19 +266,19 @@ bool MCPServerBase::set_working_dir(const std::string& /*path*/) {
  * @brief Serialize ServerResponse to JSON envelope.
  * @param response Response to serialize.
  * @return JSON string.
- * @dg_internal
+ * @utility
  * @version 1.8.5
  */
 /**
  * @brief Map directive type enum to wire-format string.
  * @param type Directive type.
  * @return Type string.
- * @dg_internal
+ * @utility
  * @version 1.8.5
  */
 /**
  * @brief Directive type enum → wire-format string lookup.
- * @dg_internal
+ * @utility
  * @version 1.8.5
  */
 static const char* const DIRECTIVE_NAMES[] = {

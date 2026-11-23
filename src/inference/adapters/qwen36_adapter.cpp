@@ -35,7 +35,7 @@ constexpr const char* TOOL_RESULT_SUFFIX =
 /**
  * @brief Generate a simple counter-based tool-call id.
  * @return ID string of the form "tc-N".
- * @dg_internal
+ * @utility
  * @version 2.1.9
  */
 std::string generate_uuid() {
@@ -62,7 +62,7 @@ constexpr const char* VISION_INSTRUCTION =
  *
  * @param content Raw model output.
  * @return ParseResult.
- * @dg_internal
+ * @utility
  * @version 2.1.9
  */
 ParseResult Qwen36Adapter::parse_tool_calls(const std::string& content) const {
@@ -85,7 +85,7 @@ ParseResult Qwen36Adapter::parse_tool_calls(const std::string& content) const {
  *
  * @param content Model output.
  * @return Vector of parsed tool calls.
- * @dg_internal
+ * @utility
  * @version 2.1.9
  */
 std::vector<ToolCall> Qwen36Adapter::parse_xml_function_calls(
@@ -126,7 +126,7 @@ std::vector<ToolCall> Qwen36Adapter::parse_xml_function_calls(
  *
  * @param func_body Function body text.
  * @return Map of parameter key -> value.
- * @dg_internal
+ * @utility
  * @version 2.4.1
  */
 std::unordered_map<std::string, std::string> Qwen36Adapter::extract_xml_parameters(
@@ -143,7 +143,7 @@ std::unordered_map<std::string, std::string> Qwen36Adapter::extract_xml_paramete
  * @param tool_call Executed tool call (name available for logging only).
  * @param result Execution result text.
  * @return User-role message with the wrapped result.
- * @dg_internal
+ * @utility
  * @version 2.1.9
  */
 Message Qwen36Adapter::format_tool_result(
@@ -168,7 +168,7 @@ Message Qwen36Adapter::format_tool_result(
  *
  * @param tool_jsons Tool definition JSON strings.
  * @return Section to inject into the system prompt.
- * @dg_internal
+ * @utility
  * @version 2.1.9
  */
 std::string Qwen36Adapter::format_tools(
@@ -215,7 +215,7 @@ std::string Qwen36Adapter::format_tools(
  * @brief Remove tool calls and think blocks from content.
  * @param content Raw model output.
  * @return Cleaned content.
- * @dg_internal
+ * @utility
  * @version 2.1.9
  */
 std::string Qwen36Adapter::clean_content(const std::string& content) const {
@@ -234,7 +234,7 @@ std::string Qwen36Adapter::clean_content(const std::string& content) const {
  * @param base_system Base system prompt text.
  * @param has_vision Whether vision is enabled for the tier.
  * @return System prompt, with vision instructions appended if active.
- * @dg_internal
+ * @utility
  * @version 2.1.9
  */
 std::string Qwen36Adapter::format_system_with_vision(
@@ -250,7 +250,7 @@ std::string Qwen36Adapter::format_system_with_vision(
  * @brief Format content parts using the OpenAI content-array convention.
  * @param parts Content parts from a message.
  * @return JSON string in the OpenAI content-array format.
- * @dg_internal
+ * @utility
  * @version 2.1.9
  */
 std::string Qwen36Adapter::format_content_parts(

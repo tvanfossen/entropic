@@ -242,7 +242,7 @@ private:
      *
      * @param canonical_root Canonical project root.
      * @param root_gi The root .gitignore (skipped during the scan).
-     * @dg_internal
+     * @utility
      * @version 2.13.0
      */
     void load_nested_gitignores(const std::filesystem::path& canonical_root,
@@ -257,7 +257,7 @@ private:
      * @param[in,out] it Current walk position.
      * @param canonical_root Canonical project root.
      * @param root_gi The root `.gitignore` (already loaded).
-     * @dg_internal
+     * @utility
      * @version 2.13.0
      */
     void visit_discovery_entry(
@@ -272,7 +272,7 @@ private:
      * @param dir Directory being considered.
      * @param canonical_root Canonical project root.
      * @return true when the directory must be pruned.
-     * @dg_internal
+     * @utility
      * @version 2.13.0
      */
     bool prunes_discovery(
@@ -286,7 +286,7 @@ private:
      * out of step with the ordered rule set (gh#161).
      *
      * @param rule Compiled rule; consumed.
-     * @dg_internal
+     * @utility
      * @version 2.13.0
      */
     void push_rule(Rule&& rule);

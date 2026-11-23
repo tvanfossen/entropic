@@ -225,7 +225,7 @@ static entropic_error_t check_identity(entropic_handle_t h) {
  * @return Non-null backend pointer in ACTIVE state.
  * @throws std::runtime_error if the tier is unknown, or its model cannot
  *         be made resident (refused by the VRAM gate, or load failure).
- * @dg_internal
+ * @utility
  * @req REQ-INFER-019
  * @version 2.13.0
  */
@@ -291,7 +291,7 @@ entropic_error_t entropic_create(entropic_handle_t* handle) {
  *
  * @param h Engine handle.
  * @return ENTROPIC_OK or error code.
- * @dg_internal
+ * @utility
  * @version 2.0.0
  */
 /**
@@ -301,7 +301,7 @@ entropic_error_t entropic_create(entropic_handle_t* handle) {
  * is parsed, so registry keys resolve during config loading.
  *
  * @param h Engine handle.
- * @dg_internal
+ * @utility
  * @version 2.0.1
  */
 /* preload_bundled_models moved to BundledModels::auto_discover_and_load() — Step 6 */
@@ -623,7 +623,7 @@ static void populate_tier_info(entropic_handle_t h,
 /**
  * @brief Initialize persistence: storage + session logger.
  * @param h Engine handle with config.log_dir set.
- * @dg_internal
+ * @utility
  * @version 2.0.1
  */
 /**
@@ -798,7 +798,7 @@ static bool si_load_delegation_with_messages(
  *
  * @param sb Storage backend (non-owning).
  * @return StorageInterface ready to pass to `AgentEngine::set_storage`.
- * @dg_internal
+ * @utility
  * @version 2.13.0
  */
 static entropic::StorageInterface build_storage_iface(
@@ -817,7 +817,7 @@ static entropic::StorageInterface build_storage_iface(
 
 /**
  * @brief Initialize persistence: storage + session logger + StorageInterface.
- * @dg_internal
+ * @utility
  * @version 2.1.6
  */
 static void init_persistence(entropic_handle_t h) {
@@ -881,7 +881,7 @@ static std::vector<std::string> collect_delegatable_tiers(
  *
  * @param h Engine handle with config loaded.
  * @param data_dir Bundled data directory path.
- * @dg_internal
+ * @utility
  * @version 2.14.0
  */
 static void init_mcp_servers(entropic_handle_t h,
@@ -944,7 +944,7 @@ static std::string build_shared_prompt_prefix(
  * @brief Cache per-tier frontmatter fields (allowed_tools, validation_rules, relay).
  * @param h Engine handle with config + engine constructed.
  * @param data_dir Bundled data directory.
- * @dg_internal
+ * @utility
  * @version 2.0.11
  */
 /**
@@ -1093,7 +1093,7 @@ static void thread_frontmatter_samplers(
 /**
  * @brief Wire the ToolExecutor and attach it to the engine.
  * @param h Engine handle with engine + server_manager constructed.
- * @dg_internal
+ * @utility
  * @version 2.0.3
  */
 /**
@@ -1227,7 +1227,7 @@ static char* sp_get_validation(void* ud) {
  * @param h Engine handle with engine constructed.
  * @param iface Inference interface (passed to validator for critique generation).
  * @param constitution_text Constitution text (may be empty).
- * @dg_internal
+ * @utility
  * @version 2.10.3
  */
 static void wire_hooks_and_validator(
@@ -1632,7 +1632,7 @@ static char* sp_load_delegation_conversation(
  * residency set alongside config/identities/tools/history/metrics.
  *
  * @param h Engine handle with all subsystems constructed.
- * @dg_internal
+ * @utility
  * @version 2.2.4
  */
 static void wire_state_provider(entropic_handle_t h) {
@@ -1662,7 +1662,7 @@ static void wire_state_provider(entropic_handle_t h) {
 /**
  * @brief Pass per-identity validation rules to the validator.
  * @param h Engine handle with validator + tier_validation_rules populated.
- * @dg_internal
+ * @utility
  * @version 2.0.6
  */
 static void wire_tier_validation_rules(entropic_handle_t h) {
@@ -1722,7 +1722,7 @@ static std::vector<std::string> facade_unsafe_external_tools(
 /**
  * @brief Install the gh#160 session-root + dir-swap seams on the engine.
  * @param h Engine handle with engine + server_manager constructed.
- * @dg_internal
+ * @utility
  * @version 2.13.0 [reviewed]
  */
 static void wire_session_roots(entropic_handle_t h) {
@@ -1845,7 +1845,7 @@ static void start_external_bridge(entropic_handle_t h) {
  *
  * @param h Engine handle with config populated.
  * @return ENTROPIC_OK or error code.
- * @dg_internal
+ * @utility
  * @version 2.1.10.1
  */
 /**
@@ -1869,7 +1869,7 @@ static entropic_error_t reject_if_configured(entropic_handle_t h) {
 
 /**
  * @brief Shared body of all entropic_configure* entry points.
- * @dg_internal
+ * @utility
  * @version 2.2.6
  */
 /**
@@ -1910,7 +1910,7 @@ static entropic_error_t init_orchestrator(
  *
  * @param h Engine handle.
  * @param data_dir Resolved data directory.
- * @dg_internal
+ * @utility
  * @version 2.13.0 [reviewed]
  */
 static void init_engine_and_interfaces(
@@ -1961,7 +1961,7 @@ static void init_engine_and_interfaces(
  *
  * @param h Engine handle.
  * @param data_dir Resolved data directory.
- * @dg_internal
+ * @utility
  * @version 2.9.19
  */
 static void wire_prompts_and_persistence(
@@ -1998,7 +1998,7 @@ static void wire_prompts_and_persistence(
  * @return ENTROPIC_OK, or ENTROPIC_ERROR_INVALID_CONFIG with
  *        `last_error` set to an actionable message.
  * @req REQ-API-004
- * @dg_internal
+ * @utility
  * @version 2.13.0
  */
 static entropic_error_t validate_prompt_sources(
@@ -2036,7 +2036,7 @@ static entropic_error_t validate_prompt_sources(
  * @param h Engine handle carrying the parsed config.
  * @param data_dir Resolved data directory.
  * @req REQ-INFER-007
- * @dg_internal
+ * @utility
  * @version 2.13.0
  */
 static void warn_tier_grammars_step(
@@ -2790,7 +2790,7 @@ entropic_error_t entropic_run_streaming(
  * @param[out] out_rc Set to ENTROPIC_OK on success, or to a specific
  *        error code (NO_VISION_TIER) when validation fails.
  * @return Parsed messages on success, empty vector on failure.
- * @dg_internal
+ * @utility
  * @version 2.1.8
  */
 static std::vector<entropic::Message> parse_and_check_vision(
@@ -2810,7 +2810,7 @@ static std::vector<entropic::Message> parse_and_check_vision(
 
 /**
  * @brief Blocking multimodal run (gh#37, v2.1.8).
- * @dg_internal
+ * @utility
  * @version 2.1.8
  */
 /**
@@ -2822,7 +2822,7 @@ static std::vector<entropic::Message> parse_and_check_vision(
  * stream-observer completion sentinel. Returns the canonical
  * entropic_error_t status — single exit.
  *
- * @dg_internal
+ * @utility
  * @version 2.14.5
  */
 static entropic_error_t run_messages_inner(
@@ -2891,12 +2891,12 @@ entropic_error_t entropic_run_messages(
 
 /**
  * @brief Streaming multimodal run (gh#37, v2.1.8).
- * @dg_internal
+ * @utility
  * @version 2.1.8
  */
 /**
  * @brief Inner streaming dispatch — no front validation (gh#37).
- * @dg_internal
+ * @utility
  * @version 2.14.5
  */
 static entropic_error_t run_messages_stream_inner(
@@ -3460,7 +3460,7 @@ entropic_error_t entropic_run_session_as(
  * @param input User input.
  * @param on_token Token callback.
  * @return ENTROPIC_OK, or the first argument error.
- * @dg_internal
+ * @utility
  * @version 2.14.0
  */
 static entropic_error_t check_stream_args(
@@ -3486,7 +3486,7 @@ static entropic_error_t check_stream_args(
  * @param user_data Forwarded to on_token.
  * @param cancel_flag Optional cancel flag.
  * @return ENTROPIC_OK, CANCELLED, or GENERATE_FAILED.
- * @dg_internal
+ * @utility
  * @version 2.14.5
  */
 static entropic_error_t stream_session_turn(
@@ -3518,7 +3518,7 @@ static entropic_error_t stream_session_turn(
  * @param user_data Forwarded to on_token.
  * @param cancel_flag Optional cancel flag.
  * @return As entropic_run_session_streaming_as().
- * @dg_internal
+ * @utility
  * @version 2.14.0
  */
 static entropic_error_t run_session_streaming_impl(
@@ -3877,7 +3877,7 @@ entropic_error_t entropic_context_usage(
 
 /**
  * @brief Save tier's KV cache to file body (gh#23 v2.3.25).
- * @dg_internal
+ * @utility
  * @version 2.13.0
  */
 static entropic_error_t do_state_save(
@@ -3921,7 +3921,7 @@ entropic_error_t entropic_state_save(
 
 /**
  * @brief Load tier's KV cache from file body (gh#23 v2.3.25).
- * @dg_internal
+ * @utility
  * @version 2.3.25
  */
 /**
@@ -3943,7 +3943,7 @@ static bool read_state_file(const char* path, std::vector<uint8_t>& out_buf) {
 
 /**
  * @brief Load tier's KV cache from file body (gh#23 v2.3.25).
- * @dg_internal
+ * @utility
  * @version 2.13.0
  */
 static entropic_error_t do_state_load(
@@ -4016,7 +4016,7 @@ entropic_error_t entropic_metrics_json(
  * @return ENTROPIC_OK, or ENTROPIC_ERROR_ADAPTER_LOAD_FAILED.
  * @throws std::runtime_error when the path names no tier, or its model
  *         cannot be made resident.
- * @dg_internal
+ * @utility
  * @version 2.13.0
  */
 static entropic_error_t do_adapter_load(
@@ -5000,7 +5000,7 @@ entropic_error_t entropic_identity_count(
  *
  * @param lr Engine-side result.
  * @param[out] result Caller-owned struct; its array members are allocated.
- * @dg_internal
+ * @utility
  * @version 2.13.0
  */
 static void fill_logprob_result(const entropic::LogprobResult& lr,

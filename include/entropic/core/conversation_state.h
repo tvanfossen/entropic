@@ -35,7 +35,7 @@ namespace entropic {
  * `session_key`. `""` is the default session and behaves exactly as the
  * single shared conversation did before v2.12.0.
  *
- * @dg_internal
+ * @utility
  * @version 2.12.0
  */
 struct ConversationState {
@@ -49,7 +49,7 @@ struct ConversationState {
 
     /**
      * @brief Drop the history (a new session under the same key).
-     * @dg_internal
+     * @utility
      * @version 2.12.0
      */
     void clear() { messages.clear(); }
@@ -57,7 +57,7 @@ struct ConversationState {
     /**
      * @brief Number of messages held.
      * @return Message count.
-     * @dg_internal
+     * @utility
      * @version 2.12.0
      */
     std::size_t count() const { return messages.size(); }

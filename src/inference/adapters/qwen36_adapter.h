@@ -98,7 +98,7 @@ private:
      * @brief Parse `<function=name><parameter=key>value</parameter></function>` blocks.
      * @param content Model output.
      * @return Vector of parsed tool calls.
-     * @dg_internal
+     * @utility
      * @version 2.1.9
      */
     std::vector<ToolCall> parse_xml_function_calls(
@@ -108,7 +108,7 @@ private:
      * @brief Extract `<parameter=...>...</parameter>` pairs from a function body.
      * @param func_body Function body text.
      * @return Map of parameter key -> value.
-     * @dg_internal
+     * @utility
      * @version 2.1.9
      */
     std::unordered_map<std::string, std::string> extract_xml_parameters(
@@ -118,7 +118,7 @@ private:
      * @brief Strip tool calls and think blocks from content.
      * @param content Raw model output.
      * @return Cleaned content.
-     * @dg_internal
+     * @utility
      * @version 2.1.9
      */
     std::string clean_content(const std::string& content) const;

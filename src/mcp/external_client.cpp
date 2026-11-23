@@ -21,7 +21,7 @@ namespace entropic {
  * @brief Construct with name and transport.
  * @param name Server name.
  * @param transport Ownership transferred.
- * @dg_internal
+ * @utility
  * @version 1.8.7
  */
 ExternalMCPClient::ExternalMCPClient(
@@ -66,7 +66,7 @@ bool ExternalMCPClient::connect() {
 
 /**
  * @brief Disconnect: close transport, clear cache.
- * @dg_internal
+ * @utility
  * @version 1.8.7
  */
 void ExternalMCPClient::disconnect() {
@@ -290,7 +290,7 @@ ExternalMCPClient::refresh_tools() {
 /**
  * @brief Check connection state via transport.
  * @return true if connected.
- * @dg_internal
+ * @utility
  * @version 1.8.7
  */
 bool ExternalMCPClient::is_connected() const {

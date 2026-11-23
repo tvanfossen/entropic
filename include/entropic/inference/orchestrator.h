@@ -177,6 +177,7 @@ public:
      * polls the flag per decode step. Closes the gh#81 60s-lag gap
      * where the batch path had no path to honor mid-decode cancel.
      *
+     * @return Generation result, with an error result when no model is available.
      * @version 2.4.2
      */
     GenerationResult generate(
@@ -210,6 +211,7 @@ public:
 
     /**
      * @brief Streaming generation.
+     * @return Result with content parsed by the shared rule; ENTROPIC_ERROR_GENERATE_FAILED when no model resolves for the tier, or ENTROPIC_ERROR_GRAMMAR_NOT_FOUND when its grammar is unregistered.
      * @version 1.8.2
      */
     GenerationResult generate_streaming(
@@ -233,36 +235,42 @@ public:
 
     /**
      * @brief Last routing result.
+     * @return Copy of the most recent routing decision.
      * @version 1.8.2
      */
     RoutingResult last_routing_result() const;
 
     /**
      * @brief Last used tier name.
+     * @return Name of the tier that served the last generation.
      * @version 1.8.2
      */
     std::string last_used_tier() const;
 
     /**
      * @brief Currently loaded model tier names.
+     * @return Names of the tiers whose models are currently loaded.
      * @version 1.8.2
      */
     std::vector<std::string> loaded_models() const;
 
     /**
      * @brief All configured tier names.
+     * @return Names of every configured tier.
      * @version 1.8.2
      */
     std::vector<std::string> available_models() const;
 
     /**
      * @brief Check if handoff is permitted.
+     * @return true only when `from` has an explicit rule set listing `to`; an empty rule set denies every pair.
      * @version 1.8.2
      */
     bool can_handoff(const std::string& from, const std::string& to) const;
 
     /**
      * @brief Get adapter for a tier.
+     * @return The tier's adapter, or nullptr when the tier has none.
      * @version 1.8.2
      */
     ChatAdapter* get_adapter(const std::string& tier_name) const;
@@ -636,7 +644,7 @@ public:
      *
      * @param params Generation params (mutated in place).
      * @param tier_name Tier whose frontmatter sampler config to apply.
-     * @dg_internal
+     * @utility
      * @version 2.8.0
      */
     void apply_tier_sampler_defaults_for_test(GenerationParams& params,
@@ -859,7 +867,7 @@ private:
      *
      * @param tier_name Tier name (must be present in `config_.models.tiers`).
      * @return Estimated footprint bytes. 0 if unknown or unpriceable.
-     * @dg_internal
+     * @utility
      * @req REQ-INFER-019
      * @version 2.11.0
      */
@@ -869,7 +877,7 @@ private:
      * @brief Log the largest context that would fit a refused tier (gh#142).
      *
      * @param tier_name Tier being refused for VRAM.
-     * @dg_internal
+     * @utility
      * @req REQ-INFER-019
      * @version 2.11.0
      */
@@ -895,7 +903,7 @@ private:
      * set the variable.
      *
      * @return Bytes, or 0 when there is no device to ask.
-     * @dg_internal
+     * @utility
      * @req REQ-INFER-019
      * @version 2.11.0
      */
@@ -908,7 +916,7 @@ private:
      * `residency_admits()` (under swap_mutex_) for every admission, so a
      * deferred handle measures at its first load and never before. Logs the
      * budget with its real source — the env override or the device.
-     * @dg_internal
+     * @utility
      * @req REQ-INFER-019
      * @version 2.14.0
      */
@@ -921,7 +929,7 @@ private:
      * costs nothing to read, the device costs a CUDA context.
      * @param config Parsed engine config.
      * @return true to resolve the budget at initialize().
-     * @dg_internal
+     * @utility
      * @version 2.14.0
      */
     static bool budget_resolves_at_init(const ParsedConfig& config);
@@ -929,7 +937,7 @@ private:
     /**
      * @brief Route ggml/llama logs to a file before any model loads.
      * @param config Parsed engine config.
-     * @dg_internal
+     * @utility
      * @version 2.14.0
      */
     static void route_ggml_logs(const ParsedConfig& config);
@@ -941,7 +949,7 @@ private:
      * @param tier_name   Tier name.
      * @param model_path  Resolved GGUF path.
      * @param footprint   Bytes (0 if unknown).
-     * @dg_internal
+     * @utility
      * @version 2.2.4
      */
     void fire_residency_observer(
@@ -966,6 +974,7 @@ private:
 
     /**
      * @brief Get model for tier, loading/swapping as needed.
+     * @return Backend pointer, or nullptr on a refused activation or a load failure.
      * @version 1.8.2
      */
     InferenceBackend* get_model(const std::string& tier_name);
@@ -974,7 +983,7 @@ private:
      * @brief Record activation timestamp and fire ActivationSwap when
      *        the active tier changes during a reuse hit. Extracted to
      *        keep `get_model` under the knots SLOC/complexity gate.
-     * @dg_internal
+     * @utility
      * @version 2.2.4
      */
     void record_activation_reuse(const std::string& tier_name);
@@ -988,7 +997,7 @@ private:
      * `gpu_layers: auto` is resolved, and an explicit configuration that
      * provably cannot work is refused with a typed code.
      *
-     * @dg_internal
+     * @utility
      * @req REQ-INFER-019
      * @version 2.13.0
      */
@@ -997,7 +1006,7 @@ private:
     /**
      * @brief Resolve `gpu_layers: auto` from measured free VRAM (gh#148).
      * @param tier_name Tier being admitted.
-     * @dg_internal
+     * @utility
      * @req REQ-INFER-019
      * @version 2.13.0
      */
@@ -1006,7 +1015,7 @@ private:
     /**
      * @brief Bytes of the draft head, when speculative decode is configured.
      * @return Draft GGUF size, or 0 when off or unreadable.
-     * @dg_internal
+     * @utility
      * @version 2.13.1
      */
     uint64_t resident_draft_bytes() const;
@@ -1016,7 +1025,7 @@ private:
      * @param tier_name Tier being resolved.
      * @param file_bytes Size of the tier's GGUF.
      * @param why Why the shape was unusable, for the log.
-     * @dg_internal
+     * @utility
      * @version 2.13.1
      */
     void fall_back_to_weights_estimate(const std::string& tier_name,
@@ -1028,14 +1037,14 @@ private:
      * @param shape The model's GGUF shape.
      * @param placement The chosen placement.
      * @param file_bytes Size of the tier's GGUF.
-     * @dg_internal
+     * @utility
      * @version 2.13.1
      */
     /**
      * @brief Expert bytes a tier's `cpu_moe_layers` leaves in host RAM.
      * @param cfg Tier config, post-auto-resolution.
      * @return Host-resident expert bytes, or 0.
-     * @dg_internal
+     * @utility
      * @version 2.13.1
      */
     static uint64_t host_expert_bytes_for(const ModelConfig& cfg);
@@ -1049,7 +1058,7 @@ private:
      * @brief Refuse an explicit config that provably cannot work (gh#148).
      * @param tier_name Tier being admitted.
      * @return true to proceed; false with `last_residency_error_` set.
-     * @dg_internal
+     * @utility
      * @req REQ-INFER-019
      * @version 2.13.0
      */
@@ -1060,7 +1069,7 @@ private:
      * @param tier_name Tier being refused.
      * @param code Typed error the facade will surface.
      * @param why Operator-actionable explanation.
-     * @dg_internal
+     * @utility
      * @req REQ-INFER-019
      * @version 2.13.0
      */
@@ -1071,7 +1080,7 @@ private:
     /**
      * @brief Load + activate a tier with residency bookkeeping. Returns
      *        the backend pointer on success, nullptr on failure.
-     * @dg_internal
+     * @utility
      * @version 2.2.4
      */
     InferenceBackend* activate_and_track(
@@ -1082,7 +1091,7 @@ private:
      * @brief Build the failing GenerationResult for a missing/oversize
      *        tier. Translates the orchestrator's residency-error stash
      *        into a typed C ABI error code and clears it.
-     * @dg_internal
+     * @utility
      * @version 2.2.4
      */
     GenerationResult build_no_model_error(const std::string& tier_name);
@@ -1102,7 +1111,7 @@ private:
      *
      * @param tier_name Tier whose adapter to ensure.
      * @param result Active backend (LoRA applied to its context).
-     * @dg_internal
+     * @utility
      * @version 2.3.7
      */
     void ensure_tier_lora(const std::string& tier_name,
@@ -1115,13 +1124,14 @@ private:
      * deactivate; false → unload + fire Evicted residency event.
      *
      * @param current The backend leaving the active slot.
-     * @dg_internal
+     * @utility
      * @version 2.3.7
      */
     void unload_or_warm_current(InferenceBackend* current);
 
     /**
      * @brief Classify task using router model.
+     * @return Pair of (tier_name, raw_digit); ("","") when the router is not loaded, (default tier, "") when no digit mapped.
      * @version 1.8.2
      */
     std::pair<std::string, std::string> classify_task(
@@ -1152,7 +1162,7 @@ private:
     /**
      * @brief Unload one backend, keeping its adapter registrations (gh#164).
      * @param backend Backend to release. Null or already-COLD is a no-op.
-     * @dg_internal
+     * @utility
      * @req REQ-INFER-019
      * @version 2.13.0
      */
@@ -1162,7 +1172,7 @@ private:
      * @brief Fire Evicted for every tier backed by `backend` (gh#164), and
      *        clear the active-tier record when it names one of them.
      * @param backend Backend that was just unloaded.
-     * @dg_internal
+     * @utility
      * @req REQ-INFER-019
      * @version 2.13.0
      */
@@ -1178,7 +1188,7 @@ private:
      * and permanently, for the rest of the handle's life. Both calls are
      * no-ops when the role is already loaded.
      *
-     * @dg_internal
+     * @utility
      * @req REQ-INFER-020
      * @version 2.13.0
      */
@@ -1193,7 +1203,7 @@ private:
      * only a warning — every tier whose GGUF was not the default tier's.
      *
      * @param backend Freshly activated backend.
-     * @dg_internal
+     * @utility
      * @req REQ-INFER-023
      * @version 2.13.0
      */
@@ -1203,7 +1213,7 @@ private:
      * @brief Build per-tier backends and adapters from config.
      * @param config Full engine config.
      * @return true on success, false if any tier model file is missing.
-     * @dg_internal
+     * @utility
      * @version 2.0.2
      */
     bool create_tier_backends(const ParsedConfig& config);
@@ -1211,7 +1221,7 @@ private:
     /**
      * @brief Build routing maps (tier_map_, handoff_rules_) from config.
      * @param config Full engine config.
-     * @dg_internal
+     * @utility
      * @version 2.0.2
      */
     void build_routing_tables(const ParsedConfig& config);
@@ -1220,7 +1230,7 @@ private:
      * @brief Activate the default tier (and load if not yet loaded).
      * @param config Full engine config.
      * @return true on success.
-     * @dg_internal
+     * @utility
      * @version 2.0.2
      */
     bool activate_default_tier(const ParsedConfig& config);
@@ -1228,7 +1238,7 @@ private:
     /**
      * @brief Activate the router model if configured.
      * @param config Full engine config.
-     * @dg_internal
+     * @utility
      * @version 2.0.2
      */
     void activate_router(const ParsedConfig& config);
@@ -1245,7 +1255,7 @@ private:
      * blocking startup.
      *
      * @param config Full engine config.
-     * @dg_internal
+     * @utility
      * @version 2.1.11
      */
     void activate_draft(const ParsedConfig& config);
@@ -1289,7 +1299,7 @@ private:
      *         when the tier named a grammar the registry does not hold;
      *         `std::nullopt` otherwise.
      * @req REQ-INFER-007
-     * @dg_internal
+     * @utility
      * @version 2.13.0
      */
     std::optional<GenerationResult> refuse_unresolved_tier_grammar(
@@ -1309,7 +1319,7 @@ private:
      * @param[out] out Grammar-resolved params, one per request.
      * @return The refusal result, or `std::nullopt` when every arm resolves.
      * @req REQ-INFER-007
-     * @dg_internal
+     * @utility
      * @version 2.13.0
      */
     std::optional<GenerationResult> refuse_unresolved_batch_grammars(
@@ -1329,7 +1339,7 @@ private:
      * @param tiers Per-request tier names ("" = `lead`).
      * @param lead Lead tier name.
      * @param resolved Grammar-resolved params, staged in place.
-     * @dg_internal
+     * @utility
      * @version 2.13.0
      */
     void stage_batch_arms(InferenceBackend* model,
@@ -1371,7 +1381,7 @@ private:
      * @param params Grammar-resolved generation params.
      * @param tier_name Selected tier.
      * @return Resolved params (tools staged as a side effect on `model`).
-     * @dg_internal
+     * @utility
      * @version 2.13.0
      */
     GenerationParams resolve_and_stage(InferenceBackend* model,
@@ -1385,7 +1395,7 @@ private:
      * @param[out] target_out Active main-tier llama_model, or nullptr.
      * @param[out] draft_out  Configured draft llama_model, or nullptr.
      * @return Empty string on success; diagnostic on missing side.
-     * @dg_internal
+     * @utility
      * @version 2.1.11
      */
     std::string resolve_speculative_pair(
@@ -1397,7 +1407,7 @@ private:
      *        (result populated); false to fall back to plain decode.
      * @param tier_name Resolved tier name, for the per-tier `speculative.mtp`
      *        override (gh#108, v2.9.4) — empty when no tier context applies.
-     * @dg_internal
+     * @utility
      * @version 2.9.4
      */
     bool try_speculative_route(
@@ -1414,7 +1424,7 @@ private:
      *        the SLOC gate.
      * @param tier_name Resolved tier name, threaded through to the
      *        per-tier `speculative.mtp` override (gh#108, v2.9.4).
-     * @dg_internal
+     * @utility
      * @version 2.9.4
      */
     GenerationResult run_generate_dispatch(
@@ -1429,7 +1439,7 @@ private:
      *        through to the kernel.
      * @param tier_name Resolved tier name, for the per-tier `speculative.mtp`
      *        override (gh#108, v2.9.4).
-     * @dg_internal
+     * @utility
      * @version 2.9.4
      */
     bool try_speculative_route_streaming(
@@ -1448,7 +1458,7 @@ private:
      *        the draft window is `speculative.n_draft`. Returns true when
      *        the kernel ran (result populated); false to fall back to
      *        plain decode (non-llama backend, or kernel NOT_SUPPORTED).
-     * @dg_internal
+     * @utility
      * @version 2.9.0
      */
     bool try_mtp_route(
@@ -1465,7 +1475,7 @@ private:
      *        the global `speculative.mtp` flag when set; the request-level
      *        grammar safety net (a dynamic `params.grammar` on an
      *        MTP-effective tier) is applied by the caller, not here.
-     * @dg_internal
+     * @utility
      * @version 2.9.4
      */
     bool resolve_mtp_effective(const std::string& tier_name) const;

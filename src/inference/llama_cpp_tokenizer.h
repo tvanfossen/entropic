@@ -9,7 +9,7 @@
  * ordering. Tokenizer methods never throw; on llama.cpp error they
  * log and return empty/0.
  *
- * @dg_internal
+ * @utility
  * @version 2.3.10
  */
 
@@ -29,7 +29,7 @@ namespace entropic {
  * Borrowing semantics: vocab pointer is owned by the model. Caller
  * (LlamaCppBackend) must ensure the model outlives the tokenizer.
  *
- * @dg_internal
+ * @utility
  * @version 2.3.10
  */
 class LlamaCppTokenizer : public Tokenizer {

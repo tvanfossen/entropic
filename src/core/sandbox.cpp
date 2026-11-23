@@ -164,7 +164,7 @@ bool is_git_repo(const std::filesystem::path& dir) {
 /**
  * @brief Construct with the user's project directory.
  * @param project_dir Project root (read-only to this class).
- * @dg_internal
+ * @utility
  * @version 2.1.5
  */
 SandboxManager::SandboxManager(const std::filesystem::path& project_dir)
@@ -186,7 +186,7 @@ SandboxManager::SandboxManager(const std::filesystem::path& project_dir)
 
 /**
  * @brief Destructor — remove this session's sandbox tree.
- * @dg_internal
+ * @utility
  * @version 2.1.5
  */
 SandboxManager::~SandboxManager() {
@@ -204,7 +204,7 @@ SandboxManager::~SandboxManager() {
  *
  * @param p Path to check.
  * @return true if `p` is inside `session_base_`.
- * @dg_internal
+ * @utility
  * @version 2.1.5
  */
 bool SandboxManager::path_in_session_base(
@@ -221,7 +221,7 @@ bool SandboxManager::path_in_session_base(
 /**
  * @brief Recursive remove guarded by `path_in_session_base()`.
  * @param p Path to remove.
- * @dg_internal
+ * @utility
  * @version 2.1.5
  */
 void SandboxManager::safe_remove(const std::filesystem::path& p) {
@@ -250,7 +250,7 @@ void SandboxManager::safe_remove(const std::filesystem::path& p) {
 
 /**
  * @brief Remove dead-session sandbox dirs from `~/.entropic/sandbox/`.
- * @dg_internal
+ * @utility
  * @version 2.1.5
  */
 void SandboxManager::prune_stale_sessions() {
@@ -282,7 +282,7 @@ void SandboxManager::prune_stale_sessions() {
  * the second caller wants the finished snapshot, not its own.
  *
  * @return true on success.
- * @dg_internal
+ * @utility
  * @version 2.13.0
  */
 bool SandboxManager::ensure_base_snapshot() {
@@ -370,7 +370,7 @@ static bool snapshot_plain_copy(
  * @param source Source directory.
  * @param target Destination (must be inside `session_base_`).
  * @return true on success.
- * @dg_internal
+ * @utility
  * @version 2.1.5
  */
 bool SandboxManager::snapshot_tree(
@@ -392,7 +392,7 @@ bool SandboxManager::snapshot_tree(
  * @param delegation_id Short id (becomes the sandbox dir name).
  * @param chain_from Optional prior sandbox to chain from.
  * @return SandboxInfo on success.
- * @dg_internal
+ * @utility
  * @version 2.1.5
  */
 std::optional<SandboxInfo> SandboxManager::create_sandbox(
@@ -508,7 +508,7 @@ static std::vector<std::filesystem::path> diff_files(
  * @brief Produce the final patch artifact for a sandbox.
  * @param info Sandbox to finalize.
  * @return SandboxResult on success.
- * @dg_internal
+ * @utility
  * @version 2.1.5
  */
 std::optional<SandboxResult> SandboxManager::finalize_sandbox(
@@ -535,7 +535,7 @@ std::optional<SandboxResult> SandboxManager::finalize_sandbox(
 /**
  * @brief Remove a sandbox directory.
  * @param info Sandbox to remove.
- * @dg_internal
+ * @utility
  * @version 2.1.5
  */
 void SandboxManager::discard_sandbox(const SandboxInfo& info) {
@@ -554,7 +554,7 @@ void SandboxManager::discard_sandbox(const SandboxInfo& info) {
  * @param delegation_id Short id (basename for the .patch file).
  * @param patch         Unified-diff text.
  * @return Path written, or `std::nullopt` on failure.
- * @dg_internal
+ * @utility
  * @version 2.1.5
  */
 std::optional<std::filesystem::path> SandboxManager::write_pending_patch(
@@ -591,7 +591,7 @@ std::optional<std::filesystem::path> SandboxManager::write_pending_patch(
 /**
  * @brief Get the project directory this manager snapshots from.
  * @return Project root path.
- * @dg_internal
+ * @utility
  * @version 2.1.5
  */
 const std::filesystem::path& SandboxManager::project_dir() const {
@@ -601,7 +601,7 @@ const std::filesystem::path& SandboxManager::project_dir() const {
 /**
  * @brief Get this session's sandbox base directory.
  * @return Path to `~/.entropic/sandbox/<session-id>/`.
- * @dg_internal
+ * @utility
  * @version 2.1.5
  */
 const std::filesystem::path& SandboxManager::session_base() const {
@@ -628,7 +628,7 @@ std::string SandboxManager::next_delegation_id(const std::string& prefix) {
  * @param user_data     Opaque pointer for `swap_fn`.
  * @param sandbox_path  Target sandbox directory.
  * @param original_path Original directory to restore.
- * @dg_internal
+ * @utility
  * @version 2.1.5
  */
 ScopedSandbox::ScopedSandbox(
@@ -650,7 +650,7 @@ ScopedSandbox::ScopedSandbox(
 
 /**
  * @brief Restore the caller's active directory (gh#160).
- * @dg_internal
+ * @utility
  * @version 2.13.0
  */
 ScopedSandbox::~ScopedSandbox() {

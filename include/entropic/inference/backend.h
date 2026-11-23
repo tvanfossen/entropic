@@ -498,6 +498,7 @@ protected:
 
     /**
      * @brief Promote loaded model to GPU. Called under transition_mutex_.
+     * @return true on success.
      * @version 1.8.2
      */
     virtual bool do_activate() = 0;
@@ -605,7 +606,7 @@ protected:
      * @param params Per-request generation params.
      * @param cancel Atomic cancel flag.
      * @return One result per request, in input order.
-     * @dg_internal
+     * @utility
      * @version 2.8.0
      */
     virtual std::vector<GenerationResult> do_generate_batch(
@@ -805,9 +806,9 @@ protected:
      * @brief Fire ON_MODEL_LOAD pre-hook.
      * @param config Model config being loaded.
      * @return true if hook cancelled the load.
-     * @version 1.9.1
+     * @version 2.14.6
      */
-    bool fire_model_load_hook(const ModelConfig& config);  ///< @dg_internal
+    bool fire_model_load_hook(const ModelConfig& config);  ///< @utility
 
     /**
      * @brief WARM → ACTIVE promotion. CALLER MUST HOLD transition_mutex_.
@@ -818,7 +819,7 @@ protected:
      *
      * @return true when the backend is ACTIVE afterwards; false when it was
      *         neither WARM nor ACTIVE, or the activation failed.
-     * @dg_internal
+     * @utility
      * @req REQ-INFER-002
      * @version 2.13.0
      */

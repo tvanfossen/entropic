@@ -294,7 +294,7 @@ static json ask_status_tool(const ExternalMCPConfig& cfg) {
  *
  * @param cfg External MCP config supplying prefix and description overrides.
  * @return JSON array of tool schemas.
- * @utility
+ * @req REQ-BRIDGE-001
  * @version 2.14.3
  */
 static json tool_definitions(const ExternalMCPConfig& cfg) {
@@ -369,7 +369,7 @@ static void send_progress(int fd, const std::string& token_text,
  * @param handle Engine handle.
  * @param session_key Session key.
  * @return Registered `<server>.<tool>` names for the session's workspace.
- * @utility
+ * @req REQ-BRIDGE-001
  * @version 2.14.5
  */
 static facade_text::ToolNames session_tool_names(entropic_handle_t handle,
@@ -622,7 +622,7 @@ static json handle_status(entropic_handle_t handle,
  * @brief Handle entropic.context_clear.
  * @param handle Engine handle.
  * @return MCP tool result JSON.
- * @dg_internal
+ * @utility
  * @version 2.0.8
  */
 /**
@@ -636,7 +636,7 @@ static json handle_status(entropic_handle_t handle,
  *
  * @param handle Engine handle (for interrupt).
  * @param bridge Bridge whose tasks_ registry is being canceled.
- * @dg_internal (P1-8, 2.0.6-rc16)
+ * @utility (P1-8, 2.0.6-rc16)
  * @version 2.0.6-rc16
  */
 /**
@@ -645,7 +645,7 @@ static json handle_status(entropic_handle_t handle,
  * Groups the three status/phase/text outputs so run_async_ask stays
  * under the 50-SLOC quality gate. (2.0.6-rc16)
  *
- * @dg_internal
+ * @utility
  */
 struct AsyncFinalState {
     std::string status;   ///< done | error | cancelled
@@ -705,7 +705,7 @@ static AsyncFinalState derive_async_final_state(
  * @param bridge Bridge holding the task registry.
  * @param session_key Session whose tasks are cancelled (v2.14.0).
  * @return true if any task was still in-flight.
- * @utility
+ * @req REQ-BRIDGE-001
  * @version 2.0.6-rc16
  */
 static bool mark_tasks_cancelling(ExternalBridge* bridge,
@@ -729,7 +729,7 @@ static bool mark_tasks_cancelling(ExternalBridge* bridge,
  * @param bridge Bridge holding the task registry.
  * @param session_key Session being cleared (v2.14.0).
  * @return true when a task of that session is still cancelling.
- * @utility
+ * @req REQ-BRIDGE-001
  * @version 2.0.6-rc16
  */
 static bool any_cancelling_left(ExternalBridge* bridge,
@@ -870,7 +870,7 @@ constexpr long kTurnWaitTimeoutMs = 300000;  // 5 minutes
 
 /**
  * @brief RAII wrapper over begin_turn_wait / end_turn_wait (gh#144).
- * @dg_internal
+ * @utility
  * @version 2.12.0
  */
 class TurnTicket {
@@ -885,7 +885,7 @@ public:
      *
      * @param b Bridge owning the queue.
      * @param session_key Session the turn runs under (v2.14.0).
-     * @dg_internal
+     * @utility
      * @version 2.14.0
      */
     TurnTicket(ExternalBridge* b, std::string session_key)
@@ -897,7 +897,7 @@ public:
 
     /**
      * @brief Hand the turn on, if this ticket held it.
-     * @dg_internal
+     * @utility
      * @version 2.14.0
      */
     ~TurnTicket() { if (held_) { bridge_->end_turn_wait(session_); } }
@@ -908,7 +908,7 @@ public:
     /**
      * @brief Whether the turn was acquired before the deadline.
      * @return true when this ticket owns the engine.
-     * @dg_internal
+     * @utility
      * @version 2.12.0
      */
     bool held() const { return held_; }
@@ -916,7 +916,7 @@ public:
     /**
      * @brief Time spent waiting in line.
      * @return Milliseconds waited.
-     * @dg_internal
+     * @utility
      * @version 2.12.0
      */
     long waited_ms() const { return waited_ms_; }
@@ -930,7 +930,8 @@ private:
 
 /**
  * @brief The tool result returned when the queue deadline expired.
- * @dg_internal
+ * @return Tool text saying the engine is busy, with the wait time and the queue depth ahead.
+ * @req REQ-BRIDGE-001
  * @version 2.12.0
  */
 json turn_timeout_result(const ExternalBridge* bridge, long waited_ms) {
@@ -950,7 +951,7 @@ json turn_timeout_result(const ExternalBridge* bridge, long waited_ms) {
  * @param handle Engine handle.
  * @param session_key Session key.
  * @return Bound workspace name, or "" when unbound.
- * @dg_internal
+ * @utility
  * @version 2.14.0
  */
 static std::string bound_workspace(entropic_handle_t handle,
@@ -974,7 +975,7 @@ static std::string bound_workspace(entropic_handle_t handle,
  * @param workspace Path or name from the ask arguments.
  * @param[out] err Set on failure.
  * @return Workspace name, or "" with `err` set.
- * @dg_internal
+ * @utility
  * @version 2.14.0
  */
 static std::string resolve_workspace(entropic_handle_t handle,
@@ -1012,7 +1013,7 @@ static std::string resolve_workspace(entropic_handle_t handle,
  * @param session_key Session key.
  * @param workspace Requested workspace path or name ("" = none).
  * @return "" on success, else a message for the caller.
- * @dg_internal
+ * @req REQ-BRIDGE-001
  * @version 2.14.0
  */
 static std::string bind_session_workspace(entropic_handle_t handle,
@@ -1174,7 +1175,7 @@ using ToolHandler = json (*)(entropic_handle_t, ExternalBridge*, const json&);
  * tool_suffix constants tool_definitions() advertises (gh#145).
  *
  * @return Suffix → handler.
- * @utility
+ * @req REQ-BRIDGE-001
  * @version 2.14.3
  */
 static const std::unordered_map<std::string, ToolHandler>& tool_handlers() {
@@ -1310,7 +1311,7 @@ void ExternalBridge::end_turn_wait(const std::string& session_key) {
  * @brief The lane a session's turns queue in (v2.14.0).
  * @param session_key Session key.
  * @return The key when the engine runs sessions concurrently, else "".
- * @dg_internal
+ * @utility
  * @version 2.14.0
  */
 std::string ExternalBridge::lane_for(const std::string& session_key) const {
@@ -1654,7 +1655,7 @@ void ExternalBridge::stop() {
  * ``finished`` flag right before exit; the accept loop calls this
  * after every new connection to harvest exited entries.
  *
- * @dg_internal
+ * @utility
  * @version 2.1.2
  */
 void ExternalBridge::reap_finished_clients_locked() {
@@ -1802,7 +1803,7 @@ void ExternalBridge::serve_client(int client_fd) {
  *
  * @param cfg External MCP config supplying the server name.
  * @return JSON result object.
- * @utility
+ * @req REQ-BRIDGE-001
  * @version 2.12.0
  */
 static json initialize_result(const ExternalMCPConfig& cfg) {
@@ -1860,7 +1861,7 @@ std::string ExternalBridge::dispatch(
 
 /**
  * @brief State observer that projects VERIFYING onto task phase.
- * @dg_internal
+ * @utility
  * @version 2.1.0
  */
 static void phase_observer_cb(int state, void* ud) {
@@ -1934,7 +1935,7 @@ void ExternalBridge::detach_phase_observer() {
  * @param status Terminal status string.
  * @param phase Terminal phase string.
  * @param text Result or error text.
- * @dg_internal
+ * @utility
  * @version 2.12.0
  */
 void ExternalBridge::commit_async_final_state(
@@ -1960,7 +1961,7 @@ void ExternalBridge::commit_async_final_state(
  *
  * @param task_id Task that gave up waiting.
  * @param waited_ms How long it waited before giving up.
- * @dg_internal
+ * @utility
  * @version 2.12.0
  */
 void ExternalBridge::fail_task_engine_busy(const std::string& task_id,
@@ -2057,7 +2058,7 @@ void ExternalBridge::run_async_ask(
 
 /**
  * @brief Join and forget async workers that have finished (v2.14.2).
- * @dg_internal
+ * @utility
  * @version 2.14.2
  */
 void ExternalBridge::reap_finished_async_locked() {
@@ -2075,7 +2076,7 @@ void ExternalBridge::reap_finished_async_locked() {
  * to a token instead of a whole turn. Shutdown is handle-wide by nature,
  * so the handle-wide interrupt is the right one here.
  *
- * @dg_internal
+ * @utility
  * @version 2.14.2
  */
 void ExternalBridge::join_async_workers() {
@@ -2143,7 +2144,7 @@ void ExternalBridge::async_worker(const std::string& prompt,
 
 /**
  * @brief Remove tasks older than 15 minutes from the registry.
- * @dg_internal
+ * @utility
  * @version 2.0.11
  */
 /**
@@ -2207,7 +2208,7 @@ static bool send_nonblocking(int fd, const std::string& payload) {
  *
  * @param fd Owning client's fd; negative = nobody.
  * @param notif JSON-RPC notification object.
- * @dg_internal
+ * @utility
  * @version 2.14.2
  */
 void ExternalBridge::notify_client(int fd, const json& notif) {
@@ -2332,7 +2333,8 @@ void ExternalBridge::set_async_sentinel_root(
 
 /**
  * @brief Map a terminal status string to a sentinel filename suffix.
- * @dg_internal
+ * @return ".failed" for "error", ".cancelled" for "cancelled", otherwise ".done".
+ * @req REQ-BRIDGE-001
  * @version 2.1.4
  */
 static const char* sentinel_suffix_for_status(

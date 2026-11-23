@@ -122,7 +122,7 @@ constexpr int kUbatchLadder[] = {512, 256, 128};
  * @param base Footprint inputs — `draft_bytes` non-zero means two contexts.
  * @param n_ubatch Physical batch size; <= 0 assumes llama.cpp's default.
  * @return Bytes to subtract from free VRAM before choosing a placement.
- * @dg_internal
+ * @utility
  * @version 2.13.1
  */
 inline uint64_t compute_allowance_bytes(const FootprintInputs& base,
@@ -153,7 +153,7 @@ inline uint64_t compute_allowance_bytes(const FootprintInputs& base,
  * @param budget_bytes VRAM the placement must fit inside.
  * @param[out] used Estimated bytes for this candidate.
  * @return True when the estimate is known and within budget.
- * @dg_internal
+ * @utility
  * @version 2.13.1
  */
 inline bool placement_fits(const FootprintInputs& base,
@@ -185,7 +185,7 @@ inline bool placement_fits(const FootprintInputs& base,
  * @param budget VRAM budget.
  * @param[out] out Filled in on success.
  * @return True when it fits.
- * @dg_internal
+ * @utility
  * @version 2.13.1
  */
 inline bool try_fully_resident(const GgufShape& shape,
@@ -215,7 +215,7 @@ inline bool try_fully_resident(const GgufShape& shape,
  * @param budget VRAM budget.
  * @param[out] out Filled in on success.
  * @return True when some expert split fits.
- * @dg_internal
+ * @req REQ-INFER-019
  * @version 2.13.1
  */
 inline bool try_expert_offload(const GgufShape& shape,
@@ -246,7 +246,7 @@ inline bool try_expert_offload(const GgufShape& shape,
  * @param budget VRAM budget.
  * @param[out] out Filled in on success.
  * @return True when any layer count fits.
- * @dg_internal
+ * @req REQ-INFER-019
  * @version 2.13.1
  */
 inline bool try_fewer_layers(const GgufShape& shape,
@@ -280,7 +280,7 @@ inline bool try_fewer_layers(const GgufShape& shape,
  * @param configured Operator's n_ubatch; 0 means llama.cpp's default.
  * @param[out] out Filled in on success, including the chosen n_ubatch.
  * @return True when some reduced ubatch fits everything.
- * @dg_internal
+ * @req REQ-INFER-019
  * @version 2.13.2
  */
 inline bool try_smaller_ubatch(const GgufShape& shape,

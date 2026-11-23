@@ -100,10 +100,11 @@ extern/                   Vendored deps (llama.cpp, etc.).
 - **knots quality gates** on every C/C++ function (locked):
   cognitive complexity ≤ 15, McCabe ≤ 15, nesting ≤ 4, SLOC ≤ 50,
   ABC ≤ 10, returns ≤ 3.
-- **doxygen-guard** requires every function to carry a doxygen
-  block including `@brief`, an exemption tag (`@utility`,
-  `@internal`, `@callback`), and a `@version` that bumps on every
-  body change.
+- **clew guard** (`clew-guard` hook, `guard:` in `.clew.yaml`)
+  requires every function to carry a doxygen block with `@brief`,
+  `@req <id>` or an exemption tag (`@utility`, `@callback`), and a
+  `@version` that bumps on every body change. It also holds the
+  `@req` share at or above `guard.coverage.min_req_ratio` (0.50).
 - **Pre-commit is the source of truth for hooks** — ruff config,
   flake8 thresholds, knots thresholds, coverage thresholds all
   live in `.pre-commit-config.yaml`. `pyproject.toml` carries only

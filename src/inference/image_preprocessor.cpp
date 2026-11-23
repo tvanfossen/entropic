@@ -93,7 +93,7 @@ void interpolate_pixel(const uint8_t* src, int src_w, int src_h,
  * @param img Source image (mutated with resized data).
  * @param new_w Target width.
  * @param new_h Target height.
- * @utility
+ * @req REQ-INFER-025
  * @version 1.9.11
  */
 void bilinear_resize(entropic::PreprocessedImage& img,
@@ -140,7 +140,7 @@ ImagePreprocessor::ImagePreprocessor(const ImagePreprocessConfig& config)
  * @param max_file_size Reject files larger than this.
  * @return File bytes.
  * @throws std::runtime_error if missing, oversized, or unreadable.
- * @utility
+ * @req REQ-INFER-025
  * @version 2.3.7
  */
 static std::vector<uint8_t> read_image_bytes(
@@ -220,7 +220,7 @@ PreprocessedImage ImagePreprocessor::preprocess_buffer(
  * @param len Byte count.
  * @param source Label for error messages.
  * @return Decoded image with RGB pixel data.
- * @dg_internal
+ * @req REQ-INFER-025
  * @version 1.9.11
  */
 PreprocessedImage ImagePreprocessor::decode(

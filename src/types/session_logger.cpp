@@ -15,7 +15,7 @@ namespace entropic {
 /**
  * @brief Construct with log directory. Opens session_model.log for append.
  * @param log_dir Directory for session_model.log.
- * @dg_internal
+ * @utility
  * @version 2.0.1
  */
 SessionLogger::SessionLogger(const std::filesystem::path& log_dir) {
@@ -28,7 +28,7 @@ SessionLogger::SessionLogger(const std::filesystem::path& log_dir) {
 
 /**
  * @brief Close the model log file.
- * @dg_internal
+ * @utility
  * @version 2.0.1
  */
 SessionLogger::~SessionLogger() {
@@ -38,7 +38,7 @@ SessionLogger::~SessionLogger() {
 /**
  * @brief Log user input at the start of a turn.
  * @param input User input string.
- * @dg_internal
+ * @utility
  * @version 2.0.1
  */
 void SessionLogger::log_user_input(const std::string& input) {
@@ -51,7 +51,7 @@ void SessionLogger::log_user_input(const std::string& input) {
  * @brief Log a raw token from streaming output.
  * @param token Token data.
  * @param len Token length.
- * @dg_internal
+ * @utility
  * @version 2.0.1
  */
 void SessionLogger::log_raw_token(const char* token, size_t len) {
@@ -62,7 +62,7 @@ void SessionLogger::log_raw_token(const char* token, size_t len) {
 
 /**
  * @brief End the current assistant turn.
- * @dg_internal
+ * @utility
  * @version 2.0.1
  */
 void SessionLogger::end_turn() {
@@ -74,7 +74,7 @@ void SessionLogger::end_turn() {
 /**
  * @brief Check if the logger is open and writable.
  * @return true if FILE* is valid.
- * @dg_internal
+ * @utility
  * @version 2.0.1
  */
 bool SessionLogger::is_open() const {

@@ -1050,7 +1050,8 @@ place — no further ABI bump required):
 - Multi-resident coexistence when total footprint fits the budget
   (current path remains single-active swap).
 - Metrics counter/histogram sink wiring — INFO logs carry the
-  fields today, ready for [gh#26](https://github.com/tvanfossen/entropic/issues/26).
+  fields; per decision 94 (gh#26, 2026-11-23) they are the metrics
+  surface, and no registry is planned.
 
 **New ABI surface (strictly additive):**
 
@@ -1072,8 +1073,8 @@ place — no further ABI bump required):
 - ERROR log on `TIER_MODEL_TOO_LARGE` with full context.
 - Metrics: counters for `model_loads_total`, `model_evictions_total`,
   `tier_activation_swaps_total`; histograms for `model_load_seconds`,
-  `model_evict_seconds`. Routed through whatever lands in
-  [gh#26](https://github.com/tvanfossen/entropic/issues/26).
+  `model_evict_seconds`. Superseded by decision 94 (gh#26):
+  these are INFO log fields, not registry counters.
 
 **Out of scope (potential v2.3.x):**
 

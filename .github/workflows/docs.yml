@@ -52,9 +52,9 @@ jobs:
 
       - name: Build the clew wiki
         id: wiki
-        uses: tvanfossen/clew/.github/actions/wiki@v2.0.0
+        uses: tvanfossen/clew/.github/actions/wiki@v2.0.1
         with:
-          version: "2.0.0"
+          version: "2.0.1"
           format: html
           out: build/clew-wiki
 

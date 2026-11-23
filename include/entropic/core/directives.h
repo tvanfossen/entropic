@@ -373,10 +373,10 @@ private:
      * @param directive Directive being processed.
      * @param has_handler Whether a handler exists.
      * @return true to proceed, false if suppressed.
-     * @version 1.9.1
+     * @version 2.14.6
      */
     bool fire_directive_hook(const Directive* directive,
-                             bool has_handler);          ///< @dg_internal
+                             bool has_handler);          ///< @utility
 
     std::unordered_map<int, DirectiveHandler> handlers_; ///< Type → handler
     HookInterface hooks_;                                ///< Hook dispatch (v1.9.1)

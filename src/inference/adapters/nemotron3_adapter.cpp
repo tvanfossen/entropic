@@ -35,7 +35,7 @@ constexpr const char* TOOL_RESULT_SUFFIX =
 /**
  * @brief Generate a simple counter-based tool-call id.
  * @return ID string of the form "tc-N".
- * @dg_internal
+ * @utility
  * @version 2.1.9
  */
 std::string generate_uuid() {
@@ -56,7 +56,7 @@ std::string generate_uuid() {
  *
  * @param content Raw model output.
  * @return ParseResult.
- * @dg_internal
+ * @utility
  * @version 2.3.8
  */
 ParseResult Nemotron3Adapter::parse_tool_calls(const std::string& content) const {
@@ -86,7 +86,7 @@ ParseResult Nemotron3Adapter::parse_tool_calls(const std::string& content) const
  *
  * @param content Model output.
  * @return Vector of parsed tool calls.
- * @dg_internal
+ * @utility
  * @version 2.3.8
  */
 std::vector<ToolCall> Nemotron3Adapter::parse_dsml_function_calls(
@@ -122,7 +122,7 @@ std::vector<ToolCall> Nemotron3Adapter::parse_dsml_function_calls(
  *
  * @param invoke_body Invoke block body text.
  * @return Map of parameter key -> value.
- * @dg_internal
+ * @utility
  * @version 2.3.8
  */
 std::unordered_map<std::string, std::string> Nemotron3Adapter::extract_dsml_parameters(
@@ -147,7 +147,7 @@ std::unordered_map<std::string, std::string> Nemotron3Adapter::extract_dsml_para
  * @brief Parse `<function=name><parameter=key>value</parameter></function>` blocks.
  * @param content Model output.
  * @return Vector of parsed tool calls.
- * @dg_internal
+ * @utility
  * @version 2.1.9
  */
 std::vector<ToolCall> Nemotron3Adapter::parse_xml_function_calls(
@@ -188,7 +188,7 @@ std::vector<ToolCall> Nemotron3Adapter::parse_xml_function_calls(
  *
  * @param func_body Function body text.
  * @return Map of parameter key -> value.
- * @dg_internal
+ * @utility
  * @version 2.4.1
  */
 std::unordered_map<std::string, std::string> Nemotron3Adapter::extract_xml_parameters(
@@ -205,7 +205,7 @@ std::unordered_map<std::string, std::string> Nemotron3Adapter::extract_xml_param
  * @param tool_call Executed tool call (used for logging only).
  * @param result Execution result text.
  * @return User-role message with the wrapped result.
- * @dg_internal
+ * @utility
  * @version 2.1.9
  */
 Message Nemotron3Adapter::format_tool_result(
@@ -225,7 +225,7 @@ Message Nemotron3Adapter::format_tool_result(
  * @brief Build the OpenAI-function `<tools>` JSON array for injection.
  * @param tool_jsons Tool definition JSON strings.
  * @return JSON array of `{type, function:{name,description,parameters}}`.
- * @dg_internal
+ * @utility
  * @version 2.3.8
  */
 static nlohmann::json build_tool_defs(
@@ -260,7 +260,7 @@ static nlohmann::json build_tool_defs(
  *
  * @param tool_jsons Tool definition JSON strings.
  * @return Section to inject into the system prompt.
- * @dg_internal
+ * @utility
  * @version 2.3.8
  */
 std::string Nemotron3Adapter::format_tools(
@@ -298,7 +298,7 @@ std::string Nemotron3Adapter::format_tools(
  *
  * @param content Raw model output.
  * @return Cleaned content.
- * @dg_internal
+ * @utility
  * @version 2.3.8
  */
 std::string Nemotron3Adapter::clean_content(const std::string& content) const {

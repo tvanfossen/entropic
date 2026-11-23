@@ -48,7 +48,7 @@ const char* state_name(ModelState s) {
  *
  * @param config Validated model config.
  * @return true on success, false on failure.
- * @dg_internal
+ * @utility
  * @version 2.0.0
  */
 bool InferenceBackend::load(const ModelConfig& config) {
@@ -82,7 +82,7 @@ bool InferenceBackend::load(const ModelConfig& config) {
 /**
  * @brief Promote to GPU (WARM → ACTIVE).
  * @return true on success, false on failure.
- * @dg_internal
+ * @utility
  * @version 2.13.0
  */
 bool InferenceBackend::activate() {
@@ -98,7 +98,7 @@ bool InferenceBackend::activate() {
  * acquisition of the non-recursive transition mutex.
  *
  * @return true when ACTIVE afterwards.
- * @dg_internal
+ * @utility
  * @req REQ-INFER-002
  * @version 2.13.0
  */
@@ -126,7 +126,7 @@ bool InferenceBackend::promote_to_active() {
 
 /**
  * @brief Release GPU layers (ACTIVE → WARM). No-op if not ACTIVE.
- * @dg_internal
+ * @utility
  * @version 2.0.0
  */
 void InferenceBackend::deactivate() {
@@ -193,7 +193,7 @@ void InferenceBackend::unload() {
  *
  * @param config Model config.
  * @return true when ACTIVE afterwards.
- * @dg_internal
+ * @utility
  * @req REQ-INFER-002
  * @version 2.13.0
  */
@@ -228,7 +228,7 @@ bool InferenceBackend::load_and_activate(const ModelConfig& config) {
  * @param messages Conversation history.
  * @param params Generation parameters.
  * @return GenerationResult (error result if not ACTIVE).
- * @dg_internal
+ * @utility
  * @version 2.0.0
  */
 GenerationResult InferenceBackend::generate(
@@ -356,7 +356,7 @@ GenerationResult InferenceBackend::generate_streaming(
  * @param on_token Per-accepted-token callback.
  * @param cancel Cancellation flag.
  * @return GenerationResult.
- * @dg_internal
+ * @utility
  * @version 2.1.11
  */
 GenerationResult InferenceBackend::generate_speculative(
@@ -394,7 +394,7 @@ GenerationResult InferenceBackend::generate_speculative(
  * @param on_token Unused in default impl.
  * @param cancel Unused in default impl.
  * @return GenerationResult with NOT_SUPPORTED error code.
- * @dg_internal
+ * @utility
  * @version 2.1.11
  */
 GenerationResult InferenceBackend::do_generate_speculative(
@@ -416,7 +416,7 @@ GenerationResult InferenceBackend::do_generate_speculative(
  * @param prompt Raw prompt string.
  * @param params Generation parameters.
  * @return GenerationResult.
- * @dg_internal
+ * @utility
  * @version 2.0.0
  */
 GenerationResult InferenceBackend::complete(
@@ -511,7 +511,7 @@ LogprobResult InferenceBackend::evaluate_logprobs(
  * @param tokens Array of token IDs.
  * @param n_tokens Number of tokens (minimum 2).
  * @return Perplexity as exp(-mean(logprobs)).
- * @dg_internal
+ * @utility
  * @version 1.9.10
  */
 float InferenceBackend::compute_perplexity(
@@ -527,7 +527,7 @@ float InferenceBackend::compute_perplexity(
  * @brief Fire ON_MODEL_LOAD pre-hook.
  * @param config Model config being loaded.
  * @return true if hook cancelled the load.
- * @dg_internal
+ * @utility
  * @version 1.9.1
  */
 bool InferenceBackend::fire_model_load_hook(const ModelConfig& config) {
@@ -552,7 +552,7 @@ bool InferenceBackend::fire_model_load_hook(const ModelConfig& config) {
  * @brief Count tokens. Exact if loaded, estimate if COLD.
  * @param text Text to tokenize.
  * @return Token count.
- * @dg_internal
+ * @utility
  * @version 1.8.2
  */
 int InferenceBackend::count_tokens(const std::string& text) const {
@@ -692,7 +692,7 @@ bool InferenceBackend::clear_state(int seq_id) {
  * @param messages Conversation history.
  * @param params Generation parameters.
  * @return GenerationResult with seq_id set.
- * @dg_internal
+ * @utility
  * @version 2.0.0
  */
 GenerationResult InferenceBackend::generate_seq(
@@ -724,7 +724,7 @@ GenerationResult InferenceBackend::generate_seq(
  * @param on_token Per-token callback.
  * @param cancel Cancellation flag.
  * @return GenerationResult with seq_id set.
- * @dg_internal
+ * @utility
  * @version 2.0.0
  */
 GenerationResult InferenceBackend::generate_streaming_seq(
@@ -758,7 +758,7 @@ GenerationResult InferenceBackend::generate_streaming_seq(
  * @brief Default: no capabilities supported.
  * @param cap Capability to check.
  * @return false.
- * @dg_internal
+ * @utility
  * @version 1.9.13
  */
 bool InferenceBackend::do_supports(BackendCapability /*cap*/) const {
@@ -768,7 +768,7 @@ bool InferenceBackend::do_supports(BackendCapability /*cap*/) const {
 /**
  * @brief Default: BackendInfo with name only.
  * @return BackendInfo with name from do_backend_name().
- * @dg_internal
+ * @utility
  * @version 1.9.13
  */
 BackendInfo InferenceBackend::do_info() const {
@@ -782,7 +782,7 @@ BackendInfo InferenceBackend::do_info() const {
  * @param seq_id Sequence identifier.
  * @param buffer Output buffer.
  * @return false.
- * @dg_internal
+ * @utility
  * @version 1.9.13
  */
 bool InferenceBackend::do_save_state(
@@ -796,7 +796,7 @@ bool InferenceBackend::do_save_state(
  * @param seq_id Sequence identifier.
  * @param buffer State data.
  * @return false.
- * @dg_internal
+ * @utility
  * @version 1.9.13
  */
 bool InferenceBackend::do_restore_state(
@@ -809,7 +809,7 @@ bool InferenceBackend::do_restore_state(
  * @brief Default: state clear not supported.
  * @param seq_id Sequence identifier.
  * @return false.
- * @dg_internal
+ * @utility
  * @version 1.9.13
  */
 bool InferenceBackend::do_clear_state(int /*seq_id*/) {
@@ -822,7 +822,7 @@ bool InferenceBackend::do_clear_state(int /*seq_id*/) {
  * @param messages Conversation history.
  * @param params Generation parameters.
  * @return GenerationResult from do_generate().
- * @dg_internal
+ * @utility
  * @version 1.9.13
  */
 GenerationResult InferenceBackend::do_generate_seq(
@@ -841,7 +841,7 @@ GenerationResult InferenceBackend::do_generate_seq(
  * @param on_token Per-token callback.
  * @param cancel Cancellation flag.
  * @return GenerationResult from do_generate_streaming().
- * @dg_internal
+ * @utility
  * @version 1.9.13
  */
 GenerationResult InferenceBackend::do_generate_streaming_seq(

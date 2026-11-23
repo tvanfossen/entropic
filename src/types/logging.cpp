@@ -39,7 +39,7 @@ static thread_local int t_current_handle_id = 0;
 class HandleAwareSink final : public spdlog::sinks::sink {
 public:
     /** @brief Route message to the current thread's handle file sink.
-     * @dg_internal @version 2.3.1 */
+     * @utility @version 2.3.1 */
     void log(const spdlog::details::log_msg& msg) override {
         std::shared_ptr<spdlog::sinks::sink> target;
         int id = t_current_handle_id;
@@ -51,7 +51,7 @@ public:
         if (target) { target->log(msg); }
     }
 
-    /** @brief Flush every registered handle sink. @dg_internal @version 2.3.1 */
+    /** @brief Flush every registered handle sink. @utility @version 2.3.1 */
     void flush() override {
         std::vector<std::shared_ptr<spdlog::sinks::sink>> all;
         {
@@ -62,14 +62,14 @@ public:
         for (auto& s : all) { s->flush(); }
     }
 
-    /** @brief Apply pattern to all registered sinks. @dg_internal @version 2.3.1 */
+    /** @brief Apply pattern to all registered sinks. @utility @version 2.3.1 */
     void set_pattern(const std::string& pattern) override {
         std::lock_guard lk(mu_);
         pattern_ = pattern;
         for (auto& [_, s] : sinks_) { s->set_pattern(pattern); }
     }
 
-    /** @brief Spdlog's set_formatter shim. @dg_internal @version 2.3.1 */
+    /** @brief Spdlog's set_formatter shim. @utility @version 2.3.1 */
     void set_formatter(std::unique_ptr<spdlog::formatter> f) override {
         // Forward only the pattern shape; the per-handle file sinks
         // need their own formatter instances since unique_ptr can't be
@@ -86,21 +86,21 @@ public:
         }
     }
 
-    /** @brief Register/replace the sink for a handle id. @dg_internal @version 2.3.1 */
+    /** @brief Register/replace the sink for a handle id. @utility @version 2.3.1 */
     void register_sink(int id, std::shared_ptr<spdlog::sinks::sink> s) {
         std::lock_guard lk(mu_);
         sinks_[id] = std::move(s);
         if (!pattern_.empty()) { sinks_[id]->set_pattern(pattern_); }
     }
 
-    /** @brief Remove a handle id's sink registration. @dg_internal @version 2.3.1 */
+    /** @brief Remove a handle id's sink registration. @utility @version 2.3.1 */
     void unregister_sink(int id) {
         std::lock_guard lk(mu_);
         sinks_.erase(id);
     }
 
     /** @brief Snapshot of registered ids (tests + diagnostics).
-     * @dg_internal @version 2.3.1 */
+     * @utility @version 2.3.1 */
     std::vector<int> registered_ids() const {
         std::lock_guard lk(mu_);
         std::vector<int> ids;
@@ -333,7 +333,7 @@ void escape_ansi(const std::string& text, size_t& i,
 /**
  * @brief 256-entry table mapping bytes to escape strings (nullptr = passthrough).
  * @return Reference to static lookup table.
- * @dg_internal
+ * @utility
  * @version 1.10.4
  */
 static const std::array<const char*, 256>& escape_table() {

@@ -20,7 +20,7 @@ int LoopMetrics::duration_ms() const {
 }
 
 /// @brief Lookup table for AgentState names indexed by enum value.
-/// @dg_internal
+/// @utility
 static const char* const kStateNames[] = {
     "IDLE", "PLANNING", "EXECUTING", "WAITING_TOOL", "VERIFYING",
     "DELEGATING", "COMPLETE", "ERROR", "INTERRUPTED", "PAUSED",

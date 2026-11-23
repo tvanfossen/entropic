@@ -27,7 +27,7 @@ namespace {
  * @param len Message length.
  * @param loc Location in the source.
  * @param ud Unused.
- * @dg_internal
+ * @utility
  * @version 2.14.4
  */
 [[noreturn]] void throw_yaml_error(const char* msg, size_t len,

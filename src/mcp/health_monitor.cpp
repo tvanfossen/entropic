@@ -16,7 +16,7 @@ namespace entropic {
  * @brief Construct with reconnection policy.
  * @param policy Backoff policy.
  * @param health_check_interval_ms Ping interval (0 = disabled).
- * @dg_internal
+ * @utility
  * @version 1.8.7
  */
 HealthMonitor::HealthMonitor(
@@ -27,7 +27,7 @@ HealthMonitor::HealthMonitor(
 
 /**
  * @brief Destructor — stops monitor if running.
- * @dg_internal
+ * @utility
  * @version 1.8.7
  */
 HealthMonitor::~HealthMonitor() {
@@ -38,7 +38,7 @@ HealthMonitor::~HealthMonitor() {
  * @brief Start monitoring a server.
  * @param name Server name.
  * @param client Non-owning pointer.
- * @dg_internal
+ * @req REQ-MCP-025
  * @version 1.8.7
  */
 void HealthMonitor::watch(
@@ -60,7 +60,7 @@ void HealthMonitor::watch(
 /**
  * @brief Stop monitoring a server.
  * @param name Server name.
- * @dg_internal
+ * @utility
  * @version 1.8.7
  */
 void HealthMonitor::unwatch(const std::string& name) {
@@ -72,7 +72,7 @@ void HealthMonitor::unwatch(const std::string& name) {
 /**
  * @brief Set callback for status change events.
  * @param cb Callback.
- * @dg_internal
+ * @utility
  * @version 1.8.7
  */
 void HealthMonitor::set_status_callback(StatusCallback cb) {
@@ -81,7 +81,7 @@ void HealthMonitor::set_status_callback(StatusCallback cb) {
 
 /**
  * @brief Start the monitoring thread.
- * @dg_internal
+ * @req REQ-MCP-025
  * @version 1.8.7
  */
 void HealthMonitor::start() {
@@ -96,7 +96,7 @@ void HealthMonitor::start() {
 
 /**
  * @brief Stop monitoring and all reconnection attempts.
- * @dg_internal
+ * @utility
  * @version 1.8.7
  */
 void HealthMonitor::stop() {

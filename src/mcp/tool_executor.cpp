@@ -28,7 +28,7 @@ namespace entropic {
  * @param loop_config Loop configuration.
  * @param callbacks Shared callbacks.
  * @param hooks Optional engine-level hooks.
- * @dg_internal
+ * @utility
  * @version 1.8.5
  */
 ToolExecutor::ToolExecutor(
@@ -73,7 +73,7 @@ ServerManager& ToolExecutor::servers_for(
 /**
  * @brief Set permission persistence interface.
  * @param persist Permission persist callbacks.
- * @dg_internal
+ * @utility
  * @version 1.8.8
  */
 void ToolExecutor::set_permission_persist(
@@ -739,7 +739,7 @@ Message ToolExecutor::create_error_message(
 /**
  * @brief Fire state change callback.
  * @param ctx Loop context.
- * @dg_internal
+ * @utility
  * @version 1.8.5
  */
 void ToolExecutor::fire_state_callback(const LoopContext& ctx) {
@@ -849,7 +849,7 @@ std::optional<Message> ToolExecutor::check_dup_or_approval(
  * @param ctx Loop context.
  * @param call Tool call.
  * @return Rejection message if blocked, nullopt if clear.
- * @dg_internal
+ * @utility
  * @version 1.9.4
  */
 /**
@@ -1052,7 +1052,7 @@ static ToolResultKind classify_tool_result(const std::string& content) {
  * @param exec_ms Execution time (ms).
  * @param raw_result Raw server result (for size).
  * @param kind Classified result kind.
- * @dg_internal
+ * @utility
  * @version 2.13.0
  */
 void ToolExecutor::log_tool_call(LoopContext& ctx, const ToolCall& call,
@@ -1133,7 +1133,7 @@ void ToolExecutor::finalize_tool_call(LoopContext& ctx, const ToolCall& call,
  * @param parsed Parsed (object) payload.
  * @param tool_name The fully-qualified name of the call being made.
  * @return true when the payload names a different tool.
- * @dg_internal
+ * @utility
  * @version 2.13.0
  */
 static bool pre_mod_renames_tool(const nlohmann::json& parsed,
@@ -1149,7 +1149,7 @@ static bool pre_mod_renames_tool(const nlohmann::json& parsed,
  * @param tool_name Name of the call being modified.
  * @return Empty when the payload is acceptable; otherwise the reason,
  *         phrased for the ERROR log a host operator has to act on.
- * @dg_internal
+ * @utility
  * @version 2.13.0
  */
 static std::string pre_mod_refusal(const nlohmann::json& parsed,
@@ -1179,7 +1179,7 @@ static std::string pre_mod_refusal(const nlohmann::json& parsed,
  *
  * @param call Tool call to rewrite.
  * @param args The payload's `args` object.
- * @dg_internal
+ * @utility
  * @version 2.13.0
  */
 static void overwrite_call_arguments(ToolCall& call,
@@ -1491,7 +1491,7 @@ void ToolExecutor::fire_post_tool_hook(
  * @param ctx Loop context.
  * @param results Results so far.
  * @return true if batch should stop.
- * @dg_internal
+ * @utility
  * @version 2.0.2
  */
 bool ToolExecutor::should_stop_batch(
@@ -1506,7 +1506,7 @@ bool ToolExecutor::should_stop_batch(
 /**
  * @brief Run post-tool hooks (after_tool callback).
  * @param ctx Loop context.
- * @dg_internal
+ * @utility
  * @version 1.8.5
  */
 void ToolExecutor::run_post_tool_hooks(LoopContext& ctx) {
@@ -1621,7 +1621,7 @@ std::string ToolExecutor::serialize_args(const ToolCall& call) {
  * @brief Serialize a tool call to JSON for callbacks.
  * @param call Tool call.
  * @return JSON string.
- * @dg_internal
+ * @utility
  * @version 1.8.5
  */
 std::string ToolExecutor::serialize_tool_call(const ToolCall& call) {
@@ -1640,7 +1640,7 @@ std::string ToolExecutor::serialize_tool_call(const ToolCall& call) {
  * @param call Tool call.
  * @param result Result text.
  * @param ms Duration in milliseconds.
- * @dg_internal
+ * @utility
  * @version 1.8.5
  */
 void ToolExecutor::fire_tool_complete_callback(
@@ -1729,14 +1729,14 @@ std::string ToolExecutor::build_pre_tool_json(
  *
  * @param ctx Loop context (mutated by directive handlers).
  * @param raw_result ServerResponse JSON string.
- * @dg_internal
+ * @utility
  * @version 2.0.1
  */
 /**
  * @brief Extract pipeline stage names from a result JSON object.
  * @param result_json Parsed result JSON.
  * @return Stage tier names (empty if absent).
- * @dg_internal
+ * @utility
  * @version 2.0.2
  */
 static std::vector<std::string> extract_pipeline_stages(
@@ -1759,7 +1759,7 @@ static std::vector<std::string> extract_pipeline_stages(
  * @param d Directive JSON ("type": ...).
  * @param result_json Parsed result JSON for parameter lookup.
  * @return Owned Directive (nullptr if type is unrecognized).
- * @dg_internal
+ * @utility
  * @version 2.1.6
  */
 /**

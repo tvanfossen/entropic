@@ -20,7 +20,7 @@ namespace entropic {
 /**
  * @brief Construct a token counter.
  * @param max_tokens Maximum context window size.
- * @dg_internal
+ * @utility
  * @version 1.8.4
  */
 TokenCounter::TokenCounter(int max_tokens)
@@ -96,7 +96,7 @@ float TokenCounter::usage_percent(
  * messages had are no longer valid". There is no cache to clear; counting is
  * a pure function of the message content. See the header for why.
  *
- * @dg_internal
+ * @utility
  * @version 2.13.0
  */
 void TokenCounter::clear_cache() {}
@@ -107,7 +107,7 @@ void TokenCounter::clear_cache() {}
  * @brief Construct a compaction manager.
  * @param config Compaction configuration.
  * @param counter Token counter (shared reference).
- * @dg_internal
+ * @utility
  * @version 1.8.4
  */
 CompactionManager::CompactionManager(
@@ -180,7 +180,7 @@ CompactionResult CompactionManager::check_and_compact(
  * @param[out] user_msgs source==user messages.
  * @param[out] assistant_msgs assistant-role messages.
  * @param[out] stripped_count Count of dropped messages.
- * @utility
+ * @req REQ-COMPACT-001
  * @version 2.3.7
  */
 static void partition_messages(const std::vector<Message>& messages,
@@ -209,7 +209,7 @@ static void partition_messages(const std::vector<Message>& messages,
  * @param user_msgs Preserved user messages.
  * @param assistant_msgs Assistant messages (only the last is kept).
  * @return Compacted message list.
- * @utility
+ * @req REQ-COMPACT-001
  * @version 2.3.7
  */
 static std::vector<Message> assemble_compacted(
@@ -269,7 +269,7 @@ std::vector<Message> CompactionManager::compact(
  * @brief Build deterministic structured summary from history.
  * @param messages Messages to summarize.
  * @return Summary text.
- * @dg_internal
+ * @req REQ-COMPACT-001
  * @version 1.8.4
  */
 std::string CompactionManager::structured_summary(
@@ -291,7 +291,7 @@ std::string CompactionManager::structured_summary(
  * @brief Extract original user task from messages.
  * @param messages Messages to search.
  * @return Task text (truncated to 500 chars).
- * @dg_internal
+ * @utility
  * @version 1.8.4
  */
 /**
@@ -355,7 +355,7 @@ static std::string find_first_user_task(
  *
  * @param messages Conversation messages.
  * @return Task text (truncated to 500 chars).
- * @dg_internal
+ * @utility
  * @version 2.0.4
  */
 std::string CompactionManager::extract_original_task(
@@ -371,7 +371,7 @@ std::string CompactionManager::extract_original_task(
  * @brief Extract tool call log from messages.
  * @param messages Messages to scan.
  * @return Vector of (name, brief_result) pairs.
- * @dg_internal
+ * @utility
  * @version 1.8.4
  */
 std::vector<std::pair<std::string, std::string>>
@@ -400,7 +400,7 @@ CompactionManager::extract_tool_log(
  * @param summary Raw summary text.
  * @param message_count Number of original messages.
  * @return Formatted summary string.
- * @dg_internal
+ * @req REQ-COMPACT-001
  * @version 1.8.4
  */
 std::string CompactionManager::format_summary(
@@ -454,7 +454,7 @@ CompactionResult CompactionManager::compact_messages(
 /**
  * @brief Set storage interface for compaction snapshots.
  * @param storage Storage callbacks (nullable).
- * @dg_internal
+ * @utility
  * @version 1.8.8
  */
 void CompactionManager::set_storage(const StorageInterface* storage) {
@@ -465,7 +465,7 @@ void CompactionManager::set_storage(const StorageInterface* storage) {
  * @brief Save pre-compaction snapshot via storage interface.
  * @param conversation_id Conversation to snapshot.
  * @param messages Messages before compaction.
- * @dg_internal
+ * @utility
  * @version 1.8.8
  */
 /**
@@ -490,7 +490,7 @@ static std::string json_escape(const std::string& input) {
  * @brief Serialize messages to minimal JSON array.
  * @param messages Messages to serialize.
  * @return JSON array string.
- * @utility
+ * @req REQ-COMPACT-001
  * @version 1.8.8
  */
 static std::string serialize_messages_json(

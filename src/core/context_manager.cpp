@@ -17,7 +17,7 @@ namespace entropic {
  * @param compaction Compaction manager reference.
  * @param callbacks Engine callbacks reference.
  * @param hooks Engine-level hooks.
- * @dg_internal
+ * @utility
  * @version 1.8.4
  */
 ContextManager::ContextManager(
@@ -32,7 +32,7 @@ ContextManager::ContextManager(
  * @brief Refresh context limit from tier config.
  * @param ctx Loop context (unused, kept for interface consistency).
  * @param context_length New max tokens (0 = no change).
- * @dg_internal
+ * @utility
  * @version 1.8.4
  */
 void ContextManager::refresh_context_limit(

@@ -23,7 +23,7 @@ namespace {
  * @param key Fully qualified key name.
  * @param fallback Value to return when the key is missing.
  * @return The key's value, or fallback.
- * @dg_internal
+ * @utility
  * @version 2.13.1
  */
 int u32_or(const gguf_context* ctx, const std::string& key, int fallback) {
@@ -42,7 +42,7 @@ int u32_or(const gguf_context* ctx, const std::string& key, int fallback) {
  *
  * @param name Tensor name.
  * @return Block index, or -1 when the tensor belongs to no block.
- * @dg_internal
+ * @utility
  * @version 2.13.1
  */
 int block_index_of(const std::string& name) {

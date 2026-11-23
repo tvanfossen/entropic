@@ -156,7 +156,8 @@ appear in one searchable unit, so use the two most distinctive words.
 - **Requirement traceability.** `docs/requirements.yaml` carries 105 REQ ids
   against ~1634 `@req` tags. `dossier` resolves a requirement id to its
   implementers *and* its covering tests — the query the catalog exists to
-  answer, otherwise done with `inv check-requirements` plus grep.
+  answer. The `clew-guard` hook enforces the catalog (dead `@req`, uncovered
+  entries, `guard.coverage.min_req_ratio`); `dossier` explains it.
 - **Locks and threads are first-class.** The gh#58 multi-instance family keeps
   recurring; teardown ordering and mutex lifetime are exactly what the index
   holds natively.
@@ -190,7 +191,8 @@ rest of a session — fall back for that one question and carry on.
 - Default target is DERIVED from `CLAUDE_PROJECT_DIR`; there is no `set_target`.
   Every tool takes an optional `target` (repo path or slug), and passing it on
   one call does not affect the next.
-- Build scope comes from this repo's `.doxygen-guard.yaml`. `exclude=[...]` is
+- Build scope is clew's whole-repo default (`index_scope` is deliberately
+  undeclared in `.clew.yaml`). `exclude=[...]` is
   the only narrowing and is **recorded and replayed by every later build** —
   `extern/` is the obvious candidate, since llama.cpp is vendored there.
 - Every query reply names the target it answered from and carries a staleness

@@ -131,7 +131,7 @@ ENTROPIC_EXPORT bool write_token_file(const std::filesystem::path& path,
  * Five failures inside one minute block every request for thirty seconds.
  * Thread-safe; the clock is passed in so the policy is testable.
  *
- * @dg_internal
+ * @utility
  * @version 2.14.0
  */
 class ENTROPIC_EXPORT AuthThrottle {
@@ -166,7 +166,7 @@ private:
  * Owns the listening socket, the server thread and the token file. Does not
  * own the bridge, which must outlive it.
  *
- * @dg_internal
+ * @utility
  * @version 2.14.0
  */
 class ENTROPIC_EXPORT HttpListener {

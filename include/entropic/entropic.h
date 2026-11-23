@@ -1472,10 +1472,10 @@ ENTROPIC_EXPORT entropic_error_t entropic_session_bind_workspace(
  * @param name Workspace name previously passed to entropic_workspace_create().
  * @param app_context The workspace's app_context text; "" = no app_context
  *        for this workspace; NULL = drop the override and use the handle's.
- * @return ENTROPIC_OK on success.
- * @return ENTROPIC_ERROR_INVALID_HANDLE — handle is NULL.
- * @return ENTROPIC_ERROR_INVALID_STATE — handle not configured.
- * @return ENTROPIC_ERROR_INVALID_ARGUMENT — NULL/empty or unknown name.
+ * @return ENTROPIC_OK on success, otherwise the error below.
+ * @retval ENTROPIC_ERROR_INVALID_HANDLE handle is NULL.
+ * @retval ENTROPIC_ERROR_INVALID_STATE handle not configured.
+ * @retval ENTROPIC_ERROR_INVALID_ARGUMENT NULL/empty or unknown name.
  * @threadsafety Serialized per-handle (api_mutex).
  * @req REQ-API-005
  * @req REQ-MCP-027

@@ -83,7 +83,7 @@ static bool has_all_required(const nlohmann::json& args,
  * @param call Parsed tool call.
  * @param tools_json Staged MCP tool defs.
  * @return false only when a declared required parameter is provably absent.
- * @utility
+ * @req REQ-INFER-010
  * @version 2.10.3
  */
 static bool one_call_satisfies_schema(const ToolCall& call,

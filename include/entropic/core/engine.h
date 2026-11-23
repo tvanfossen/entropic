@@ -221,7 +221,7 @@ public:
      * @param session_key Session the delegation belongs to.
      * @return Manager rooted at the session's root, or nullptr when
      *         `delegation.isolation` is `none` or no root resolves.
-     * @dg_internal
+     * @utility
      * @version 2.13.0
      */
     SandboxManager* sandbox_for_session(const std::string& session_key);
@@ -236,7 +236,7 @@ public:
      * @param ctx Parent loop context (supplies the session key).
      * @param target_tier Tier the delegation targets.
      * @return Offending fully-qualified tool names.
-     * @dg_internal
+     * @utility
      * @version 2.13.0
      */
     std::vector<std::string> isolation_unsafe_tools(
@@ -576,7 +576,7 @@ public:
      * empty and the caller didn't supply its own system message.
      *
      * @param new_messages The messages the caller is adding this turn.
-     * @dg_internal
+     * @utility
      * @version 2.3.7
      */
     void seed_system_prompt(const std::vector<Message>& new_messages);
@@ -592,7 +592,7 @@ public:
      * @param pending First user turn for this call.
      * @param tier_override Tier to lock the run to ("" = route).
      * @return Result messages from the final turn.
-     * @dg_internal
+     * @utility
      * @version 2.8.0
      */
     std::vector<Message> run_drain_loop(std::string pending,
@@ -611,7 +611,7 @@ public:
      * @param turn_begin Session size before this turn's user message(s).
      * @param sent_len Session size after them (the run's input length).
      * @return true when the turn was kept; false when it was rolled back.
-     * @dg_internal
+     * @utility
      * @version 2.14.5
      */
     bool settle_turn(ConversationState& convo,
@@ -626,7 +626,7 @@ public:
      * the tier carries no info.
      *
      * @param tier Tier whose system prompt to seed.
-     * @dg_internal
+     * @utility
      * @version 2.8.0
      */
     void seed_system_prompt_for_tier(const std::string& tier);
@@ -639,7 +639,7 @@ public:
      *
      * @param pending Out: cleared and set to the next user turn.
      * @return true if a queued message was dequeued; false if empty.
-     * @dg_internal
+     * @utility
      * @version 2.3.7
      */
     bool prepare_next_turn(std::vector<Message>& pending);
@@ -736,6 +736,7 @@ public:
     /**
      * @brief Snapshot of the queue depth.
      * @threadsafety Thread-safe.
+     * @return Number of user messages waiting in the mid-generation queue.
      * @version 2.1.10
      */
     size_t user_message_queue_depth() const;
@@ -1357,7 +1358,7 @@ private:
      * a valid FK; logs a warning (non-fatal) on failure.
      *
      * @param ctx Loop context.
-     * @dg_internal
+     * @utility
      * @version 2.3.7
      */
     void init_session_conversation(LoopContext& ctx);
@@ -1370,7 +1371,7 @@ private:
      * `metrics_mutex_` (gh#158).
      *
      * @param ctx Loop context (with completed metrics).
-     * @dg_internal
+     * @utility
      * @version 2.13.0
      */
     void accumulate_run_metrics(LoopContext& ctx);
@@ -1384,7 +1385,7 @@ private:
      * rather than adding a second `lock_guard`.
      *
      * @param ctx Loop context (with completed metrics).
-     * @dg_internal
+     * @utility
      * @version 2.13.0
      */
     void accumulate_per_tier(const LoopContext& ctx);
@@ -1395,7 +1396,7 @@ private:
      * gh#158 (v2.13.0). See the definition for why pause stays handle-wide
      * and why the clear had to become conditional.
      *
-     * @dg_internal
+     * @utility
      * @version 2.13.0
      */
     void clear_pause_for_fresh_turn();
@@ -1553,7 +1554,7 @@ private:
      * @brief Shared relay machinery: fire hook, write summary, set COMPLETE.
      * @param ctx Loop context.
      * @param summary Content to relay (caller applies any prefix).
-     * @dg_internal
+     * @utility
      * @version 2.1.0
      */
     void relay_partial_result(LoopContext& ctx, const std::string& summary);
@@ -1562,7 +1563,7 @@ private:
      * @brief Emit disambiguating log + metadata for relay path.
      * @param ctx Loop context (metadata mutated).
      * @param terminal_reason Non-empty when relaying a budget_exhausted child.
-     * @dg_internal
+     * @utility
      * @version 2.1.0
      */
     void log_relay_status(LoopContext& ctx,
@@ -1614,17 +1615,17 @@ private:
     void register_directive_handlers();
 
     // ── Directive handlers ───────────────────────────────
-    void dir_stop(LoopContext&, const Directive&, DirectiveResult&);         ///< @dg_internal
-    void dir_tier_change(LoopContext&, const Directive&, DirectiveResult&);  ///< @dg_internal
-    void dir_delegate(LoopContext&, const Directive&, DirectiveResult&);     ///< @dg_internal
-    void dir_pipeline(LoopContext&, const Directive&, DirectiveResult&);     ///< @dg_internal
-    void dir_complete(LoopContext&, const Directive&, DirectiveResult&);     ///< @dg_internal
-    void dir_clear_todos(LoopContext&, const Directive&, DirectiveResult&);  ///< @dg_internal
-    void dir_inject(LoopContext&, const Directive&, DirectiveResult&);       ///< @dg_internal
-    void dir_prune(LoopContext&, const Directive&, DirectiveResult&);        ///< @dg_internal
-    void dir_anchor(LoopContext&, const Directive&, DirectiveResult&);       ///< @dg_internal
-    void dir_phase(LoopContext&, const Directive&, DirectiveResult&);        ///< @dg_internal
-    void dir_notify(LoopContext&, const Directive&, DirectiveResult&);       ///< @dg_internal
+    void dir_stop(LoopContext&, const Directive&, DirectiveResult&);         ///< @utility
+    void dir_tier_change(LoopContext&, const Directive&, DirectiveResult&);  ///< @utility
+    void dir_delegate(LoopContext&, const Directive&, DirectiveResult&);     ///< @utility
+    void dir_pipeline(LoopContext&, const Directive&, DirectiveResult&);     ///< @utility
+    void dir_complete(LoopContext&, const Directive&, DirectiveResult&);     ///< @utility
+    void dir_clear_todos(LoopContext&, const Directive&, DirectiveResult&);  ///< @utility
+    void dir_inject(LoopContext&, const Directive&, DirectiveResult&);       ///< @utility
+    void dir_prune(LoopContext&, const Directive&, DirectiveResult&);        ///< @utility
+    void dir_anchor(LoopContext&, const Directive&, DirectiveResult&);       ///< @utility
+    void dir_phase(LoopContext&, const Directive&, DirectiveResult&);        ///< @utility
+    void dir_notify(LoopContext&, const Directive&, DirectiveResult&);       ///< @utility
 
     /**
      * @brief Parse tool calls from model output via adapter.
@@ -1653,9 +1654,9 @@ private:
     /**
      * @brief Execute a pending delegation after tool processing.
      * @param ctx Loop context with pending_delegation set.
-     * @version 1.8.6
+     * @version 2.14.6
      */
-    void execute_pending_delegation(LoopContext& ctx);           ///< @dg_internal
+    void execute_pending_delegation(LoopContext& ctx);           ///< @utility
 
     /**
      * @brief Apply the pre-run delegation guards (depth/cycle/repeat).
@@ -1667,7 +1668,7 @@ private:
      * @param ctx Loop context.
      * @param pending The delegation about to run.
      * @return true if the delegation was rejected (already handled).
-     * @dg_internal
+     * @utility
      * @version 2.3.7
      */
     bool reject_delegation_if_guarded(LoopContext& ctx,
@@ -1683,7 +1684,7 @@ private:
      * @param ctx Loop context.
      * @param pending The pipeline about to run.
      * @return true if the pipeline was rejected (already handled).
-     * @dg_internal
+     * @utility
      * @version 2.13.0
      */
     bool reject_pipeline_if_guarded(LoopContext& ctx,
@@ -1692,9 +1693,9 @@ private:
     /**
      * @brief Execute a pending pipeline after tool processing.
      * @param ctx Loop context with pending_pipeline set.
-     * @version 1.8.6
+     * @version 2.14.6
      */
-    void execute_pending_pipeline(LoopContext& ctx);             ///< @dg_internal
+    void execute_pending_pipeline(LoopContext& ctx);             ///< @utility
 
     /**
      * @brief Check if auto-chain should fire.
@@ -1702,11 +1703,11 @@ private:
      * @param finish_reason Generation finish reason.
      * @param content Response content.
      * @return true if auto-chain conditions met.
-     * @version 1.8.6
+     * @version 2.14.6
      */
     bool should_auto_chain(const LoopContext& ctx,
                            const std::string& finish_reason,
-                           const std::string& content);         ///< @dg_internal
+                           const std::string& content);         ///< @utility
 
     /**
      * @brief Attempt auto-chain: child→COMPLETE, root→TierChange.
@@ -1714,20 +1715,20 @@ private:
      * @param finish_reason Generation finish reason.
      * @param content Response content.
      * @return true if auto-chain was triggered.
-     * @version 1.8.6
+     * @version 2.14.6
      */
     bool try_auto_chain(LoopContext& ctx,
                         const std::string& finish_reason,
-                        const std::string& content);            ///< @dg_internal
+                        const std::string& content);            ///< @utility
 
     /**
      * @brief Fire a pre-hook and return true if cancelled.
      * @param point Hook point.
      * @param iteration Current iteration number.
      * @return true if hook cancelled the operation.
-     * @version 1.9.1
+     * @version 2.14.6
      */
-    bool fire_pre_hook(entropic_hook_point_t point, int iteration); ///< @dg_internal
+    bool fire_pre_hook(entropic_hook_point_t point, int iteration); ///< @utility
 
     /**
      * @brief Fire POST_GENERATE hook.
@@ -1740,11 +1741,11 @@ private:
      * @param result Generation result (mutable — hooks may transform output).
      * @param tier Active tier name at the time of generation.
      * @param messages Current conversation messages (for tool manifest + system prompt).
-     * @version 2.0.7
+     * @version 2.14.6
      */
     void fire_post_generate_hook(GenerateResult& result,
                                     const std::string& tier,
-                                    const std::vector<Message>& messages); ///< @dg_internal
+                                    const std::vector<Message>& messages); ///< @utility
 
     /**
      * @brief Pull rejection text from validation_provider_ into
@@ -1756,7 +1757,7 @@ private:
      * validation_provider_ is not wired or the verdict is clean.
      *
      * @param ctx Loop context (mutates pending_validation_feedback).
-     * @dg_internal
+     * @utility
      * @version 2.1.0
      */
     void capture_validation_feedback(LoopContext& ctx);
@@ -1778,7 +1779,7 @@ private:
      * @param ctx Loop context.
      * @param result Generation result (content may be revised by
      *               POST_GENERATE hook).
-     * @dg_internal
+     * @utility
      * @version 2.1.0
      */
     void dispatch_post_generate(LoopContext& ctx,
@@ -1794,7 +1795,7 @@ private:
      *
      * @param ctx Loop context.
      * @param result Generation result (already post-processed).
-     * @dg_internal
+     * @utility
      * @version 2.3.7
      */
     void process_generation_result(LoopContext& ctx,
@@ -1808,7 +1809,7 @@ private:
      * terminal state before launching any queued action.
      *
      * @param ctx Loop context.
-     * @dg_internal
+     * @utility
      * @version 2.4.3
      */
     void dispatch_pending_or_halt(LoopContext& ctx);
@@ -1828,7 +1829,7 @@ private:
      * @param content_len Byte length of this iteration's generated
      *        content (used to estimate tokens for the `tokens` mode).
      * @param made_tool_call Whether this iteration dispatched a tool.
-     * @dg_internal
+     * @utility
      * @version 2.5.0
      */
     void charge_thinking_budget(LoopContext& ctx, size_t content_len,
@@ -1839,7 +1840,7 @@ private:
      * @param ctx Loop context (accumulator mutated).
      * @param content_len Generated content byte length (tokens mode).
      * @return Units consumed (estimated tokens, or wall-clock seconds).
-     * @dg_internal
+     * @utility
      * @version 2.5.0
      */
     int budget_units_consumed(LoopContext& ctx, size_t content_len);
@@ -1847,7 +1848,7 @@ private:
     /**
      * @brief First-exhaustion budget nudge (push "emit completion now").
      * @param ctx Loop context.
-     * @dg_internal
+     * @utility
      * @version 2.5.0
      */
     void nudge_budget_completion(LoopContext& ctx);
@@ -1865,7 +1866,7 @@ private:
      * distinct value from the iteration cap's.
      *
      * @param ctx Loop context.
-     * @dg_internal
+     * @utility
      * @version 2.13.0
      */
     void hard_cut_budget(LoopContext& ctx);
@@ -1880,20 +1881,20 @@ private:
      * @param summary The entropic.complete summary text.
      * @param ctx Loop context with tool results.
      * @return true if hook cancelled (completion rejected).
-     * @version 2.0.10
+     * @version 2.14.6
      */
     bool fire_complete_hook(const std::string& summary,
-                            const LoopContext& ctx);                ///< @dg_internal
+                            const LoopContext& ctx);                ///< @utility
 
     /**
      * @brief Fire ON_DELEGATE pre-hook. Returns true if cancelled.
      * @param pending Delegation info.
      * @param depth Current delegation depth.
      * @return true if hook cancelled delegation.
-     * @version 1.9.1
+     * @version 2.14.6
      */
     bool fire_delegate_pre_hook(const PendingDelegation& pending,
-                                int depth);                         ///< @dg_internal
+                                int depth);                         ///< @utility
 
     /**
      * @brief Fire ON_DELEGATE_COMPLETE post-hook.
@@ -1904,11 +1905,11 @@ private:
      * @param target Target tier.
      * @param success Whether delegation succeeded.
      * @param summary Child summary or terminal_reason (verbatim; empty OK).
-     * @version 2.1.4
+     * @version 2.14.6
      */
     void fire_delegate_complete_hook(const std::string& target,
                                      bool success,
-                                     const std::string& summary = "");///< @dg_internal
+                                     const std::string& summary = "");///< @utility
 
     /**
      * @brief Get the project root used as sandbox snapshot source.
@@ -1927,14 +1928,14 @@ private:
      * gh#158 (v2.13.0): the lazy cache is filled under `sandbox_mutex_`.
      *
      * @return Project directory path.
-     * @version 2.13.0
+     * @version 2.14.6
      */
-    std::filesystem::path get_repo_dir();                       ///< @dg_internal
+    std::filesystem::path get_repo_dir();                       ///< @utility
 
     /**
      * @brief `get_repo_dir` with `sandbox_mutex_` already held (gh#158).
      * @return Project directory path; empty when none resolves.
-     * @dg_internal
+     * @utility
      * @version 2.13.0
      */
     std::filesystem::path get_repo_dir_locked();
@@ -1942,7 +1943,7 @@ private:
     /**
      * @brief Read the handle's system prompt under `prompt_mutex_` (gh#158).
      * @return A copy; empty when no system prompt is set.
-     * @dg_internal
+     * @utility
      * @version 2.13.0
      */
     std::string system_prompt_copy() const;
@@ -1966,8 +1967,6 @@ private:
      * (no project configured) — callers fall back to the no-sandbox
      * child-loop path, matching pre-2.1.6 behavior for that case.
      *
-     * @return Pointer to the engine-scoped sandbox manager, or nullptr
-     *         when no project_dir is available.
      * @threadsafety Construction is serialized by `sandbox_mutex_`. The
      *         pre-2.13.0 note claimed the facade's `api_mutex` did it; that
      *         was never true for a delegation, which reaches here from a run
@@ -1981,15 +1980,15 @@ private:
      * @param root Directory to snapshot from.
      * @return Pointer to the engine-owned manager for `root`, or nullptr
      *         when `root` is empty.
-     * @version 2.13.0
+     * @version 2.14.6
      */
     SandboxManager* ensure_sandbox_manager(
-        const std::filesystem::path& root);                     ///< @dg_internal
+        const std::filesystem::path& root);                     ///< @utility
 
     /**
      * @brief Read the gh#160 dir-swap callback pair under the mutex.
      * @return The installed (callback, user_data) pair.
-     * @dg_internal
+     * @utility
      * @version 2.13.0
      */
     std::pair<ScopedSandbox::SwapDirFn, void*> dir_swap_snapshot() const;
@@ -2008,7 +2007,7 @@ private:
      * @param pending      Pending delegation (target rewritten on success).
      * @param out_history  Loaded conversation messages on success.
      * @return true on success.
-     * @dg_internal
+     * @utility
      * @version 2.1.6
      */
     /**
@@ -2016,7 +2015,7 @@ private:
      * @param ctx Parent loop context (typed failure lands here).
      * @param[in,out] pending Resume request; id filled on success.
      * @return true when the tier has a prior delegation in storage.
-     * @dg_internal
+     * @utility
      * @version 2.13.0
      */
     bool resolve_latest_for_target(LoopContext& ctx,
@@ -2038,7 +2037,7 @@ private:
      * @param id      Delegation id.
      * @param parsed  [out] Parsed JSON payload on success.
      * @return true on success.
-     * @dg_internal
+     * @utility
      * @version 2.1.6
      */
     bool fetch_resume_payload(
@@ -2059,7 +2058,7 @@ private:
      * @param pending Pending delegation request.
      * @param resume_history Pre-loaded history (empty for cold delegations).
      * @return DelegationResult from the child loop.
-     * @dg_internal
+     * @utility
      * @version 2.1.6
      */
     DelegationResult run_pending_delegation(
@@ -2072,22 +2071,22 @@ private:
      * @param ctx Parent loop context that initiated the delegation.
      * @param tier Target tier the delegation is going to.
      * @param task Delegated task description.
-     * @version 1.8.6
+     * @version 2.14.6
      */
     void fire_delegation_start(const LoopContext& ctx,
                                const std::string& tier,
-                               const std::string& task);      ///< @dg_internal
+                               const std::string& task);      ///< @utility
 
     /**
      * @brief Fire on_delegation_complete callback.
      * @param ctx Parent loop context that received the delegation result.
      * @param tier Target tier the delegation ran on.
      * @param result Final delegation result returned to the parent.
-     * @version 1.8.6
+     * @version 2.14.6
      */
     void fire_delegation_complete(const LoopContext& ctx,
                                   const std::string& tier,
-                                  const struct DelegationResult& result); ///< @dg_internal
+                                  const struct DelegationResult& result); ///< @utility
 
     // ── Members ──────────────────────────────────────────
     LoopMetrics last_metrics_;                           ///< P2-15: last run metrics
@@ -2172,7 +2171,7 @@ private:
      * Returns std::nullopt when the queue is empty.
      *
      * @threadsafety Thread-safe.
-     * @dg_internal
+     * @utility
      * @version 2.1.10
      */
     std::optional<std::string> pop_queued_user_message();
@@ -2181,7 +2180,7 @@ private:
      * @brief Fire on_queued_message_consumed callback (gh#40).
      * @param consumed The popped message.
      * @param remaining Queue depth after the pop.
-     * @dg_internal
+     * @utility
      * @version 2.1.10
      */
     void fire_queue_consumed(const std::string& consumed, size_t remaining);
@@ -2257,7 +2256,7 @@ private:
     /**
      * @brief Resolve the run this thread owns, if any (gh#158).
      * @return This thread's run state, or nullptr outside a claimed run.
-     * @dg_internal
+     * @req REQ-LOOP-006
      * @version 2.13.0
      */
     std::shared_ptr<RunState> this_thread_run() const;
@@ -2265,7 +2264,7 @@ private:
     /**
      * @brief Whether the run on THIS thread should stop (gh#158).
      * @return true when the handle-wide flag or this run's token is set.
-     * @dg_internal
+     * @utility
      * @version 2.13.0
      */
     bool run_interrupted() const;
@@ -2313,7 +2312,7 @@ private:
 
     /**
      * @brief Wire internal TierResolutionInterface from stored tier data.
-     * @dg_internal
+     * @utility
      * @version 2.0.2
      */
     void wire_internal_tier_resolution();
@@ -2326,7 +2325,7 @@ private:
      * and ToolExecutor::truncate_to_limit. No-op if locked_tier is empty.
      *
      * @param ctx Loop context to update.
-     * @dg_internal
+     * @utility
      * @version 2.0.6-rc16
      */
     void apply_identity_overrides(LoopContext& ctx);
@@ -2342,7 +2341,7 @@ private:
      * doing differently.
      *
      * @param ctx Loop context, mutated in place.
-     * @dg_internal
+     * @utility
      * @version 2.13.0
      */
     void begin_loop_preamble(LoopContext& ctx);
@@ -2351,7 +2350,7 @@ private:
      * @brief Resolve effective max_iterations, honouring per-identity override.
      * @param ctx Loop context.
      * @return Override if set (>=0), otherwise LoopConfig default.
-     * @dg_internal
+     * @utility
      * @version 2.0.6-rc16
      */
     int resolve_max_iterations(const LoopContext& ctx) const;
@@ -2360,7 +2359,7 @@ private:
      * @brief Resolve effective max_tool_calls_per_turn, honouring override.
      * @param ctx Loop context.
      * @return Override if set (>=0), otherwise LoopConfig default.
-     * @dg_internal
+     * @utility
      * @version 2.0.6-rc16
      */
     int resolve_max_tool_calls(const LoopContext& ctx) const;
@@ -2371,7 +2370,7 @@ private:
      * @param name Tier name.
      * @param ud Untyped AgentEngine* pointer.
      * @return ChildContextInfo (valid=false if tier unknown).
-     * @dg_internal
+     * @utility
      * @version 2.0.2
      */
     static ChildContextInfo tri_resolve_tier(
@@ -2381,7 +2380,7 @@ private:
      * @param name Tier name.
      * @param ud Untyped AgentEngine* pointer.
      * @return true if tier registered.
-     * @dg_internal
+     * @utility
      * @version 2.0.2
      */
     static bool tri_tier_exists(
@@ -2391,7 +2390,7 @@ private:
      * @param name Source tier name.
      * @param ud Untyped AgentEngine* pointer.
      * @return Target tiers, empty if no handoff configured.
-     * @dg_internal
+     * @utility
      * @version 2.0.2
      */
     static std::vector<std::string> tri_get_handoff_targets(
@@ -2402,7 +2401,7 @@ private:
      * @param param Parameter key.
      * @param ud Untyped AgentEngine* pointer.
      * @return String value, empty if tier or param unknown.
-     * @dg_internal
+     * @utility
      * @version 2.0.2
      */
     static std::string tri_get_tier_param(

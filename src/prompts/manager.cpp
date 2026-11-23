@@ -53,7 +53,7 @@ static std::string trim(const std::string& s)
  * @param[out] body Output markdown body after frontmatter.
  * @return Empty string on success, error on failure.
  * @version 2.14.4
- * @dg_internal
+ * @utility
  */
 static std::string parse_frontmatter(
     const std::string& content,
@@ -180,7 +180,7 @@ std::string parse_prompt_file(
  * @param root ryml root node.
  * @param[out] fm Output identity frontmatter.
  * @version 1.8.2
- * @dg_internal
+ * @utility
  */
 static void extract_phases(
     ryml::ConstNodeRef root, IdentityFrontmatter& fm)
@@ -206,7 +206,7 @@ static void extract_phases(
  * @param root ryml root node.
  * @param[out] fm Output identity frontmatter.
  * @version 1.8.2
- * @dg_internal
+ * @utility
  */
 static void extract_benchmark(
     ryml::ConstNodeRef root, IdentityFrontmatter& fm)
@@ -238,7 +238,7 @@ static void extract_benchmark(
  * @param root ryml root node of the frontmatter.
  * @param[out] fm Output identity frontmatter.
  * @version 2.0.6-rc18
- * @dg_internal
+ * @utility
  */
 /**
  * @brief Extract the per-tier sampler knobs (gh#82/gh#85/gh#86).
@@ -297,7 +297,7 @@ static void extract_identity_flags(ryml::ConstNodeRef root,
 
 /**
  * @brief Extract all identity frontmatter fields into the struct.
- * @dg_internal
+ * @utility
  * @version 2.3.7
  */
 static void extract_identity_fields(
@@ -441,7 +441,7 @@ std::string load_constitution(
  * @param data_dir Bundled data directory.
  * @param[out] body Receives the parsed prompt body.
  * @return Empty string on success, an error message otherwise.
- * @dg_internal
+ * @utility
  * @version 2.11.0
  */
 static std::string load_app_context_file(
@@ -607,7 +607,7 @@ void load_shared_prompt_sources(
  * @param config Parsed engine config.
  * @param data_dir Bundled data directory.
  * @return Empty string when unconfigured, disabled, or loadable.
- * @dg_internal
+ * @utility
  * @version 2.13.0
  */
 static std::string check_constitution_source(
@@ -637,7 +637,7 @@ static std::string check_constitution_source(
  * @param config Parsed engine config.
  * @param data_dir Bundled data directory.
  * @return Empty string when unconfigured, disabled, inline, or loadable.
- * @dg_internal
+ * @utility
  * @version 2.13.0
  */
 static std::string check_app_context_source(
@@ -719,7 +719,7 @@ static std::string grammar_completion_conflict(
  * @param config Parsed engine config.
  * @param data_dir Bundled data directory.
  * @return Empty string when every tier's identity loads, else the reason.
- * @dg_internal
+ * @utility
  * @version 2.14.5
  */
 static std::string check_identity_sources(
@@ -845,7 +845,7 @@ std::string resolve_tier_identity(
  * @param config Parsed engine config.
  * @param data_dir Bundled data directory.
  * @return Assembled system prompt string.
- * @dg_internal
+ * @utility
  * @version 2.13.0
  */
 std::string assemble(

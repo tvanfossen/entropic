@@ -99,8 +99,11 @@ never run tools directly:
 ### Doxygen
 
 Every C/C++ function requires a Doxygen comment with at minimum `@brief`
-and `@version`. The `doxygen-guard` hook enforces this. Functions must also
-have one of `@internal`, `@utility`, or `@callback` tags.
+and `@version`. The `clew-guard` hook enforces this (config: `guard:` in
+`.clew.yaml`). Each function also carries `@req <id>` naming the requirement it
+implements in `docs/requirements.yaml`, or an exemption: `@utility` for a helper
+with no requirement behind it, `@callback` for something a framework calls. The
+hook fails a commit that drops the `@req` share below 0.50.
 
 ## Branch Workflow
 

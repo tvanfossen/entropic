@@ -22,7 +22,7 @@ static const std::vector<std::string> s_reserved_names = {
 
 /**
  * @brief Compiled regex for identity name validation.
- * @dg_internal
+ * @utility
  * @version 1.9.6
  */
 static const std::regex s_name_regex("^[a-z][a-z0-9_-]{0,63}$");
@@ -129,7 +129,7 @@ static entropic_error_t check_mutable(
 /**
  * @brief Construct with configuration.
  * @param config Identity manager configuration.
- * @dg_internal
+ * @utility
  * @version 1.9.6
  */
 IdentityManager::IdentityManager(const IdentityManagerConfig& config)
@@ -140,7 +140,7 @@ IdentityManager::IdentityManager(const IdentityManagerConfig& config)
 /**
  * @brief Set grammar validation interface.
  * @param iface Grammar validation callbacks.
- * @dg_internal
+ * @utility
  * @version 1.9.6
  */
 void IdentityManager::set_grammar_interface(
@@ -151,7 +151,7 @@ void IdentityManager::set_grammar_interface(
 /**
  * @brief Set MCP key management interface.
  * @param iface MCP key callbacks.
- * @dg_internal
+ * @utility
  * @version 1.9.6
  */
 void IdentityManager::set_mcp_interface(const MCPKeyInterface& iface) {
@@ -282,7 +282,7 @@ entropic_error_t IdentityManager::destroy(const std::string& name) {
  * @brief Get identity config by name.
  * @param name Identity name.
  * @return Pointer to config, or nullptr if not found.
- * @dg_internal
+ * @utility
  * @version 1.9.6
  */
 const IdentityConfig* IdentityManager::get(
@@ -298,7 +298,7 @@ const IdentityConfig* IdentityManager::get(
  * @brief Check if an identity exists.
  * @param name Identity name.
  * @return true if identity exists.
- * @dg_internal
+ * @utility
  * @version 1.9.6
  */
 bool IdentityManager::has(const std::string& name) const {
@@ -311,7 +311,7 @@ bool IdentityManager::has(const std::string& name) const {
 /**
  * @brief List all identity names.
  * @return Vector of identity names (static + dynamic).
- * @dg_internal
+ * @utility
  * @version 1.9.6
  */
 std::vector<std::string> IdentityManager::list() const {
@@ -329,7 +329,7 @@ std::vector<std::string> IdentityManager::list() const {
 /**
  * @brief List only routable identities for classification prompt.
  * @return Vector of pointers to routable identity configs.
- * @dg_internal
+ * @utility
  * @version 1.9.6
  */
 std::vector<const IdentityConfig*>
@@ -349,7 +349,7 @@ IdentityManager::list_routable() const {
 /**
  * @brief Get the total number of identities.
  * @return Total count (static + dynamic).
- * @dg_internal
+ * @utility
  * @version 1.9.6
  */
 size_t IdentityManager::count() const {
@@ -360,7 +360,7 @@ size_t IdentityManager::count() const {
 /**
  * @brief Get the number of dynamic identities.
  * @return Dynamic identity count only.
- * @dg_internal
+ * @utility
  * @version 1.9.6
  */
 size_t IdentityManager::count_dynamic() const {
@@ -388,7 +388,7 @@ bool IdentityManager::is_router_dirty() const {
 
 /**
  * @brief Clear the dirty flag.
- * @dg_internal
+ * @utility
  * @version 1.9.6
  */
 void IdentityManager::clear_router_dirty() {
@@ -401,7 +401,7 @@ void IdentityManager::clear_router_dirty() {
  * @brief Set the in-use checker callback.
  * @param checker Function returning true if name is in active delegation.
  * @param user_data Opaque pointer forwarded to checker.
- * @dg_internal
+ * @utility
  * @version 1.9.6
  */
 void IdentityManager::set_in_use_checker(
@@ -420,7 +420,7 @@ void IdentityManager::set_in_use_checker(
  *
  * @param cb Callback invoked on identity change (nullable).
  * @param user_data Forwarded to cb.
- * @dg_internal
+ * @utility
  * @version 2.0.6-rc16
  */
 void IdentityManager::set_cache_invalidator(void (*cb)(void*),
@@ -431,7 +431,7 @@ void IdentityManager::set_cache_invalidator(void (*cb)(void*),
 
 /**
  * @brief Invoke the cache invalidator if registered.
- * @dg_internal
+ * @req REQ-IDEN-002
  * @version 2.0.6-rc16
  */
 void IdentityManager::fire_cache_invalidator() {

@@ -28,7 +28,7 @@ auto logger = entropic::log::get("storage.permission_persister");
 /**
  * @brief Construct with config directory path.
  * @param config_dir Path to app config directory.
- * @dg_internal
+ * @utility
  * @version 1.8.8
  */
 PermissionPersister::PermissionPersister(
@@ -179,7 +179,7 @@ static std::string join_lines(const std::vector<std::string>& lines) {
  * @param item The "    - <pattern>" item line.
  * @return true if `item` was inserted (write needed); false if the
  *         pattern was already present.
- * @dg_internal
+ * @utility
  * @version 2.3.7
  */
 static bool insert_permission_item(std::vector<std::string>& lines,
@@ -221,7 +221,7 @@ static bool insert_permission_item(std::vector<std::string>& lines,
  * @param pattern Permission pattern.
  * @param allow true for allow list, false for deny list.
  * @return true on success.
- * @dg_internal
+ * @utility
  * @version 2.3.7
  */
 bool PermissionPersister::save_permission(std::string_view pattern,

@@ -36,7 +36,7 @@ namespace entropic {
  * Pre-v2.2.6 a single process-global `s_ctx` was reassigned on
  * every configure, which broke as soon as two handles existed.
  *
- * @dg_internal
+ * @utility
  * @version 2.2.6
  */
 struct InterfaceContext {
@@ -498,7 +498,7 @@ static std::vector<ToolCall> try_fenced_args_object_call(
  * @param raw   Raw model output.
  * @param llama Active LlamaCppBackend (may be nullptr → gh#127 skipped).
  * @param calls [in/out] Tool call accumulator (no-op unless currently empty).
- * @utility
+ * @req REQ-INFER-010
  * @version 2.10.0
  */
 static void apply_fenced_fallbacks(const std::string& raw,
@@ -614,7 +614,7 @@ static int iface_is_complete(const char* /*content*/,
  * @param orchestrator Orchestrator to wire.
  * @param default_tier Default tier name.
  * @return Wired interface.
- * @dg_internal
+ * @utility
  * @version 2.4.2
  */
 InferenceInterface build_orchestrator_interface(
@@ -641,7 +641,7 @@ InferenceInterface build_orchestrator_interface(
 
 /**
  * @brief Free a context returned by build_orchestrator_interface().
- * @dg_internal
+ * @utility
  * @version 2.2.6
  */
 void destroy_orchestrator_interface(InterfaceContext* context) {

@@ -411,7 +411,7 @@ HttpListener::~HttpListener() { stop(); }
  * @param impl Server state.
  * @param bridge Bridge to dispatch to.
  * @param port Bound port (for the Host check).
- * @utility
+ * @req REQ-BRIDGE-001
  * @version 2.14.0
  */
 static void configure_server(HttpListener::Impl& impl, ExternalBridge* bridge,
@@ -450,7 +450,7 @@ static void configure_server(HttpListener::Impl& impl, ExternalBridge* bridge,
  * @param server The server.
  * @param port Requested port.
  * @return The bound port, or <= 0 on failure.
- * @utility
+ * @req REQ-BRIDGE-001
  * @version 2.14.6
  */
 static int bind_loopback(httplib::Server& server, int port) {

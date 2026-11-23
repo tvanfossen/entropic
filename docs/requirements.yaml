@@ -1,8 +1,8 @@
 # SPDX-License-Identifier: Apache-2.0
 # Entropic Engine Requirements
 #
-# Source of truth for @req traceability tags, cross-referenced by doxygen-guard
-# (see .doxygen-guard.yaml -> impact.requirements.file).
+# Source of truth for @req traceability tags, enforced by the clew-guard hook
+# (see .clew.yaml -> requirements.file).
 #
 # DERIVED FROM THE IMPLEMENTATION, NOT WRITTEN AHEAD OF IT. The engine is a
 # shipped system at v2.10.4; these entries describe what it already

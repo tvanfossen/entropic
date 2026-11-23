@@ -39,7 +39,7 @@ namespace entropic {
 
 /**
  * @brief Single todo entry.
- * @dg_internal
+ * @utility
  * @version 1.8.5
  */
 struct TodoItem {
@@ -59,7 +59,7 @@ struct TodoItem {
  * the vector into heap corruption). The list is now keyed by the calling
  * session and released with that session's conversation.
  *
- * @dg_internal
+ * @utility
  * @version 2.13.0 [reviewed]
  */
 class TodoTool : public ToolBase {
@@ -67,7 +67,7 @@ public:
     /**
      * @brief Construct from tool definition.
      * @param def Tool definition loaded from entropic/todo.json.
-     * @dg_internal
+     * @utility
      * @version 1.8.5
      */
     explicit TodoTool(ToolDefinition def)
@@ -77,7 +77,7 @@ public:
      * @brief Execute todo action (add/update/remove).
      * @param args_json JSON with "action", "content", "index", "status".
      * @return ServerResponse with todo state and directives.
-     * @dg_internal
+     * @utility
      * @version 1.8.5
      */
     ServerResponse execute(const std::string& args_json) override;
@@ -86,7 +86,7 @@ public:
      * @brief Anchor key for todo state replacement.
      * @param args_json Arguments (unused).
      * @return "todo_state" anchor key.
-     * @dg_internal
+     * @utility
      * @version 1.8.5
      */
     std::string anchor_key(
@@ -96,7 +96,7 @@ public:
      * @brief Forget a session's list (gh#158).
      * @param key Session key.
      * @return true when the session had a list.
-     * @dg_internal
+     * @utility
      * @version 2.13.0
      */
     bool release(const std::string& key) { return lists_.release(key); }
@@ -104,7 +104,7 @@ public:
     /**
      * @brief Sessions holding a list (gh#158).
      * @return Session count.
-     * @dg_internal
+     * @utility
      * @version 2.13.0
      */
     std::size_t session_count() const { return lists_.session_count(); }
@@ -120,7 +120,7 @@ private:
  * @brief Anchor key for context replacement.
  * @param args_json Arguments (unused).
  * @return "todo_state".
- * @dg_internal
+ * @utility
  * @version 1.8.5
  */
 std::string TodoTool::anchor_key(
@@ -134,7 +134,7 @@ namespace {
  * @brief Format a todo list as numbered text.
  * @param items The list.
  * @return Formatted string, or "(empty)".
- * @dg_internal
+ * @utility
  * @version 2.13.0
  */
 std::string format_todo_list(const std::vector<TodoItem>& items) {
@@ -156,7 +156,7 @@ std::string format_todo_list(const std::vector<TodoItem>& items) {
  * @param action "update" or "remove".
  * @param idx Requested index.
  * @return "" or the declared `out_of_range` error.
- * @dg_internal
+ * @utility
  * @version 2.14.0
  */
 std::string todo_index_error(const std::vector<TodoItem>& items,
@@ -184,7 +184,7 @@ std::string todo_index_error(const std::vector<TodoItem>& items,
  * @param action One of "add" / "update" / "remove".
  * @param args Parsed tool arguments.
  * @return "" when applied, else a declared error.
- * @dg_internal
+ * @utility
  * @version 2.14.0
  */
 std::string apply_todo_action(std::vector<TodoItem>& items,
@@ -259,7 +259,7 @@ ServerResponse TodoTool::execute(const std::string& args_json) {
 
 /**
  * @brief Tool for delegating tasks to child inference loops.
- * @dg_internal
+ * @utility
  * @version 1.8.5
  */
 class DelegateTool : public ToolBase {
@@ -268,7 +268,7 @@ public:
      * @brief Construct and patch input schema with tier names.
      * @param def Tool definition loaded from entropic/delegate.json.
      * @param tier_names Available tier names for enum patching.
-     * @dg_internal
+     * @utility
      * @version 1.8.5
      */
     DelegateTool(ToolDefinition def,
@@ -281,7 +281,7 @@ public:
      * @return ServerResponse with delegate + stop directives, or a typed
      *         error with NO directives when the target tier declares
      *         `requires_context` and none was supplied (gh#162).
-     * @dg_internal
+     * @utility
      * @version 2.13.0
      */
     ServerResponse execute(const std::string& args_json) override;
@@ -413,7 +413,7 @@ ServerResponse DelegateTool::execute(const std::string& args_json) {
 
 /**
  * @brief Tool for multi-stage delegation pipelines.
- * @dg_internal
+ * @utility
  * @version 1.8.5
  */
 class PipelineTool : public ToolBase {
@@ -422,7 +422,7 @@ public:
      * @brief Construct and patch input schema with tier names.
      * @param def Tool definition loaded from entropic/pipeline.json.
      * @param tier_names Available tier names for enum patching.
-     * @dg_internal
+     * @utility
      * @version 1.8.5
      */
     PipelineTool(ToolDefinition def,
@@ -433,7 +433,7 @@ public:
      * @brief Execute pipeline setup.
      * @param args_json JSON with "stages" array and "task".
      * @return ServerResponse with pipeline + stop directives.
-     * @dg_internal
+     * @utility
      * @version 1.8.5
      */
     ServerResponse execute(const std::string& args_json) override;
@@ -591,7 +591,7 @@ ServerResponse PipelineTool::execute(const std::string& args_json) {
 
 /**
  * @brief Tool for signaling task completion.
- * @dg_internal
+ * @utility
  * @version 1.8.5
  */
 class CompleteTool : public ToolBase {
@@ -599,7 +599,7 @@ public:
     /**
      * @brief Construct from tool definition.
      * @param def Tool definition loaded from entropic/complete.json.
-     * @dg_internal
+     * @utility
      * @version 1.8.5
      */
     explicit CompleteTool(ToolDefinition def)
@@ -609,7 +609,7 @@ public:
      * @brief Execute completion signal.
      * @param args_json JSON with "summary".
      * @return ServerResponse with complete + stop directives.
-     * @dg_internal
+     * @utility
      * @version 1.8.5
      */
     ServerResponse execute(const std::string& args_json) override;
@@ -687,14 +687,14 @@ ServerResponse CompleteTool::execute(const std::string& args_json) {
 
 /**
  * @brief Tool for switching inference phase.
- * @dg_internal
+ * @utility
  * @version 1.8.5
  */
 class PhaseChangeTool : public ToolBase {
 public:
     /**
      * @brief Construct with inline tool definition.
-     * @dg_internal
+     * @utility
      * @version 1.8.5
      */
     PhaseChangeTool();
@@ -703,7 +703,7 @@ public:
      * @brief Execute phase change.
      * @param args_json JSON with "phase".
      * @return ServerResponse with phase_change directive.
-     * @dg_internal
+     * @utility
      * @version 1.8.5
      */
     ServerResponse execute(const std::string& args_json) override;
@@ -716,7 +716,7 @@ public:
  * descriptor, and its Response format is rendered from it.
  *
  * @return The definition.
- * @dg_internal
+ * @utility
  * @version 2.14.0
  */
 static ToolDefinition phase_change_definition() {
@@ -733,7 +733,7 @@ static ToolDefinition phase_change_definition() {
 
 /**
  * @brief Build the phase_change tool from its inline definition.
- * @dg_internal
+ * @utility
  * @version 2.14.0
  */
 PhaseChangeTool::PhaseChangeTool()
@@ -768,7 +768,7 @@ ServerResponse PhaseChangeTool::execute(
 
 /**
  * @brief Tool for pruning old messages from context.
- * @dg_internal
+ * @utility
  * @version 1.8.5
  */
 class PruneContextTool : public ToolBase {
@@ -822,7 +822,7 @@ ServerResponse PruneContextTool::execute(
 
 /**
  * @brief Tool for full engine state snapshots.
- * @dg_internal
+ * @utility
  * @version 1.9.12
  */
 class DiagnoseTool : public ToolBase {
@@ -830,7 +830,7 @@ public:
     /**
      * @brief Construct from tool definition.
      * @param def Tool definition loaded from entropic/diagnose.json.
-     * @dg_internal
+     * @utility
      * @version 1.9.12
      */
     explicit DiagnoseTool(ToolDefinition def)
@@ -840,7 +840,7 @@ public:
      * @brief Execute diagnostic snapshot.
      * @param args_json JSON with optional include_docs, history_limit.
      * @return ServerResponse with JSON snapshot (no directives).
-     * @dg_internal
+     * @utility
      * @version 1.9.12
      */
     ServerResponse execute(const std::string& args_json) override;
@@ -903,7 +903,7 @@ static std::string call_provider(
  * @param max_entries Max entries to return.
  * @param ud User data.
  * @return JSON string.
- * @dg_internal
+ * @utility
  * @version 1.9.12
  */
 static std::string call_history_provider(
@@ -926,7 +926,7 @@ static std::string call_history_provider(
  * @param section Section name (nullptr for full doc).
  * @param ud User data.
  * @return String content.
- * @dg_internal
+ * @utility
  * @version 1.9.12
  */
 static std::string call_docs_provider(
@@ -950,7 +950,7 @@ static std::string call_docs_provider(
  * @param include_docs Whether to include documentation.
  * @param history_limit Max history entries.
  * @return Snapshot as JSON object.
- * @dg_internal
+ * @utility
  * @version 1.9.12
  */
 static nlohmann::json build_snapshot(
@@ -1026,7 +1026,7 @@ ServerResponse DiagnoseTool::execute(const std::string& args_json) {
 
 /**
  * @brief Tool for targeted engine state queries.
- * @dg_internal
+ * @utility
  * @version 1.9.12
  */
 class InspectTool : public ToolBase {
@@ -1034,7 +1034,7 @@ public:
     /**
      * @brief Construct from tool definition.
      * @param def Tool definition loaded from entropic/inspect.json.
-     * @dg_internal
+     * @utility
      * @version 1.9.12
      */
     explicit InspectTool(ToolDefinition def)
@@ -1044,7 +1044,7 @@ public:
      * @brief Execute targeted inspection.
      * @param args_json JSON with "target" and optional "key".
      * @return ServerResponse with query result (no directives).
-     * @dg_internal
+     * @utility
      * @version 1.9.12
      */
     ServerResponse execute(const std::string& args_json) override;
@@ -1081,7 +1081,7 @@ private:
  * Returns each message with role, content preview, and estimated
  * token count so the model can assess its own context saturation.
  *
- * @dg_internal
+ * @utility
  * @version 2.0.6-rc16
  */
 class ContextInspectTool : public ToolBase {
@@ -1089,7 +1089,7 @@ public:
     /**
      * @brief Construct from tool definition.
      * @param def Tool definition loaded from entropic/context_inspect.json.
-     * @dg_internal
+     * @utility
      * @version 2.0.6-rc16
      */
     explicit ContextInspectTool(ToolDefinition def)
@@ -1099,7 +1099,7 @@ public:
      * @brief Return context window contents as a message array.
      * @param args_json JSON with optional "max_messages" (0 = all).
      * @return ServerResponse with [{role, content_preview, token_count_est}].
-     * @dg_internal
+     * @utility
      * @version 2.0.6-rc16
      */
     ServerResponse execute(const std::string& args_json) override;
@@ -1132,7 +1132,7 @@ private:
  * @brief Collect keys from a JSON object into a vector.
  * @param j JSON object.
  * @return Vector of key strings.
- * @dg_internal
+ * @utility
  * @version 1.9.12
  */
 static std::vector<std::string> collect_object_keys(
@@ -1148,7 +1148,7 @@ static std::vector<std::string> collect_object_keys(
  * @brief Collect "name" fields from a JSON array of objects.
  * @param j JSON array.
  * @return Vector of name strings.
- * @dg_internal
+ * @utility
  * @version 1.9.12
  */
 static std::vector<std::string> collect_array_names(
@@ -1166,7 +1166,7 @@ static std::vector<std::string> collect_array_names(
  * @brief List available keys from a JSON value for error messages.
  * @param j JSON object or array with "name" fields.
  * @return Comma-separated key list.
- * @dg_internal
+ * @utility
  * @version 1.9.12
  */
 static std::string list_available_keys(const nlohmann::json& j) {
@@ -1189,7 +1189,7 @@ static std::string list_available_keys(const nlohmann::json& j) {
  * @param[out] data The selected entry.
  * @return "" when found, else the declared `not_found` error listing
  *         what is available.
- * @dg_internal
+ * @utility
  * @version 2.14.0
  */
 static std::string filter_json_by_key(
@@ -1219,7 +1219,7 @@ static std::string filter_json_by_key(
  * @param label Error message label.
  * @param[out] data The whole value, or the selected entry.
  * @return "" on success, else the declared `not_found` error.
- * @dg_internal
+ * @utility
  * @version 2.14.0
  */
 static std::string inspect_filterable(
@@ -1244,7 +1244,7 @@ static std::string inspect_filterable(
  * @param[out] data Target data — JSON for state/metrics/history, the
  *             documentation text for docs.
  * @return true if target was handled.
- * @dg_internal
+ * @utility
  * @version 2.14.0
  */
 static bool dispatch_simple_target(
@@ -1280,7 +1280,7 @@ static bool dispatch_simple_target(
  * @param[out] data The target's data.
  * @return "" on success, else a declared error (`unknown_target`,
  *         `not_found`).
- * @dg_internal
+ * @utility
  * @version 2.14.0
  */
 static std::string dispatch_inspect(
@@ -1307,7 +1307,7 @@ static std::string dispatch_inspect(
  * @brief Execute targeted inspection query.
  * @param args_json JSON with "target" and optional "key".
  * @return ServerResponse with query result.
- * @dg_internal
+ * @utility
  * @version 1.9.12
  */
 /**
@@ -1402,7 +1402,7 @@ ServerResponse ContextInspectTool::execute(
  * provider's `search_delegations` callback to surface candidate
  * matches and returns the JSON verbatim to the model.
  *
- * @dg_internal
+ * @utility
  * @version 2.1.6
  */
 class FollowupTool : public ToolBase {
@@ -1410,7 +1410,7 @@ public:
     /**
      * @brief Construct from loaded tool definition.
      * @param def Tool definition (entropic/followup.json).
-     * @dg_internal
+     * @utility
      * @version 2.1.6
      */
     explicit FollowupTool(ToolDefinition def)
@@ -1420,7 +1420,7 @@ public:
      * @brief Execute a followup query.
      * @param args_json JSON with required "query" and optional "max_results".
      * @return ServerResponse with results JSON; no directives.
-     * @dg_internal
+     * @utility
      * @version 2.1.6
      */
     ServerResponse execute(const std::string& args_json) override;
@@ -1459,7 +1459,7 @@ private:
  * @param raw Provider JSON array, or nullptr.
  * @return `{"results": [{delegation_id, target_tier, summary,
  *         completed_at}]}`.
- * @dg_internal
+ * @req REQ-MCP-024
  * @version 2.14.0
  */
 static std::string followup_results(const char* raw) {
@@ -1523,7 +1523,7 @@ ServerResponse FollowupTool::execute(const std::string& args_json) {
  * builds the child context with that history before running the
  * new task.
  *
- * @dg_internal
+ * @utility
  * @version 2.1.6
  */
 class ResumeDelegationTool : public ToolBase {
@@ -1531,14 +1531,14 @@ public:
     /**
      * @brief Construct from loaded tool definition.
      * @param def Tool definition (entropic/resume_delegation.json).
-     * @dg_internal
+     * @utility
      * @version 2.1.6
      */
     /**
      * @brief Construct and patch the `target` enum with the tier names.
      * @param def Tool definition (entropic/resume_delegation.json).
      * @param tier_names Tiers a resume may address (gh#162).
-     * @dg_internal
+     * @utility
      * @version 2.13.0
      */
     ResumeDelegationTool(ToolDefinition def,
@@ -1553,7 +1553,7 @@ public:
      * @brief Emit a resume-flavored delegate directive.
      * @param args_json JSON {delegation_id, task, max_turns?}.
      * @return ServerResponse with delegate + stop directives.
-     * @dg_internal
+     * @utility
      * @version 2.1.6
      */
     ServerResponse execute(const std::string& args_json) override;

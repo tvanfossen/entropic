@@ -82,8 +82,8 @@ namespace entropic {
  * that serialises every caller reaching the engine. v2.14.2: owns its async
  * workers (joined by stop()) instead of detaching them.
  *
- * @dg_internal
- * @version 2.14.2
+ * @utility
+ * @version 2.14.6
  */
 class ENTROPIC_EXPORT ExternalBridge {
 public:
@@ -155,7 +155,7 @@ public:
      * Public since gh#144 (v2.12.0) for the same reason handle_ask_status is:
      * this is the bridge's protocol entry point, and the tool schemas it
      * serves are otherwise observable only over a real unix socket. The class
-     * is @dg_internal and crosses no public ABI, so exposing it costs
+     * is @utility and crosses no public ABI, so exposing it costs
      * nothing a consumer can depend on.
      *
      * @param request Raw JSON-RPC request line.
@@ -252,7 +252,7 @@ public:
      * @brief Handle entropic.ask_status — check async task state.
      * @param args Tool arguments (JSON with task_id).
      * @return MCP tool result JSON.
-     * @dg_internal
+     * @utility
      * @version 2.0.11
      */
     nlohmann::json handle_ask_status(const nlohmann::json& args);
@@ -262,7 +262,7 @@ public:
      * @param prompt User prompt.
      * @param task_id Assigned task ID.
      * @param client_fd Socket fd for completion notification.
-     * @dg_internal
+     * @utility
      * @version 2.0.11
      */
     /**
@@ -275,14 +275,14 @@ public:
      * (P1-5 follow-up, 2.0.6-rc16.2)
      *
      * @param task_id Task whose phase will be updated.
-     * @dg_internal
+     * @utility
      * @version 2.0.6-rc16.2
      */
     void attach_phase_observer(const std::string& task_id);
 
     /**
      * @brief Clear the phase observer installed by attach_phase_observer.
-     * @dg_internal
+     * @utility
      * @version 2.0.6-rc16.2
      */
     void detach_phase_observer();
@@ -366,7 +366,7 @@ public:
 
     /**
      * @brief Remove tasks older than TTL from the registry.
-     * @dg_internal
+     * @utility
      * @version 2.0.11
      */
     void cleanup_expired_tasks();
@@ -380,7 +380,7 @@ public:
      * Moved to public section in 2.0.6-rc16 so cancel-on-clear can
      * flip task statuses with the mutex held. (P1-5, P1-8)
      *
-     * @dg_internal
+     * @utility
      * @version 2.0.6-rc16
      */
     struct AsyncTask {
@@ -421,7 +421,7 @@ public:
     /**
      * @brief Add a connected fd to the subscriber set.
      * @param fd Connected client socket fd.
-     * @dg_internal (public for unit test access)
+     * @utility (public for unit test access)
      * @version 2.0.6-rc16
      */
     void subscribe(int fd);
@@ -429,7 +429,7 @@ public:
     /**
      * @brief Remove an fd from the subscriber set.
      * @param fd Client socket fd being closed.
-     * @dg_internal (public for unit test access)
+     * @utility (public for unit test access)
      * @version 2.0.6-rc16
      */
     void unsubscribe(int fd);
@@ -442,7 +442,7 @@ public:
      * write are removed from the set.
      *
      * @param notif JSON-RPC notification object.
-     * @dg_internal (public for unit test access)
+     * @utility (public for unit test access)
      * @version 2.0.6-rc16
      */
     void broadcast_notification(const nlohmann::json& notif);
@@ -457,7 +457,7 @@ public:
      *
      * @param fd Owning client's fd.
      * @param notif JSON-RPC notification object.
-     * @dg_internal (public for unit test access)
+     * @utility (public for unit test access)
      * @version 2.14.0
      */
     void notify_client(int fd, const nlohmann::json& notif);
@@ -510,7 +510,7 @@ public:
 private:
     /**
      * @brief Background thread: accept connections and serve.
-     * @dg_internal
+     * @utility
      * @version 2.0.8
      */
     void accept_loop();
@@ -518,7 +518,7 @@ private:
     /**
      * @brief Serve a single connected client until disconnect.
      * @param client_fd Connected socket file descriptor.
-     * @dg_internal
+     * @utility
      * @version 2.0.8
      */
     void serve_client(int client_fd);
@@ -531,7 +531,7 @@ private:
      * vector doesn't grow unbounded over a long-running bridge. Joins
      * any thread whose ``finished`` flag is set, then erases the
      * entry. Must be called with client_threads_mutex_ held.
-     * @dg_internal
+     * @utility
      * @version 2.1.2
      */
     void reap_finished_clients_locked();
@@ -540,7 +540,7 @@ private:
      * @brief Join and forget async workers that have finished (v2.14.2).
      *
      * Must be called with async_workers_mutex_ held.
-     * @dg_internal
+     * @utility
      * @version 2.14.2
      */
     void reap_finished_async_locked();
@@ -550,7 +550,7 @@ private:
      *
      * Interrupts the engine if any worker is still running, so shutdown is
      * bounded by one token rather than a whole turn, then joins them all.
-     * @dg_internal
+     * @utility
      * @version 2.14.2
      */
     void join_async_workers();
@@ -587,7 +587,7 @@ private:
      * @brief The lane a session's turns queue in (v2.14.0).
      * @param session_key Session key.
      * @return The key itself when sessions run concurrently, else "".
-     * @dg_internal
+     * @utility
      * @version 2.14.0
      */
     std::string lane_for(const std::string& session_key) const;
@@ -599,7 +599,7 @@ private:
      * @param client_fd Owning client.
      * @param session_key Session key.
      * @param tier Tier or identity; "" routes as usual.
-     * @dg_internal
+     * @utility
      * @version 2.14.0
      */
     void async_worker(const std::string& prompt, const std::string& task_id,

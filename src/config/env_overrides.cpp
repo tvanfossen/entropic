@@ -17,7 +17,7 @@ namespace entropic::config {
  * @brief Get environment variable value or empty string.
  * @param name Variable name.
  * @return Value string, or empty if not set.
- * @dg_internal
+ * @utility
  * @version 1.8.1
  */
 static std::string get_env(const char* name)
@@ -48,7 +48,7 @@ static bool parse_bool(const std::string& val)
  *
  * @param key Environment variable name.
  * @param setter Invoked with the value when present.
- * @utility
+ * @req REQ-CFG-001
  * @version 2.3.7
  */
 template <typename Setter>
@@ -68,7 +68,7 @@ static void apply_env(const char* key, Setter setter) {
  * configure — never an exception out of the loader.
  *
  * @param config Config to override.
- * @dg_internal
+ * @utility
  * @req REQ-CFG-001
  * @version 2.14.6
  */

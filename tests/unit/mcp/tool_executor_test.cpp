@@ -1529,7 +1529,7 @@ TEST_CASE("gh#83: empty locked_tier bypasses enforcement",
  * drove the buggy path on every run for 25 releases without observing
  * it. The read of `args_json` is the whole point of this fixture.
  *
- * @dg_internal
+ * @utility
  * @version 2.12.0
  */
 class OptionalArgsTool : public ToolBase {
@@ -1549,7 +1549,7 @@ public:
 
 /**
  * @brief Tool whose execute always throws, for the dispatch barrier.
- * @dg_internal
+ * @utility
  * @version 2.12.0
  */
 class ThrowingTool : public ToolBase {
@@ -1567,7 +1567,7 @@ public:
 
 /**
  * @brief Server exposing the two gh#143 fixtures.
- * @dg_internal
+ * @utility
  * @version 2.12.0
  */
 class OptionalArgsServer : public MCPServerBase {
@@ -1583,7 +1583,7 @@ private:
 
 /**
  * @brief ServerManager carrying the gh#143 fixtures.
- * @dg_internal
+ * @utility
  * @version 2.12.0
  */
 static ServerManager make_optional_args_manager() {

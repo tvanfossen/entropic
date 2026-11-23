@@ -43,7 +43,7 @@ struct AuditEntry;
  * @brief Populate AuditEntry fields from AuditHookContext state.
  * @param entry Entry to populate (caller_id, depth, iteration, parent_id, status).
  * @param ctx Hook context with engine state pointers.
- * @dg_internal
+ * @utility
  * @version 1.9.5
  */
 void populate_from_hook_context(AuditEntry& entry,

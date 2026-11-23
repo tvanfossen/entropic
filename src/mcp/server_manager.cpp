@@ -30,7 +30,7 @@ namespace entropic {
  * @brief Construct with permission config and project directory.
  * @param permissions Permission configuration.
  * @param project_dir Project root directory.
- * @dg_internal
+ * @utility
  * @version 1.8.5
  */
 ServerManager::ServerManager(
@@ -147,7 +147,7 @@ entropic_error_t ServerManager::load_plugins(const MCPConfig& mcp) {
 /**
  * @brief Register a built-in server.
  * @param server Server instance (ownership transferred).
- * @dg_internal
+ * @utility
  * @version 1.8.5
  */
 void ServerManager::register_server(
@@ -163,7 +163,7 @@ void ServerManager::register_server(
 
 /**
  * @brief Initialize all registered servers + external connections.
- * @dg_internal
+ * @utility
  * @version 1.8.7
  */
 void ServerManager::initialize() {
@@ -990,7 +990,7 @@ std::string ServerManager::args_to_pattern(
 /**
  * @brief Set MCP config for external server initialization.
  * @param config MCP configuration.
- * @dg_internal
+ * @utility
  * @version 1.8.7
  */
 void ServerManager::set_mcp_config(const MCPConfig& config) {
@@ -1066,7 +1066,7 @@ void ServerManager::initialize_external_servers() {
  * would connect back to this handle's own bridge (gh#200) — that is never a
  * request anyone meant to make.
  *
- * @dg_internal
+ * @req REQ-MCP-025
  * @version 2.14.0
  */
 void ServerManager::connect_declared_servers() {
@@ -1090,7 +1090,7 @@ void ServerManager::connect_declared_servers() {
 
 /**
  * @brief Discover `.mcp.json` servers and connect only the enabled ones.
- * @dg_internal
+ * @req REQ-MCP-025
  * @version 2.14.0
  */
 void ServerManager::connect_discovered_servers() {
@@ -1117,7 +1117,7 @@ void ServerManager::connect_discovered_servers() {
  *
  * @param cfg Discovered server config.
  * @return true to connect.
- * @dg_internal
+ * @utility
  * @version 2.14.0
  */
 bool ServerManager::admit_discovered(const ExternalServerConfig& cfg) const {
@@ -1320,7 +1320,7 @@ std::vector<std::string> ServerManager::connect_external_server(
  * Retained for in-tree callers that pre-date #9. New code should use
  * the spec-based overload.
  *
- * @dg_internal
+ * @utility
  * @version 2.1.4
  */
 std::vector<std::string> ServerManager::connect_external_server(
@@ -1339,7 +1339,7 @@ std::vector<std::string> ServerManager::connect_external_server(
 /**
  * @brief Disconnect and remove an external server.
  * @param name Server name.
- * @dg_internal
+ * @utility
  * @version 2.14.0
  */
 void ServerManager::disconnect_external_server(
@@ -1534,7 +1534,7 @@ std::string ServerManager::disconnected_error(
 /**
  * @brief Snapshot the external clients under a shared lock (gh#171).
  * @return (name, client) pairs, used by the caller with no lock held.
- * @dg_internal
+ * @utility
  * @version 2.14.0
  */
 std::vector<std::pair<std::string, std::shared_ptr<ExternalMCPClient>>>
@@ -1547,7 +1547,7 @@ ServerManager::external_snapshot() const {
  * @brief Look up one external client under a shared lock (gh#171).
  * @param name Server name.
  * @return The client, or null when not registered.
- * @dg_internal
+ * @utility
  * @version 2.14.0
  */
 std::shared_ptr<ExternalMCPClient>

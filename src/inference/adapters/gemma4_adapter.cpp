@@ -24,7 +24,7 @@ namespace entropic {
  *
  * @param content Raw model output.
  * @return ParseResult.
- * @dg_internal
+ * @utility
  * @version 2.10.3
  */
 ParseResult Gemma4Adapter::parse_tool_calls(const std::string& content) const {

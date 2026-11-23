@@ -48,7 +48,8 @@ guard:
     min_req_ratio: 0.5
 
   impact:
-    report_dir: docs/generated/
+    # One report location, kept where doxygen-guard wrote it (its history).
+    report_dir: docs/generated/impact/
 
 wiki:
   # Public API reference: one page per header under include/ (replaces the

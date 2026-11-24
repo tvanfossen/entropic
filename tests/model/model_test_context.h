@@ -805,6 +805,30 @@ inline bool test_log_contains(const std::string& test_name,
 }
 
 /**
+ * @brief How many lines of the active test log contain @p needle?
+ *
+ * A completion call ends the loop and need not leave a tool-result message
+ * behind, so the execution log line is the evidence that it ran. (v2.14.6:
+ * moved here from test_e7_delegation.cpp for the length-loop test.)
+ *
+ * @param test_name The name passed to start_test_log.
+ * @param needle Substring to count.
+ * @return Matching line count.
+ * @utility
+ * @version 2.14.6
+ */
+inline int count_log_lines(const std::string& test_name,
+                           const std::string& needle) {
+    if (g_file_sink) { g_file_sink->flush(); }
+    std::ifstream in((LOG_DIR / (test_name + ".log")).string());
+    int n = 0;
+    for (std::string line; std::getline(in, line);) {
+        if (line.find(needle) != std::string::npos) { ++n; }
+    }
+    return n;
+}
+
+/**
  * @brief The integer that follows `prefix` on the first log line holding it.
  *
  * v2.14.6: lets a model test read a NUMBER the engine logged — the layer

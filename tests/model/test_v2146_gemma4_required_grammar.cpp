@@ -22,6 +22,7 @@
 #include <catch2/catch_test_macros.hpp>
 
 #include <entropic/types/config.h>
+#include "gemma4_dropped_tool_text.h"
 #include "gemma4_required_grammar.h"
 #include "llama_cpp_sampler.h"
 
@@ -234,4 +235,97 @@ TEST_CASE("v2.14.6: the Gemma 4 REQUIRED grammar forces one call, then EOG",
         REQUIRE(g.grammar != nullptr);
         CHECK(first_rejected(g.grammar, tokenize(m.vocab, kRunaway)) >= 0);
     }
+}
+
+// ── v2.14.6: a near-native call must never vanish on parse ──────────────
+
+namespace {
+
+/// Verbatim tail of the gh87 thinking-on emission (gate, 2026-11-24): the
+/// call is native-shaped but quotes its string with `"`, not `<|"|>`.
+const char* kPlainQuoteNative =
+    "<|channel>thought\nThe user wants to use the `read_file` tool to read "
+    "`/etc/hostname`.\nI will generate the `read_file` tool call.<channel|>"
+    "<|tool_call>call:read_file{path: \"/etc/hostname\"}<tool_call|>";
+
+/**
+ * @brief The AUTO render gh87-backend-common-chat runs, read_file staged.
+ * @param model Vocab-only model.
+ * @return Rendered params.
+ * @internal
+ * @version 2.14.6
+ */
+common_chat_params render_auto_read_file(llama_model* model) {
+    auto tmpls = common_chat_templates_init(model, "");
+    common_chat_templates_inputs in;
+    common_chat_msg usr;
+    usr.role = "user";
+    usr.content = "Use the read_file tool to read /etc/hostname. "
+                  "Emit only the tool call.";
+    in.messages = {usr};
+    in.add_generation_prompt = true;
+    in.use_jinja = true;
+    in.enable_thinking = true;
+    common_chat_tool t;
+    t.name = "read_file";
+    t.description = "Read a file from disk.";
+    t.parameters = R"({"type":"object","properties":{"path":{"type":"string"}},)"
+                   R"("required":["path"]})";
+    in.tools = {t};
+    in.tool_choice = COMMON_CHAT_TOOL_CHOICE_AUTO;
+    return common_chat_templates_apply(tmpls.get(), in);
+}
+
+/**
+ * @brief Parse exactly as LlamaCppBackend::parse_response does.
+ * @param r Rendered params (format, generation prompt, parser arena).
+ * @param raw Raw emission.
+ * @return Parsed message.
+ * @internal
+ * @version 2.14.6
+ */
+common_chat_msg parse_like_backend(const common_chat_params& r,
+                                   const std::string& raw) {
+    common_chat_parser_params pp;
+    pp.format = r.format;
+    pp.generation_prompt = r.generation_prompt;
+    pp.parser.load(r.parser);
+    return common_chat_parse(raw, /*is_partial=*/false, pp);
+}
+
+} // namespace
+
+TEST_CASE("v2.14.6: upstream parse of a plain-quote native Gemma 4 call",
+          "[2.14.6][parse][gemma4][vocab_only]")
+{
+    REQUIRE(std::filesystem::exists(e4b_path()));
+    VocabOnly m(e4b_path());
+    REQUIRE(m.vocab != nullptr);
+    const auto r = render_auto_read_file(m.model);
+    REQUIRE(r.format == COMMON_CHAT_FORMAT_PEG_GEMMA4);
+    std::string what = "parsed";
+    common_chat_msg msg;
+    try {
+        msg = parse_like_backend(r, kPlainQuoteNative);
+    } catch (const std::exception& e) {
+        what = std::string("threw: ") + e.what();
+    }
+    INFO("upstream " << what << ": tool_calls=" << msg.tool_calls.size()
+         << " content=[" << msg.content << "] reasoning=["
+         << msg.reasoning_content << "]");
+    // At the pin, upstream parses without throwing, finds no call, and keeps
+    // only the thought block: the call span is dropped. (Upstream master still
+    // requires <|"|> string values; no fix to mirror.) If a pin bump changes
+    // this, the restore below becomes a no-op and this check says so.
+    REQUIRE(what == "parsed");
+    CHECK(msg.tool_calls.empty());
+    const auto spans =
+        entropic::gemma4_dropped_tool_spans(kPlainQuoteNative, msg.content);
+    REQUIRE(spans.size() == 1);
+    // entropic's invariant: the unread call is restored into content, where
+    // the engine treats it as prose and nudges (parse_response does this).
+    std::string content = msg.content;
+    entropic::restore_dropped_tool_spans(content, spans);
+    CHECK(content.find("<|tool_call>call:read_file{path: \"/etc/hostname\"}")
+          != std::string::npos);
 }

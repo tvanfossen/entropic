@@ -18,6 +18,7 @@
 #include "generation_summary.h"  // gh#151: one summary line, both paths
 #include "grammar_source.h"
 #include "gemma4_required_grammar.h"  // v2.14.6: f072b10371 root mirror
+#include "gemma4_dropped_tool_text.h"  // v2.14.6: unread call spans stay visible
 #include "llama_cpp_sampler.h"
 #include "llama_cpp_tokenizer.h"
 #include "session_pool_util.h"
@@ -1886,6 +1887,30 @@ void strip_thinking_channels(std::string& content, std::string* reasoning_out) {
 }
 
 /**
+ * @brief Restore Gemma 4 call text the parse dropped, and say so (v2.14.6).
+ *
+ * Runs only when the parse produced no tool calls. A dropped span is logged at
+ * ERROR with the full raw emission and appended to content, so the engine
+ * sees prose (and nudges) instead of an empty turn, and an operator can see
+ * what the model wrote. See gemma4_dropped_tool_text.h.
+ *
+ * @param raw Raw model emission.
+ * @param result [in,out] Parse result.
+ * @utility
+ * @version 2.14.6
+ */
+static void keep_dropped_tool_text(const std::string& raw,
+                                   LlamaCppBackend::CommonChatResult& result) {
+    if (!result.tool_calls.empty()) { return; }
+    const auto spans = gemma4_dropped_tool_spans(raw, result.content);
+    if (spans.empty()) { return; }
+    logger->error("[parse] {} tool-call span(s) could not be parsed and were "
+                  "dropped by common_chat; kept as content instead. First: {} "
+                  "— raw emission: {}", spans.size(), spans.front(), raw);
+    restore_dropped_tool_spans(result.content, spans);
+}
+
+/**
  * @brief Parse a raw emission via the last captured render params (gh#87).
  *
  * MUST load() the serialized PEG arena — the parser_params ctor copies
@@ -1897,11 +1922,14 @@ void strip_thinking_channels(std::string& content, std::string* reasoning_out) {
  *
  * gh#106 (v2.9.0): strips Gemma 4 QAT `<|channel>` reasoning into reasoning_content.
  *
+ * v2.14.6: a Gemma 4 call span the parser dropped is kept as content and
+ * logged at ERROR (keep_dropped_tool_text), never lost silently.
+ *
  * @param raw Raw model output (assistant turn only).
  * @return Parsed tool calls + cleaned content + reasoning; when no render
  *         ever captured params, the raw text as content with no calls.
  * @req REQ-INFER-009
- * @version 2.9.0
+ * @version 2.14.6
  */
 LlamaCppBackend::CommonChatResult LlamaCppBackend::parse_response(
     const std::string& raw) const
@@ -1930,6 +1958,8 @@ LlamaCppBackend::CommonChatResult LlamaCppBackend::parse_response(
         // gh#90: gemma <|"|> string-escape loses type through PEG_GEMMA4 —
         // restore string typing for params the staged schema declares string.
         coerce_string_typed_args(result.tool_calls, active_tools_json_);
+        // v2.14.6: a call span the parser could not read must not vanish.
+        keep_dropped_tool_text(raw, result);
     } catch (const std::exception& e) {
         logger->warn("common_chat_parse failed ({}); raw kept as content",
                      e.what());

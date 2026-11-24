@@ -2,13 +2,71 @@
   "schema_version": 1,
   "entries": [
     {
-      "req_id": "REQ-INFER-007",
-      "req_name": "Named grammars are registered, validated, and resolved by a fixed precedence",
+      "req_id": "REQ-INFER-002",
+      "req_name": "Teardown releases every model, context and adapter handle",
       "functions": [
         {
-          "name": "normalize_grammar_key",
-          "file": "src/inference/orchestrator.cpp",
-          "version": "1.9.3"
+          "name": "teardown_mtp_draft",
+          "file": "src/inference/llama_cpp_backend.cpp",
+          "version": "2.9.1"
+        }
+      ]
+    },
+    {
+      "req_id": "REQ-INFER-005",
+      "req_name": "Every decode path honours cooperative cancellation within one token",
+      "functions": [
+        {
+          "name": "generate_after_prefill",
+          "file": "src/inference/llama_cpp_backend.cpp",
+          "version": "2.14.6"
+        },
+        {
+          "name": "run_sampling_loop",
+          "file": "src/inference/llama_cpp_backend.cpp",
+          "version": "2.13.2"
+        },
+        {
+          "name": "do_generate_text_only",
+          "file": "src/inference/llama_cpp_backend.cpp",
+          "version": "2.13.2"
+        },
+        {
+          "name": "do_generate_streaming_text_only",
+          "file": "src/inference/llama_cpp_backend.cpp",
+          "version": "2.13.2"
+        },
+        {
+          "name": "generate_mtp",
+          "file": "src/inference/llama_cpp_backend.cpp",
+          "version": "2.14.6"
+        }
+      ]
+    },
+    {
+      "req_id": "REQ-INFER-006",
+      "req_name": "Sampler chain construction has a fixed order and default-preserving gating",
+      "functions": [
+        {
+          "name": "to_common_sampling",
+          "file": "src/inference/llama_cpp_backend.cpp",
+          "version": "2.10.4"
+        }
+      ]
+    },
+    {
+      "req_id": "REQ-INFER-008",
+      "req_name": "Every declared grammar source reaches the sampler and exactly one wins",
+      "functions": [
+        {
+          "name": "tool_grammar_for",
+          "file": "src/inference/llama_cpp_backend.cpp",
+          "version": "2.14.6"
+        },
+        {
+          "name": "to_common_sampling",
+          "file": "src/inference/llama_cpp_backend.cpp",
+          "version": "2.10.4"
         }
       ]
     },
@@ -17,103 +75,93 @@
       "req_name": "Tool staging drives a native render whose parse context is captured",
       "functions": [
         {
-          "name": "resolve_and_stage",
-          "file": "src/inference/orchestrator.cpp",
+          "name": "to_common_chat",
+          "file": "src/inference/llama_cpp_backend.cpp",
+          "version": "2.14.6"
+        },
+        {
+          "name": "mcp_tools_to_common_chat",
+          "file": "src/inference/llama_cpp_backend.cpp",
+          "version": "2.7.0"
+        },
+        {
+          "name": "render_with_tools",
+          "file": "src/inference/llama_cpp_backend.cpp",
+          "version": "2.14.6"
+        },
+        {
+          "name": "parse_response",
+          "file": "src/inference/llama_cpp_backend.cpp",
           "version": "2.14.6"
         }
       ]
     },
     {
-      "req_id": "REQ-INFER-019",
-      "req_name": "Model pool dedup and VRAM residency policy govern which tier is resident",
+      "req_id": "REQ-INFER-015",
+      "req_name": "MTP speculative decode fails loud and never silently falls back",
       "functions": [
         {
-          "name": "log_fit_recommendation",
-          "file": "src/inference/orchestrator.cpp",
+          "name": "effective_n_draft",
+          "file": "src/inference/llama_cpp_backend.cpp",
           "version": "2.11.0"
         },
         {
-          "name": "resolve_auto_gpu_layers",
-          "file": "src/inference/orchestrator.cpp",
-          "version": "2.14.6"
-        },
-        {
-          "name": "config_admits",
-          "file": "src/inference/orchestrator.cpp",
-          "version": "2.13.1"
-        },
-        {
-          "name": "refuse_residency",
-          "file": "src/inference/orchestrator.cpp",
-          "version": "2.13.0"
-        },
-        {
-          "name": "release_backend",
-          "file": "src/inference/orchestrator.cpp",
-          "version": "2.13.0"
-        },
-        {
-          "name": "announce_eviction",
-          "file": "src/inference/orchestrator.cpp",
-          "version": "2.13.0"
-        },
-        {
-          "name": "resolve_vram_budget_bytes",
-          "file": "src/inference/orchestrator.cpp",
-          "version": "2.11.1"
-        },
-        {
-          "name": "ensure_vram_budget",
-          "file": "src/inference/orchestrator.cpp",
-          "version": "2.14.0"
-        },
-        {
-          "name": "estimate_footprint_bytes",
-          "file": "src/inference/orchestrator.cpp",
+          "name": "mtp_guard",
+          "file": "src/inference/llama_cpp_backend.cpp",
           "version": "2.11.0"
         },
         {
-          "name": "derive_tier_auto_placement",
-          "file": "src/inference/tier_placement.h",
+          "name": "generate_mtp",
+          "file": "src/inference/llama_cpp_backend.cpp",
           "version": "2.14.6"
         }
       ]
     },
     {
-      "req_id": "REQ-INFER-020",
-      "req_name": "Tier routing, handoff rules and secondary model roles",
+      "req_id": "REQ-INFER-025",
+      "req_name": "Multimodal input is bounded, tier-gated and degrades gracefully",
       "functions": [
         {
-          "name": "extract_latest_user_message",
-          "file": "src/inference/orchestrator.cpp",
-          "version": "1.8.2"
+          "name": "generate_multimodal",
+          "file": "src/inference/llama_cpp_backend.cpp",
+          "version": "2.14.6"
+        }
+      ]
+    },
+    {
+      "req_id": "REQ-INFER-026",
+      "req_name": "A prompt that cannot fit the tier context is refused, never decoded",
+      "functions": [
+        {
+          "name": "prefill_error",
+          "file": "src/inference/llama_cpp_backend.cpp",
+          "version": "2.13.0"
+        }
+      ]
+    },
+    {
+      "req_id": "REQ-INFER-027",
+      "req_name": "Expert-tensor offload places routed experts on the host while attention and KV stay resident (EXPERIMENTAL)",
+      "functions": [
+        {
+          "name": "build_load_mparams",
+          "file": "src/inference/llama_cpp_backend.cpp",
+          "version": "2.13.0"
         },
         {
-          "name": "ensure_secondary_roles",
-          "file": "src/inference/orchestrator.cpp",
+          "name": "model_expert_count",
+          "file": "src/inference/llama_cpp_backend.cpp",
           "version": "2.13.0"
-        }
-      ]
-    },
-    {
-      "req_id": "REQ-INFER-021",
-      "req_name": "Per-tier sampler configuration applies only where the caller did not decide",
-      "functions": [
+        },
         {
-          "name": "apply_if_default",
-          "file": "src/inference/orchestrator.cpp",
-          "version": "2.5.3"
-        }
-      ]
-    },
-    {
-      "req_id": "REQ-INFER-023",
-      "req_name": "LoRA adapters hot-swap under a single-HOT-per-context constraint",
-      "functions": [
-        {
-          "name": "preload_adapters_for_model",
-          "file": "src/inference/orchestrator.cpp",
+          "name": "expert_offload_admits",
+          "file": "src/inference/llama_cpp_backend.cpp",
           "version": "2.13.0"
+        },
+        {
+          "name": "load_gpu_model",
+          "file": "src/inference/llama_cpp_backend.cpp",
+          "version": "2.13.0 [reviewed]"
         }
       ]
     },
@@ -123,8 +171,19 @@
       "functions": [
         {
           "name": "forget_session_kv",
-          "file": "src/inference/orchestrator.cpp",
+          "file": "src/inference/llama_cpp_backend.cpp",
           "version": "2.13.0"
+        }
+      ]
+    },
+    {
+      "req_id": "REQ-TYPE-004",
+      "req_name": "Sentinel count members bound enum validity and force exhaustive wiring",
+      "functions": [
+        {
+          "name": "do_supports",
+          "file": "src/inference/llama_cpp_backend.cpp",
+          "version": "1.9.13"
         }
       ]
     }

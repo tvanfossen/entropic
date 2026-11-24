@@ -203,29 +203,8 @@ struct TierToolsets {
     std::string reader;  ///< JSON array staged for the 'reader' child
 };
 
-/**
- * @brief Pick named tools out of a `ServerManager::list_tools()` registry.
- * @param registry Full tool-list JSON array.
- * @param want Fully-qualified names to keep, in order.
- * @return JSON array string of the matching descriptors.
- * @utility
- * @version 2.13.0
- */
-inline std::string tools_named(const std::string& registry,
-                               const std::vector<std::string>& want) {
-    auto all = nlohmann::json::parse(registry, nullptr, false);
-    nlohmann::json picked = nlohmann::json::array();
-    if (!all.is_array()) { return picked.dump(); }
-    for (const auto& name : want) {
-        for (const auto& tool : all) {
-            if (tool.value("name", std::string{}) == name) {
-                picked.push_back(tool);
-                break;
-            }
-        }
-    }
-    return picked.dump();
-}
+// v2.14.6: tools_named now lives in engine_test_helpers.h (one copy for
+// this file, test_e7_delegation.cpp and test_v2146_length_loop.cpp).
 
 /**
  * @brief Per-tier tool staging — the seam `facade_get_tool_prompt` fills.

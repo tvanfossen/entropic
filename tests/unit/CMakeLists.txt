@@ -164,6 +164,8 @@ add_executable(entropic-inference-tests
     inference/grammar_engagement_test.cpp
     # v2.14.6: Gemma 4 REQUIRED root-rule patch (pure string function).
     inference/gemma4_required_grammar_test.cpp
+    # v2.14.6: an unreadable Gemma 4 call span is never silently dropped.
+    inference/gemma4_dropped_tool_text_test.cpp
     # v2.3.10: REAL llama.cpp paths for LlamaCppTokenizer + do_load /
     # do_unload using vocab-only ggml-vocab-*.gguf fixtures (CPU-only,
     # sub-100MB). Pushes llama_cpp_tokenizer.cpp 0% → ~100% and the

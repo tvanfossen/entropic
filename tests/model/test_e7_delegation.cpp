@@ -149,29 +149,6 @@ struct TierToolsets {
     std::string eng;   ///< Child's menu: the writer lives here only
 };
 
-/**
- * @brief Pick named tools out of a `ServerManager::list_tools()` array.
- * @param all_json list_tools() output.
- * @param names Fully-qualified tool names to keep, in the order wanted.
- * @return A JSON ARRAY string holding exactly the named tools.
- * @utility
- * @version 2.13.0
- */
-inline std::string tools_named(const std::string& all_json,
-                               const std::vector<std::string>& names) {
-    auto all = nlohmann::json::parse(all_json, nullptr, false);
-    auto picked = nlohmann::json::array();
-    if (!all.is_array()) { return picked.dump(); }
-    for (const auto& want : names) {
-        for (const auto& tool : all) {
-            if (tool.value("name", std::string{}) == want) {
-                picked.push_back(tool);
-                break;
-            }
-        }
-    }
-    return picked.dump();
-}
 
 /**
  * @brief Per-tier tool staging — the seam `facade_get_tool_prompt` fills
@@ -458,42 +435,6 @@ SCENARIO("gh#160: an isolated delegation never writes the project, and "
 
 namespace complete_only_model {
 
-/**
- * @brief How many lines of the active test log contain @p needle?
- *
- * A completion call ends the loop and need not leave a tool-result message
- * behind, so the execution log line is the evidence that it ran.
- *
- * @param test_name The name passed to start_test_log.
- * @param needle Substring to count.
- * @return Matching line count.
- * @utility
- * @version 2.14.6
- */
-inline int count_log_lines(const std::string& test_name,
-                           const std::string& needle) {
-    if (g_file_sink) { g_file_sink->flush(); }
-    std::ifstream in((LOG_DIR / (test_name + ".log")).string());
-    int n = 0;
-    for (std::string line; std::getline(in, line);) {
-        if (line.find(needle) != std::string::npos) { ++n; }
-    }
-    return n;
-}
-
-/**
- * @brief Lead tool menu for this scenario: delegate + complete.
- * @param tier Tier being generated for (unused: one menu).
- * @param result Output: heap JSON array. Caller frees via free_fn.
- * @param ud std::string pointer holding the menu.
- * @return 0.
- * @callback
- * @version 2.14.6
- */
-inline int lead_tool_prompt(const char* /*tier*/, char** result, void* ud) {
-    *result = alloc_cstr(*static_cast<const std::string*>(ud));
-    return 0;
-}
 
 } // namespace complete_only_model
 
@@ -502,7 +443,6 @@ SCENARIO("v2.14.6: a lead that answers in prose is nudged, and its forced "
          "[model][engine][delegation][explicit_completion][2.14.6]")
 {
     using namespace complete_only_model;
-    using gh160_model::tools_named;
     namespace fs = std::filesystem;
 
     GIVEN("the production lead contract: explicit_completion, delegate + complete") {

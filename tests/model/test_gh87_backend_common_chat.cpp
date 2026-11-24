@@ -72,10 +72,64 @@ const char* kReadFileToolJson = R"([{
   }
 }])";
 
+/**
+ * @brief One render → raw decode → parse pass, and what it produced.
+ * @version 2.14.6
+ */
+struct Outcome {
+    std::string label;          ///< Variant name, for the report.
+    std::string raw;            ///< Raw decoded text.
+    std::string content;        ///< Parsed content.
+    std::string reasoning;      ///< Parsed reasoning.
+    std::vector<entropic::ToolCall> calls; ///< Parsed tool calls.
+};
+
+/**
+ * @brief Run one variant on the loaded backend.
+ * @param backend Active backend with the read_file tool staged.
+ * @param label Variant name.
+ * @param thinking enable_thinking for the render and decode.
+ * @param require REQUIRED tool choice (eager tool-call grammar) vs AUTO.
+ * @return What the variant produced.
+ * @internal
+ * @version 2.14.6
+ */
+Outcome run_variant(entropic::LlamaCppBackend& backend, const std::string& label,
+                    bool thinking, bool require) {
+    std::vector<entropic::Message> msgs;
+    entropic::Message u;
+    u.role = "user";
+    u.content = "Use the read_file tool to read /etc/hostname. "
+                "Emit only the tool call.";
+    msgs.push_back(u);
+
+    entropic::GenerationParams params;
+    params.max_tokens = 400;       // room for the closing <tool_call|>
+    params.temperature = 0.0f;
+    params.enable_thinking = thinking;
+
+    backend.set_require_tool_call(require);
+    std::string prompt = backend.render_with_tools(msgs, params);
+    // Raw completion: no chat template re-applied, so we decode exactly
+    // what render_with_tools produced (and, under REQUIRED, its grammar).
+    auto gen = prompt.empty() ? entropic::GenerationResult{}
+                              : backend.complete(prompt, params);
+    auto parsed = backend.parse_response(gen.content);
+    return {label, gen.content, parsed.content, parsed.reasoning_content,
+            parsed.tool_calls};
+}
+
 }  // namespace
 
+// v2.14.6 (user): a native tool call must come out with thinking on, with it
+// off, and under the forced grammar. Was a single thinking-on free-form case;
+// in the v2.14.6 gate it once deliberated, then wrote
+// `read_file(path="/etc/hostname")` as plain text (0 calls parsed). Only the
+// grammar variant is GUARANTEED by the engine; the free-form two measure the
+// model's own emission through our render, and a miss there is reported, with
+// the raw output, as the failure it is.
 TEST_CASE("gh#87 Increment-2: backend render_with_tools → parse_response "
-          "extracts a gemma4 tool call",
+          "extracts a gemma4 tool call (thinking on, off, and grammar-forced)",
           "[gh87][model][e2e]") {
     auto path = gemma4_a4b_path();
     if (!std::filesystem::is_regular_file(path)) {
@@ -86,47 +140,28 @@ TEST_CASE("gh#87 Increment-2: backend render_with_tools → parse_response "
     auto cfg = make_a4b_config(path);
     REQUIRE(backend.load(cfg));
     REQUIRE(backend.activate());
-
     backend.set_active_tools(kReadFileToolJson);
 
-    std::vector<entropic::Message> msgs;
-    {
-        entropic::Message u;
-        u.role = "user";
-        u.content = "Use the read_file tool to read /etc/hostname. "
-                    "Emit only the tool call.";
-        msgs.push_back(u);
-    }
-
-    entropic::GenerationParams params;
-    params.max_tokens = 400;       // room for the closing <tool_call|>
-    params.temperature = 0.0f;     // deterministic
-    params.enable_thinking = true; // gemma deliberates then calls — fine
-
-    std::string prompt = backend.render_with_tools(msgs, params);
-    REQUIRE_FALSE(prompt.empty());
-
-    // Raw completion: no chat template re-applied, so we decode exactly
-    // what render_with_tools produced.
-    auto gen = backend.complete(prompt, params);
-    std::string raw = gen.content;
-
-    auto parsed = backend.parse_response(raw);
-
-    // Capture outcome before teardown.
-    size_t n_calls = parsed.tool_calls.size();
-    entropic::ToolCall tc;
-    if (n_calls >= 1) { tc = parsed.tool_calls[0]; }
-
+    // One load, three variants (the 26B load dominates the cost).
+    std::vector<Outcome> outcomes = {
+        run_variant(backend, "thinking on, free-form", true, false),
+        run_variant(backend, "thinking off, free-form", false, false),
+        run_variant(backend, "thinking off, REQUIRED grammar", false, true),
+    };
     backend.deactivate();
     backend.unload();
 
-    INFO("raw model output: " << raw);
-    INFO("parsed tool_calls=" << n_calls
-         << " content=[" << parsed.content << "]"
-         << " reasoning=[" << parsed.reasoning_content << "]");
-    REQUIRE(n_calls >= 1);
-    CHECK(tc.name == "read_file");
-    CHECK(tc.arguments.count("path") == 1);
-    CHECK(tc.arguments["path"].find("/etc/hostname") != std::string::npos);
+    for (const auto& o : outcomes) {
+        INFO("variant: " << o.label << "\nraw model output: " << o.raw
+             << "\nparsed tool_calls=" << o.calls.size()
+             << " content=[" << o.content << "] reasoning=["
+             << o.reasoning << "]");
+        // CHECK, not REQUIRE: every variant reports, not just the first miss.
+        CHECK(o.calls.size() >= 1);
+        if (o.calls.empty()) { continue; }
+        CHECK(o.calls[0].name == "read_file");
+        CHECK(o.calls[0].arguments.count("path") == 1);
+        CHECK(o.calls[0].arguments.at("path").find("/etc/hostname")
+              != std::string::npos);
+    }
 }

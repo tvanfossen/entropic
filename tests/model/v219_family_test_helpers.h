@@ -142,12 +142,15 @@ inline bool init_orchestrator_for_v219_family(ModelTestContext& ctx,
     // for the model — production configs override `gpu_layers`
     // explicitly via YAML.
     //
-    // Threshold rationale: 10 GiB caught gemma4_a4b (13.6 GB) and the
-    // retired qwen3_6_a3b (13.2 GB) on the upper side. Every model in the
-    // v2.14.6 set stays below and runs at full GPU offload: gemma4_a4b_iq2
-    // (9.33 GiB — just under), gemma4_e4b_qat (3.9 GiB), nemotron3
-    // (2.9 GiB), qwen3_5_0_8b (0.76 GiB).
+    // v2.14.6: placement is no longer decided by file size. gemma4_a4b_iq2
+    // (9.33 GiB) sat just under the 10 GiB threshold, loaded all 31 layers
+    // (9.5 GB) and then OOM'd the 535 MB compute buffer on the 11 GB card —
+    // weights fitting is not the model fitting. Every family load now uses
+    // `gpu_layers: auto` (set below), so the engine's own placement decides
+    // against free VRAM; a model that fits still gets every layer. The size
+    // threshold only gates mlock now (pageable CPU-side weights).
     constexpr uintmax_t LARGE_GGUF_BYTES = 10ULL * 1024 * 1024 * 1024;
+    tier.gpu_layers_auto = true;
     // v2.7.0: 20 → 15. At 20 the 13GB A3B/A4B GGUFs need ~8.8GB VRAM +
     // a ~0.5GB compute buffer; with the desktop GPU at ~1.8GB the 11GB
     // 1080 Ti OOM'd the compute-buffer alloc (model-results run7). 15
@@ -219,7 +222,7 @@ inline bool init_orchestrator_for_v219_family(ModelTestContext& ctx,
         // against free VRAM) — it now lives behind `gpu_layers: auto`, so the
         // harness and a consumer's config get the identical derivation
         // rather than the harness being the only place that knows it.
-        tier.gpu_layers_auto = true;
+        // (v2.14.6: gpu_layers_auto is now set for every family load above.)
         // v2.12.0: and UNPIN it. Clamping gpu_layers puts ~6.6 GB of a 13 GB
         // GGUF on the CPU side, but use_mlock defaults to true, so llama.cpp
         // tries to lock that portion into unevictable RAM — locking up to

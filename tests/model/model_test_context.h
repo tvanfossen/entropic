@@ -939,7 +939,7 @@ public:
         // gh#87: generic engine-logic tests use a small model (footprint /
         // OOM safety). Family tests use init_orchestrator_for_v219_* and keep
         // their large models — they do NOT go through this listener.
-        if (ok) { use_small_default_model(g_ctx); }
+        if (ok) { use_small_default_model(g_ctx); adjust_config(g_ctx); }
         ok = ok && init_orchestrator(g_ctx);
         if (!ok) {
             spdlog::error("Model test init failed — tests will skip: {}",
@@ -963,6 +963,19 @@ public:
         }
         VramMonitorListener::testRunEnded(stats);
     }
+
+protected:
+    /**
+     * @brief Per-test config adjustment before the orchestrator loads.
+     * @param ctx Harness context whose config is about to be loaded.
+     * @utility
+     * @version 2.14.6
+     *
+     * Default: no change. A test whose premise needs a different shape of
+     * the shared model (e.g. text-only) overrides this rather than editing
+     * the developer's config.local.yaml.
+     */
+    virtual void adjust_config(ModelTestContext& /*ctx*/) {}
 };
 
 /**

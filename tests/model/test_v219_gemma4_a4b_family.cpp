@@ -4,9 +4,10 @@
  * @brief Model test — Gemma 4 26B-A4B bundled GGUF + Gemma4Adapter.
  *
  * Loads `gemma4_a4b_iq2` (Gemma 4 26B-A4B instruct, UD-IQ2_M ~10.0 GB,
- * 9.33 GiB — under the 10 GiB large-model threshold, so it loads at full
- * offload on an 11 GB card; v2.14.6: was `gemma4_a4b_qat`, which left the
- * pared model set) — the MoE representative of the Gemma 4 family. Exercises first-token smoke generation and — under
+ * 9.33 GiB; v2.14.6: was `gemma4_a4b_qat`, which left the pared model set)
+ * — the MoE representative of the Gemma 4 family. Placed by `gpu_layers:
+ * auto`: its weights fit an 11 GB card but weights plus KV plus the
+ * compute buffer do not, so full offload OOMs. Exercises first-token smoke generation and — under
  * the REAL production prompt (constitution + identity + the adapter's
  * own `format_tools`) — guarantees tool-call extraction via
  * Gemma4Adapter (gh#69 / gh#71-phase-2). Same `Gemma4Adapter` as the

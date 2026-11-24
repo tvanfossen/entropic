@@ -3219,6 +3219,28 @@ std::vector<Message> substitute_image_markers(
     return out;
 }
 
+/**
+ * @brief Log how many media markers survived the chat-template render.
+ *
+ * v2.14.6 gate: mtmd_tokenize reported 0 markers for 1 bitmap. This line
+ * separates "the render dropped it" from "mtmd was not shown it".
+ *
+ * @param prompt Rendered prompt, logged in full.
+ * @param images Bitmaps the prompt must carry markers for.
+ * @utility
+ * @version 2.14.6
+ */
+void log_rendered_markers(const std::string& prompt, size_t images) {
+    const std::string marker = mtmd_default_marker();
+    size_t markers = 0;
+    for (auto pos = prompt.find(marker); pos != std::string::npos;
+         pos = prompt.find(marker, pos + marker.size())) {
+        ++markers;
+    }
+    logger->info("Multimodal render: {} marker(s) '{}' in the rendered prompt "
+                 "for {} image(s); prompt: {}", markers, marker, images, prompt);
+}
+
 } // anonymous namespace
 
 /**
@@ -3228,8 +3250,11 @@ std::vector<Message> substitute_image_markers(
  * first so prefill always starts at seq position 0. Bitmap ownership
  * stays with the caller (mtmd_tokenize borrows for the call).
  *
+ * v2.14.6: the input text is built with designated initializers — the
+ * positional form had silently become text_len=1 after a pin bump.
+ *
  * @utility
- * @version 2.13.0
+ * @version 2.14.6
  */
 entropic_error_t LlamaCppBackend::mtmd_prefill(
     const std::string& prompt,
@@ -3238,7 +3263,15 @@ entropic_error_t LlamaCppBackend::mtmd_prefill(
 {
     ++kv_full_clear_count_;  // gh#158: see kv_full_clear_count()
     llama_memory_clear(llama_get_memory(ctx_), true);
-    ::mtmd_input_text mt{prompt.c_str(), true, true};
+    // v2.14.6: designated, not positional. A pin bump inserted `text_len`
+    // second, so the old `{text, true, true}` compiled as text_len=1 /
+    // parse_special=false: mtmd tokenized ONE character, found no media
+    // marker, and every image generate failed (rc=2). Naming the fields
+    // turns the next layout change into a compile error.
+    ::mtmd_input_text mt{.text = prompt.c_str(),
+                         .text_len = prompt.size(),
+                         .add_special = true,
+                         .parse_special = true};
     auto* chunks = mtmd_input_chunks_init();
     std::vector<const ::mtmd_bitmap*> bm_cptrs(
         bitmaps.begin(), bitmaps.end());
@@ -3334,7 +3367,7 @@ GenerationResult LlamaCppBackend::run_sampling_loop(
  * @return GenerationResult; ENTROPIC_ERROR_IMAGE_LOAD_FAILED when a bitmap
  *         could not be built, or the prefill's own error code.
  * @req REQ-INFER-025
- * @version 2.12.0
+ * @version 2.14.6
  */
 GenerationResult LlamaCppBackend::generate_multimodal(
     const std::vector<Message>& messages,
@@ -3358,6 +3391,7 @@ GenerationResult LlamaCppBackend::generate_multimodal(
     auto prompt = render_prompt(marked, params);
     logger->info("Multimodal generate: {} images, prompt={} chars, max_tokens={}",
                  bitmaps.size(), prompt.size(), params.max_tokens);
+    log_rendered_markers(prompt, bitmaps.size());
     std::string prefill_err;
     auto rc = mtmd_prefill(prompt, bitmaps, prefill_err);
     for (auto* b : bitmaps) { mtmd_bitmap_free(b); }

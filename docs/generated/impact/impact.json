@@ -2,12 +2,128 @@
   "schema_version": 1,
   "entries": [
     {
-      "req_id": "REQ-INFER-002",
-      "req_name": "Teardown releases every model, context and adapter handle",
+      "req_id": "REQ-INFER-007",
+      "req_name": "Named grammars are registered, validated, and resolved by a fixed precedence",
       "functions": [
         {
-          "name": "do_load_active",
-          "file": "src/inference/llama_cpp_backend.h",
+          "name": "normalize_grammar_key",
+          "file": "src/inference/orchestrator.cpp",
+          "version": "1.9.3"
+        }
+      ]
+    },
+    {
+      "req_id": "REQ-INFER-009",
+      "req_name": "Tool staging drives a native render whose parse context is captured",
+      "functions": [
+        {
+          "name": "resolve_and_stage",
+          "file": "src/inference/orchestrator.cpp",
+          "version": "2.14.6"
+        }
+      ]
+    },
+    {
+      "req_id": "REQ-INFER-019",
+      "req_name": "Model pool dedup and VRAM residency policy govern which tier is resident",
+      "functions": [
+        {
+          "name": "log_fit_recommendation",
+          "file": "src/inference/orchestrator.cpp",
+          "version": "2.11.0"
+        },
+        {
+          "name": "resolve_auto_gpu_layers",
+          "file": "src/inference/orchestrator.cpp",
+          "version": "2.14.6"
+        },
+        {
+          "name": "config_admits",
+          "file": "src/inference/orchestrator.cpp",
+          "version": "2.13.1"
+        },
+        {
+          "name": "refuse_residency",
+          "file": "src/inference/orchestrator.cpp",
+          "version": "2.13.0"
+        },
+        {
+          "name": "release_backend",
+          "file": "src/inference/orchestrator.cpp",
+          "version": "2.13.0"
+        },
+        {
+          "name": "announce_eviction",
+          "file": "src/inference/orchestrator.cpp",
+          "version": "2.13.0"
+        },
+        {
+          "name": "resolve_vram_budget_bytes",
+          "file": "src/inference/orchestrator.cpp",
+          "version": "2.11.1"
+        },
+        {
+          "name": "ensure_vram_budget",
+          "file": "src/inference/orchestrator.cpp",
+          "version": "2.14.0"
+        },
+        {
+          "name": "estimate_footprint_bytes",
+          "file": "src/inference/orchestrator.cpp",
+          "version": "2.11.0"
+        },
+        {
+          "name": "derive_tier_auto_placement",
+          "file": "src/inference/tier_placement.h",
+          "version": "2.14.6"
+        }
+      ]
+    },
+    {
+      "req_id": "REQ-INFER-020",
+      "req_name": "Tier routing, handoff rules and secondary model roles",
+      "functions": [
+        {
+          "name": "extract_latest_user_message",
+          "file": "src/inference/orchestrator.cpp",
+          "version": "1.8.2"
+        },
+        {
+          "name": "ensure_secondary_roles",
+          "file": "src/inference/orchestrator.cpp",
+          "version": "2.13.0"
+        }
+      ]
+    },
+    {
+      "req_id": "REQ-INFER-021",
+      "req_name": "Per-tier sampler configuration applies only where the caller did not decide",
+      "functions": [
+        {
+          "name": "apply_if_default",
+          "file": "src/inference/orchestrator.cpp",
+          "version": "2.5.3"
+        }
+      ]
+    },
+    {
+      "req_id": "REQ-INFER-023",
+      "req_name": "LoRA adapters hot-swap under a single-HOT-per-context constraint",
+      "functions": [
+        {
+          "name": "preload_adapters_for_model",
+          "file": "src/inference/orchestrator.cpp",
+          "version": "2.13.0"
+        }
+      ]
+    },
+    {
+      "req_id": "REQ-LOOP-010",
+      "req_name": "Session conversations are readable, writable, and losslessly round-trippable",
+      "functions": [
+        {
+          "name": "forget_session_kv",
+          "file": "src/inference/orchestrator.cpp",
           "version": "2.13.0"
         }
       ]

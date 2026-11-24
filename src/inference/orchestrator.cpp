@@ -22,6 +22,7 @@
 #include "vram_footprint.h"
 #include "gguf_metadata.h"   // v2.13.1: auto reads the model's real shape
 #include "auto_placement.h"   // v2.13.1: auto solves the footprint estimator
+#include "tier_placement.h"   // v2.14.6: one tier's inputs + auto placement
 #include "response_parse.h"
 #include "grammar_source.h"    // gh#154: provenance for the result record
 #include "mtp_envelope.h"
@@ -1314,10 +1315,6 @@ void ModelOrchestrator::record_activation_reuse(
                             tier_name, path, footprint);
 }
 
-// Defined lower down, beside estimate_footprint_bytes which shares it.
-static FootprintInputs footprint_inputs_for(
-    const TierConfig& tier_cfg, uint64_t weights_bytes, int vram_reserve_mb);
-
 /**
  * @brief Log what WOULD fit when a tier is refused for VRAM (gh#142).
  *
@@ -1370,10 +1367,13 @@ void ModelOrchestrator::log_fit_recommendation(
  * and the estimate errs LOW, which leaves GPU capacity unused rather than
  * overcommitting the card.
  *
+ * v2.14.6: the derivation is derive_tier_auto_placement (tier_placement.h),
+ * shared with backend-direct model tests.
+ *
  * @param tier_name Tier being admitted.
  * @utility
  * @req REQ-INFER-019
- * @version 2.13.2
+ * @version 2.14.6
  */
 void ModelOrchestrator::resolve_auto_gpu_layers(const std::string& tier_name) {
     auto it = config_.models.tiers.find(tier_name);
@@ -1393,15 +1393,10 @@ void ModelOrchestrator::resolve_auto_gpu_layers(const std::string& tier_name) {
     // v2.13.1: read the model's actual shape instead of assuming 30 layers
     // and `file_bytes / 30` per layer. A metadata-only open costs the header
     // and the tensor index — no tensor data — regardless of file size.
-    const GgufShape shape = read_gguf_shape(it->second.path);
-    FootprintInputs base = footprint_inputs_for(
-        it->second, static_cast<uint64_t>(file_bytes),
-        config_.vram_reserve_mb);
-    base.draft_bytes = resident_draft_bytes();
-
-    const AutoPlacement placement =
-        derive_auto_placement(shape, base, vram_budget_bytes_,
-                              it->second.n_ubatch);
+    GgufShape shape;
+    const AutoPlacement placement = derive_tier_auto_placement(
+        it->second, static_cast<uint64_t>(file_bytes), vram_budget_bytes_,
+        config_.vram_reserve_mb, resident_draft_bytes(), shape);
     if (!placement.known) {
         fall_back_to_weights_estimate(tier_name, file_bytes, placement.reason);
         return;
@@ -2775,58 +2770,8 @@ bool ModelOrchestrator::budget_resolves_at_init(const ParsedConfig& config) {
 }
 
 
-/**
- * @brief Gather a tier's footprint inputs for the pure estimator.
- *
- * Resolves the vision projector's size when the tier declares one — it is the
- * allocation that actually aborted the process in gh#142 and the v2.2.4
- * estimate ignored it entirely.
- *
- * @param tier_cfg The tier's configuration.
- * @param weights_bytes Size of the tier's GGUF on disk.
- * @return Inputs for estimate_vram_footprint.
- * @utility
- * @req REQ-INFER-019
- * @version 2.13.1
- */
-static FootprintInputs footprint_inputs_for(
-    const TierConfig& tier_cfg, uint64_t weights_bytes, int vram_reserve_mb) {
-    FootprintInputs in;
-    in.weights_bytes = weights_bytes;
-    in.gpu_layers = tier_cfg.gpu_layers;
-    in.context_length = tier_cfg.context_length;
-    in.cache_type_k = tier_cfg.cache_type_k;
-    in.cache_type_v = tier_cfg.cache_type_v;
-    in.vram_reserve_mb = vram_reserve_mb;
-    // gh#144 (v2.12.0): context_length is per session, so the pool's KV term
-    // multiplies. Omitting this under-counts by exactly N and can admit a
-    // configuration that aborts the host — what this gate exists to prevent.
-    in.max_sessions = tier_cfg.max_sessions;
-    if (!tier_cfg.mmproj_path.empty()) {
-        std::error_code proj_ec;
-        auto proj = std::filesystem::file_size(tier_cfg.mmproj_path, proj_ec);
-        if (!proj_ec) { in.mmproj_bytes = proj; }
-    }
-    // v2.13.1: the GGUF's real shape, and what an expert split moves off the
-    // card. Without these the budget gate re-prices a placement `auto` just
-    // derived WITHOUT knowing about the split: it sees gpu_layers == -1,
-    // calls that full residency, charges the whole file, and refuses a
-    // configuration auto had already measured as fitting. Two estimators
-    // disagreeing about one tier is the defect this release exists to
-    // remove, so both go through this builder and both see the same shape.
-    const GgufShape shape = read_gguf_shape(tier_cfg.path);
-    if (shape.known) {
-        in.block_count = shape.block_count;
-        in.block_bytes = shape.block_bytes;
-        in.non_block_bytes = shape.non_block_bytes;
-        if (tier_cfg.cpu_moe_layers > 0) {
-            in.host_expert_bytes =
-                shape.expert_bytes_per_block()
-                * static_cast<uint64_t>(tier_cfg.cpu_moe_layers);
-        }
-    }
-    return in;
-}
+// v2.14.6: footprint_inputs_for moved to tier_placement.h (shared with
+// backend-direct model tests, so `auto` has one estimator).
 
 /**
  * @brief Estimate per-tier VRAM footprint.

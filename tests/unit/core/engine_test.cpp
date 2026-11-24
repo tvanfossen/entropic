@@ -784,10 +784,16 @@ SCENARIO("v2.14.6: after a prose answer is nudged, the forced retry may only "
         MockInference mock;
         run_owing_lead(mock, {"Here is the answer.", "still prose"},
                        R"([{"name":"entropic.delegate","description":"d","inputSchema":{}}])");
-        THEN("the retry keeps the tools it has rather than offering none") {
+        THEN("the retry keeps the tools it has and is NOT forced") {
             REQUIRE(mock.seen_params.size() >= 2);
             CHECK(tool_names_sent(mock, 1)
                   == std::vector<std::string>{"entropic.delegate"});
+            // v2.14.6 gate (gh#181): forcing "any tool" on a tier that cannot
+            // conclude only manufactures junk calls, and keeps the model from
+            // narrating into the iteration cap or the thinking-budget cut —
+            // the only exits such a tier has. The nudge still fires.
+            CHECK(mock.seen_params[1].find("force_tool_call")
+                  == std::string::npos);
         }
     }
 }

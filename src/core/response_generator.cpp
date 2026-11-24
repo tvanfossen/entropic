@@ -867,20 +867,26 @@ std::string ResponseGenerator::serialize_messages(
  *
  * The forced retry after a prose answer may only conclude, so it is offered
  * entropic.complete alone and the forced grammar has nothing else to pick.
- * When the tier was never offered that tool the defs are returned unchanged
- * and the miss is logged as an ERROR: offering no tools would force a call
- * nothing can satisfy. configure refusing such a tier is gh#213.
+ * When the tier was never offered that tool the defs are returned unchanged,
+ * the miss is logged as an ERROR, and @p offered is cleared so the caller
+ * does not force the retry: forcing "any tool" on a tier that cannot conclude
+ * only manufactures calls, and keeps the model from narrating into the
+ * iteration cap or the thinking-budget cut, its only exits (v2.14.6 gate,
+ * gh#181). configure refusing such a tier is gh#213. [reviewed]: added
+ * `offered` so the caller can leave an unconcludable retry unforced.
  *
  * @param tools_json Tier tool defs (MCP JSON array string).
  * @param only_tool Tool name to keep.
  * @param tier Tier name (for the log line).
+ * @param offered Set to whether the tier is offered @p only_tool.
  * @return Array holding only @p only_tool, or @p tools_json unchanged.
  * @req REQ-LOOP-004
- * @version 2.14.6
+ * @version 2.14.6 [reviewed]
  */
 static std::string restrict_tools(const std::string& tools_json,
                                   const std::string& only_tool,
-                                  const std::string& tier) {
+                                  const std::string& tier,
+                                  bool& offered) {
     auto all = nlohmann::json::parse(tools_json, nullptr, false);
     auto kept = nlohmann::json::array();
     if (all.is_array()) {
@@ -891,9 +897,11 @@ static std::string restrict_tools(const std::string& tools_json,
         }
     }
     std::string out = tools_json;
-    if (kept.empty()) {
+    offered = !kept.empty();
+    if (!offered) {
         logger->error("[tools] tier '{}': forced retry may only call '{}', "
-                      "but the tier is not offered it; keeping its tools {}",
+                      "but the tier is not offered it; keeping its tools {} "
+                      "and NOT forcing the retry",
                       tier, only_tool, tools_json);
     } else {
         logger->info("[tools] tier '{}': forced retry offers only '{}'",
@@ -915,21 +923,22 @@ static std::string restrict_tools(const std::string& tools_json,
  * @param tier Locked tier name.
  * @param session_key Session key ("" omitted).
  * @param force_tool_call v2.14.6: force this generation's tool call.
- * @param only_tool v2.14.6: when non-empty, offer only this tool.
+ * @param only_tool v2.14.6: when non-empty, offer only this tool; a tier not
+ *        offered it gets its own tools and an UNforced generation.
  * @return JSON string {tier, session?, force_tool_call?, tools?}.
  * @req REQ-IDEN-001
- * @version 2.14.6 [reviewed]
+ * @version 2.14.6 [reviewed 2]
  */
 std::string ResponseGenerator::build_params_json(
     const std::string& tier, const std::string& session_key,
     bool force_tool_call, const std::string& only_tool) {
     nlohmann::json j = nlohmann::json::object();
     if (!tier.empty()) { j["tier"] = tier; }
-    if (force_tool_call) { j["force_tool_call"] = true; }  // v2.14.6
     // gh#144 (v2.12.0): only emitted when non-empty, so a handle that never
     // names a session sends a byte-identical params payload.
     if (!session_key.empty()) { j["session"] = session_key; }
 
+    bool offered = true;
     if (inference_.get_tool_prompt != nullptr) {
         char* tools = nullptr;
         int rc = inference_.get_tool_prompt(
@@ -937,10 +946,12 @@ std::string ResponseGenerator::build_params_json(
         if (rc == 0 && tools != nullptr) {
             j["tools"] = only_tool.empty()
                 ? std::string(tools)
-                : restrict_tools(tools, only_tool, tier);
+                : restrict_tools(tools, only_tool, tier, offered);
             if (inference_.free_fn) { inference_.free_fn(tools); }
         }
     }
+    // v2.14.6: forced only when the retry can actually conclude.
+    if (force_tool_call && offered) { j["force_tool_call"] = true; }
     return j.dump();
 }
 

@@ -2,231 +2,51 @@
   "schema_version": 1,
   "entries": [
     {
-      "req_id": "REQ-LOOP-009",
-      "req_name": "Per-session-key run concurrency, on by default, with one lock on the generation path",
+      "req_id": "REQ-IDEN-001",
+      "req_name": "Tier resolution contract and per-tier loop overrides",
       "functions": [
         {
-          "name": "execute_tool",
-          "file": "src/mcp/tool_executor.cpp",
+          "name": "build_params_json",
+          "file": "src/core/response_generator.cpp",
+          "version": "2.14.6 [reviewed 2]"
+        }
+      ]
+    },
+    {
+      "req_id": "REQ-LOOP-004",
+      "req_name": "Empty-turn allowance and tool-call correction nudge",
+      "functions": [
+        {
+          "name": "restrict_tools",
+          "file": "src/core/response_generator.cpp",
           "version": "2.14.6 [reviewed]"
         }
       ]
     },
     {
-      "req_id": "REQ-MCP-001",
-      "req_name": "MCPServerBase holds the shared logic; concrete servers override only deltas",
+      "req_id": "REQ-LOOP-006",
+      "req_name": "Interrupt and pause semantics across nested loops",
       "functions": [
         {
-          "name": "set_working_dir",
-          "file": "src/mcp/server_base.cpp",
-          "version": "1.8.5"
+          "name": "spawn_cancel_poller",
+          "file": "src/core/response_generator.cpp",
+          "version": "2.13.0"
         }
       ]
     },
     {
-      "req_id": "REQ-MCP-002",
-      "req_name": "Tool results always cross boundaries as a ServerResponse JSON envelope",
+      "req_id": "REQ-LOOP-007",
+      "req_name": "Engine-authored transcript shaping keeps the system prompt bit-stable",
       "functions": [
         {
-          "name": "disconnected_error",
-          "file": "src/mcp/server_manager.cpp",
-          "version": "1.8.7"
-        },
-        {
-          "name": "parse_tool_result_text",
-          "file": "src/mcp/tool_executor.cpp",
-          "version": "2.3.7"
-        },
-        {
-          "name": "execute_tool",
-          "file": "src/mcp/tool_executor.cpp",
+          "name": "prepare_prompts",
+          "file": "src/core/response_generator.cpp",
           "version": "2.14.6 [reviewed]"
-        }
-      ]
-    },
-    {
-      "req_id": "REQ-MCP-007",
-      "req_name": "Tool calls route by server prefix uniformly across all three server kinds",
-      "functions": [
-        {
-          "name": "connect_external_server",
-          "file": "src/mcp/server_manager.cpp",
-          "version": "2.14.0"
-        }
-      ]
-    },
-    {
-      "req_id": "REQ-MCP-009",
-      "req_name": "Operator permission gate with deny precedence and server-derived patterns",
-      "functions": [
-        {
-          "name": "args_to_pattern",
-          "file": "src/mcp/server_manager.cpp",
-          "version": "1.8.5"
         },
         {
-          "name": "check_approval",
-          "file": "src/mcp/tool_executor.cpp",
+          "name": "inject_engine_state_reminder",
+          "file": "src/core/response_generator.cpp",
           "version": "2.14.6"
-        }
-      ]
-    },
-    {
-      "req_id": "REQ-MCP-010",
-      "req_name": "Per-identity MCP key authorization is opt-in but default-deny once enabled",
-      "functions": [
-        {
-          "name": "check_mcp_authorization",
-          "file": "src/mcp/tool_executor.cpp",
-          "version": "2.14.6"
-        }
-      ]
-    },
-    {
-      "req_id": "REQ-MCP-011",
-      "req_name": "Every tool declares its required access level, defaulting to WRITE",
-      "functions": [
-        {
-          "name": "check_mcp_authorization",
-          "file": "src/mcp/tool_executor.cpp",
-          "version": "2.14.6"
-        }
-      ]
-    },
-    {
-      "req_id": "REQ-MCP-012",
-      "req_name": "Tool calls pass an ordered precondition pipeline with typed rejection kinds",
-      "functions": [
-        {
-          "name": "requires_approval",
-          "file": "src/mcp/server_base.cpp",
-          "version": "2.14.6"
-        },
-        {
-          "name": "requires_approval",
-          "file": "src/mcp/server_manager.cpp",
-          "version": "2.14.6"
-        },
-        {
-          "name": "requires_approval",
-          "file": "src/mcp/servers/entropic_server.cpp",
-          "version": "2.14.6"
-        },
-        {
-          "name": "check_approval",
-          "file": "src/mcp/tool_executor.cpp",
-          "version": "2.14.6"
-        },
-        {
-          "name": "check_mcp_authorization",
-          "file": "src/mcp/tool_executor.cpp",
-          "version": "2.14.6"
-        }
-      ]
-    },
-    {
-      "req_id": "REQ-MCP-013",
-      "req_name": "Tool arguments are validated against the declared JSON schema before dispatch",
-      "functions": [
-        {
-          "name": "normalize_args",
-          "file": "src/mcp/server_base.cpp",
-          "version": "2.12.0"
-        }
-      ]
-    },
-    {
-      "req_id": "REQ-MCP-015",
-      "req_name": "Duplicates, errors, and denials return corrective guidance, not bare failure",
-      "functions": [
-        {
-          "name": "create_denied_message",
-          "file": "src/mcp/tool_executor.cpp",
-          "version": "2.14.6"
-        },
-        {
-          "name": "create_error_message",
-          "file": "src/mcp/tool_executor.cpp",
-          "version": "2.14.6"
-        },
-        {
-          "name": "create_duplicate_message",
-          "file": "src/mcp/tool_executor.cpp",
-          "version": "2.14.6"
-        }
-      ]
-    },
-    {
-      "req_id": "REQ-MCP-020",
-      "req_name": "A bounded, thread-safe ring buffer retains recent tool calls for introspection",
-      "functions": [
-        {
-          "name": "execute_tool",
-          "file": "src/mcp/tool_executor.cpp",
-          "version": "2.14.6 [reviewed]"
-        }
-      ]
-    },
-    {
-      "req_id": "REQ-MCP-024",
-      "req_name": "Engine-level entropic.* tools validate their arguments and emit typed directives",
-      "functions": [
-        {
-          "name": "followup_results",
-          "file": "src/mcp/servers/entropic_server.cpp",
-          "version": "2.14.0"
-        }
-      ]
-    },
-    {
-      "req_id": "REQ-MCP-025",
-      "req_name": "External servers are discovered safely, directive-stripped, and health-monitored",
-      "functions": [
-        {
-          "name": "connect_declared_servers",
-          "file": "include/entropic/mcp/server_manager.h",
-          "version": "2.14.0"
-        },
-        {
-          "name": "connect_discovered_servers",
-          "file": "include/entropic/mcp/server_manager.h",
-          "version": "2.14.0"
-        },
-        {
-          "name": "initialize_external_servers",
-          "file": "src/mcp/server_manager.cpp",
-          "version": "2.14.0"
-        },
-        {
-          "name": "connect_declared_servers",
-          "file": "src/mcp/server_manager.cpp",
-          "version": "2.14.0"
-        },
-        {
-          "name": "connect_discovered_servers",
-          "file": "src/mcp/server_manager.cpp",
-          "version": "2.14.0"
-        },
-        {
-          "name": "connect_external_server",
-          "file": "src/mcp/server_manager.cpp",
-          "version": "2.14.0"
-        },
-        {
-          "name": "disconnected_error",
-          "file": "src/mcp/server_manager.cpp",
-          "version": "1.8.7"
-        }
-      ]
-    },
-    {
-      "req_id": "REQ-MCP-027",
-      "req_name": "Named workspaces bind a session to its own tool root and servers",
-      "functions": [
-        {
-          "name": "execute_tool",
-          "file": "src/mcp/tool_executor.cpp",
-          "version": "2.14.6 [reviewed]"
         }
       ]
     }

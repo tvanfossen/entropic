@@ -25,7 +25,11 @@ SCENARIO("Lead delegates to child and receives result",
         REQUIRE(g_ctx.initialized);
         start_test_log("test4_delegation");
         auto params = test_gen_params();
-        params.max_tokens = 512;
+        // v2.14.6: 512 -> 1024. finish="length" is now reported (it read
+        // "stop" for every finish before), and E4B's coherent, fully
+        // formatted plan ran past 512 in 1 of 2 gate attempts. The test
+        // specifies a plan the model FINISHES, so it gets room to.
+        params.max_tokens = 1024;
         params.enable_thinking = false;
         auto messages = make_messages(
             "You are a lead engineer. When asked to delegate, "

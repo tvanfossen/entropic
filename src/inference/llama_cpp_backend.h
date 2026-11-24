@@ -327,6 +327,28 @@ public:
     }
 
     /**
+     * @brief Highest occupied KV position in one SESSION's sequence (gh#144).
+     *
+     * kv_pos_max() reads seq 0, which is only the session's own sequence when
+     * there is one session. With several (`max_sessions` > 1) each session
+     * holds its own slot, and seq 0 belongs to whichever took it first: the
+     * v2.14.6 gate's hybrid test read session a's sequence after every
+     * session-b turn and reported a desync that was a measurement error.
+     * @param session_key Session whose sequence to read.
+     * @return That sequence's pos_max, or -1 if not active or the session
+     *         holds no slot.
+     * @utility
+     * @version 2.14.6
+     */
+    int kv_pos_max_for(const std::string& session_key) const {
+        const int slot = residency_.slot_for(session_key);
+        return (ctx_ != nullptr && slot >= 0)
+            ? static_cast<int>(llama_memory_seq_pos_max(
+                  llama_get_memory(ctx_), static_cast<llama_seq_id>(slot)))
+            : -1;
+    }
+
+    /**
      * @brief Whole-file loads of a tier model in this process (gh#148).
      *
      * Deterministic instrumentation, in the same spirit as gh#161's

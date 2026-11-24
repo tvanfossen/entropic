@@ -502,8 +502,12 @@ SCENARIO("gh#158: concurrent sessions on a HYBRID arch keep KV in sync",
                                  + ": name one animal."});
                     params.session_key = keys[s];
                     auto r = backend.generate(convo[s], params);
+                    // v2.14.6: the SESSION's sequence. kv_pos_max() reads
+                    // seq 0 = session a, so every session-b turn compared
+                    // a's KV end with b's input (failed turns 3/5/7 only).
                     turns.push_back({backend.last_input_tokens(),
-                                     backend.kv_pos_max(), r.content});
+                                     backend.kv_pos_max_for(keys[s]),
+                                     r.content});
                     convo[s].push_back(
                         {"assistant",
                          r.content.empty() ? std::string("(none)")
@@ -523,6 +527,9 @@ SCENARIO("gh#158: concurrent sessions on a HYBRID arch keep KV in sync",
                     // tail inflates it past input + max_tokens.
                     CHECK(turns[i].pos_max
                           < turns[i].input + params.max_tokens);
+                    // v2.14.6: and the probe read a real sequence — a -1
+                    // (session holds no slot) would pass the bound above.
+                    CHECK(turns[i].pos_max >= turns[i].input - 1);
                 }
             }
         }

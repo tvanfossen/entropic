@@ -5228,7 +5228,15 @@
 
     one-shot anti-spiral warning) is injected as a fresh trailing USER
 
-    message, never by mutating the system message. WHY: mutating the
+    message, never by mutating the system message. v2.14.6: it is sent
+
+    only when it matters — the iteration counter in the final 3
+
+    iterations of the budget, the one-shot lines whenever set; an
+
+    ordinary turn carries no note, because the model answered the
+
+    every-turn note as if it were the user''s request. WHY: mutating the
 
     system message invalidates the prompt cache on every turn — the
 

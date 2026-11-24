@@ -452,6 +452,14 @@ struct GenerationParams {
     int seed = -1;
     int reasoning_budget = -1;               ///< Per-call think budget override (-1 = unlimited)
     bool enable_thinking = true;             ///< Enable <think> blocks (false if reasoning_budget == 0)
+    /// @brief Force this generation to make a tool call (v2.14.6).
+    ///
+    /// Set by the engine for the retry after it nudged a tier that owes a
+    /// tool call: the orchestrator then stages gh#134's require_tool_call
+    /// for THIS generation only, so the tool-call grammar binds eagerly. A
+    /// model that already complies is never constrained — the first attempt
+    /// stays free-form.
+    bool force_tool_call = false;
     std::string grammar;                     ///< GBNF grammar string (empty = unconstrained)
     /// @brief Grammar registry key. Resolved to GBNF content by orchestrator
     /// before passing to the backend. If both grammar and grammar_key are set,
@@ -875,6 +883,16 @@ struct ExternalMCPConfig {
     /// use, tunnel with `ssh -L <port>:127.0.0.1:<port> host`. If the port
     /// cannot be served, configure fails with ENTROPIC_ERROR_IO.
     int http_port = 0;
+
+    /// @brief Advertise `<prefix>.shutdown`, which stops the host (v2.14.6).
+    ///
+    /// false (default): the tool does not exist. The bridge is library code
+    /// that embedders run inside their own process, so a tool that signals
+    /// that process must be an explicit host decision. `entropic serve
+    /// --allow-shutdown` sets it. When accepted, shutdown takes the same
+    /// exclusive claim as release (refused while any session is decoding;
+    /// no turn starts after), replies, then raises SIGTERM on the process.
+    bool allow_shutdown = false;
 
     /// @brief Namespace for the tools this bridge advertises (gh#145).
     ///

@@ -211,22 +211,24 @@ Message ToolExecutor::handle_duplicate(
 /**
  * @brief Check tool approval.
  *
- * The last precondition gate. Auto-approval or an operator allow-list
- * match short-circuits; otherwise the engine's approval callback is
- * consulted. Fires the informational ON_PERMISSION_CHECK hook either
- * way.
+ * The last precondition gate. Auto-approval, an operator allow-list
+ * match, or a tool its in-process server exempts (the engine's own
+ * directives, v2.14.6) short-circuits; otherwise the engine's approval
+ * callback is consulted. Fires the informational ON_PERMISSION_CHECK hook
+ * either way.
  *
  * @param call Tool call.
  * @return true when the call may be dispatched — auto-approved,
- *         explicitly allowed, or approved via the callback; false only
- *         when no approval callback is wired, which is logged.
+ *         explicitly allowed, exempt, or approved via the callback; false
+ *         only when no approval callback is wired, which is logged.
  * @req REQ-MCP-012
  * @req REQ-MCP-009
- * @version 1.9.1
+ * @version 2.14.6
  */
 bool ToolExecutor::check_approval(const ToolCall& call) {
     auto args_json = serialize_args(call);
     bool auto_ok = loop_config_.auto_approve_tools
+                || !server_manager_.requires_approval(call.name)
                 || server_manager_.is_explicitly_allowed(
                        call.name, args_json);
 
@@ -489,6 +491,23 @@ static std::string parse_tool_result_text(const std::string& result_json) {
 }
 
 /**
+ * @brief Mark a message as the result of `call` (v2.14.6).
+ *
+ * The backend renders a tagged message as the template's native tool
+ * response to that call. Every per-call result is tagged — success,
+ * denial, error, duplicate — so no call is left without its response turn.
+ *
+ * @param msg Result message.
+ * @param call The call it answers.
+ * @utility
+ * @version 2.14.6
+ */
+static void tag_tool_result(Message& msg, const ToolCall& call) {
+    msg.metadata[tool_meta::kCallId] = call.id;
+    msg.metadata[tool_meta::kName] = call.name;
+}
+
+/**
  * @brief Execute a single tool call.
  *
  * The dispatch itself, once every precondition has passed. The server's
@@ -512,7 +531,7 @@ static std::string parse_tool_result_text(const std::string& result_json) {
  * @req REQ-MCP-020
  * @req REQ-MCP-027
  * @req REQ-LOOP-009
- * @version 2.13.0 [reviewed]
+ * @version 2.14.6 [reviewed]
  */
 std::pair<Message, std::string> ToolExecutor::execute_tool(
     LoopContext& ctx, const ToolCall& call) {
@@ -564,8 +583,7 @@ std::pair<Message, std::string> ToolExecutor::execute_tool(
     Message msg;
     msg.role = "user";
     msg.content = result_text;
-    msg.metadata["tool_call_id"] = call.id;
-    msg.metadata["tool_name"] = call.name;
+    tag_tool_result(msg, call);
 
     return {std::move(msg), result_json};
 }
@@ -678,13 +696,14 @@ void ToolExecutor::record_tool_call(
  * @return A user-role Message reading "Tool `X` was denied: <reason>"
  *         followed by do-NOT-retry / use-a-different-approach guidance.
  * @req REQ-MCP-015
- * @version 1.8.5
+ * @version 2.14.6
  */
 Message ToolExecutor::create_denied_message(
     const ToolCall& call,
     const std::string& reason) {
     Message msg;
     msg.role = "user";
+    tag_tool_result(msg, call);  // v2.14.6
     msg.content =
         "Tool `" + call.name + "` was denied: " + reason + "\n\n"
         "This tool is not available to you. Do NOT retry it. "
@@ -700,13 +719,14 @@ Message ToolExecutor::create_denied_message(
  *         followed by the RECOVERY block — check arguments, try a
  *         different approach, do not retry with the same arguments.
  * @req REQ-MCP-015
- * @version 1.8.5
+ * @version 2.14.6
  */
 Message ToolExecutor::create_error_message(
     const ToolCall& call,
     const std::string& error) {
     Message msg;
     msg.role = "user";
+    tag_tool_result(msg, call);  // v2.14.6
     msg.content =
         "Tool `" + call.name + "` failed with error: " + error +
         "\n\nRECOVERY:\n"
@@ -765,7 +785,7 @@ void ToolExecutor::truncate_to_limit(
  * @req REQ-MCP-011
  * @req REQ-MCP-010
  * @req REQ-MCP-012
- * @version 1.9.4
+ * @version 2.14.6
  */
 std::optional<Message> ToolExecutor::check_mcp_authorization(
     const LoopContext& ctx,
@@ -786,6 +806,7 @@ std::optional<Message> ToolExecutor::check_mcp_authorization(
                  call.name, level_str, identity);
     Message msg;
     msg.role = "user";
+    tag_tool_result(msg, call);  // v2.14.6
     msg.content =
         "Tool `" + call.name + "` was denied: identity `"
         + identity + "` lacks " + level_str
@@ -1527,7 +1548,7 @@ Message ToolExecutor::create_circuit_breaker_message() {
  *         explicit "Do NOT call this tool again, use the previous
  *         result" instruction.
  * @req REQ-MCP-015
- * @version 1.8.5
+ * @version 2.14.6
  */
 Message ToolExecutor::create_duplicate_message(
     const ToolCall& call,
@@ -1538,6 +1559,7 @@ Message ToolExecutor::create_duplicate_message(
 
     Message msg;
     msg.role = "user";
+    tag_tool_result(msg, call);  // v2.14.6
 
     if (was_denied) {
         msg.content =

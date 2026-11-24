@@ -5,13 +5,15 @@
  *        bookkeeping on HYBRID (attention + recurrent/SSM) architectures.
  *
  * Regression from v2.7.5 (gh#96 warm-keep). On a hybrid arch (qwen35 / qwen35moe
- * ∈ llm_arch_is_hybrid), warm-keep's partial `llama_memory_seq_rm(0, cut, -1)`
+ * / nemotron_h ∈ llm_arch_is_hybrid), warm-keep's partial `llama_memory_seq_rm(0, cut, -1)`
  * is REJECTED by the recurrent memory ("Mamba/RWKV can't have state partially
  * erased at the end"); the rejected return was discarded, so the decode of the
  * delta appended past the un-removed tail → KV position desync → "failed to
  * find a memory slot" with the cache mostly empty.
  *
- * BACKEND-DIRECT: drive a hybrid model (Qwen3.5-0.8B, arch qwen35) through a
+ * BACKEND-DIRECT: drive a hybrid model (Nemotron-3-Nano-4B, arch nemotron_h —
+ * Mamba2 + attention; v2.14.6: was the gh#97 repro model Qwen3.6-35B-A3B, arch
+ * qwen35moe, which left the pared model set) through a
  * growing multi-turn conversation with the prompt cache + warm-keep ON. Every
  * turn must produce a clean, non-empty generation. On the broken rev a turn
  * fails (empty / error finish); once the cache prefix machinery is guarded off
@@ -20,7 +22,7 @@
  * This closes the arch-coverage gap: every gh#96 test ran on gemma4-E2B, a
  * plain llama_kv_cache where partial seq_rm behaves.
  *
- * Requires: GPU + Qwen3.5-0.8B GGUF. Run: ctest -L model -R gh97
+ * Requires: GPU + Nemotron-3-Nano-4B GGUF. Run: ctest -L model -R gh97
  *
  * @version 2.7.6
  */
@@ -49,21 +51,23 @@ std::string filler(const std::string& tag) {
 SCENARIO("gh#97: prompt-cache/warm-keep must not corrupt KV on a hybrid model",
          "[model][gh97]")
 {
-    GIVEN("the repro hybrid model (Qwen3.6-35B-A3B, arch qwen35moe)") {
+    GIVEN("a hybrid model (Nemotron-3-Nano-4B, arch nemotron_h)") {
         const char* home = std::getenv("HOME");
         REQUIRE(home != nullptr);
         fs::path gguf = fs::path(home) / ".entropic" / "models"
-                        / "Qwen3.6-35B-A3B-UD-IQ3_XXS.gguf";
+                        / "NVIDIA-Nemotron-3-Nano-4B-UD-Q4_K_XL.gguf";
         if (!fs::is_regular_file(gguf)) {
-            SKIP("Qwen3.6-35B-A3B GGUF not present at " + gguf.string());
+            SKIP("Nemotron-3-Nano-4B GGUF not present at " + gguf.string());
         }
 
         entropic::LlamaCppBackend backend;
         entropic::ModelConfig cfg;
         cfg.path = gguf;
-        cfg.adapter = "qwen36";
+        cfg.adapter = "nemotron3";
         cfg.context_length = 8192;
-        cfg.gpu_layers = 15;  // ~13GB IQ3_XXS — partial CPU offload, OOM-safe on 11GB
+        // 3.1 GB — fits the 11GB card whole. The 15-layer clamp was for the
+        // 13GB Qwen3.6 IQ3_XXS; full offload loses nothing for this test.
+        cfg.gpu_layers = 99;
         cfg.flash_attn = false;
         REQUIRE(backend.load(cfg));
         REQUIRE(backend.activate());

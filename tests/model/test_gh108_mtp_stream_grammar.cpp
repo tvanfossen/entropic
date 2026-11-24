@@ -67,8 +67,8 @@ std::filesystem::path models_dir() {
  * @version 2.10.3
  */
 std::string configure_mtp_tier(ModelTestContext& ctx) {
-    auto target = models_dir() / "gemma-4-E2B-it-Q8_0.gguf";
-    auto head = models_dir() / "mtp-gemma-4-E2B-it.gguf";
+    auto target = models_dir() / "gemma-4-E4B-it-qat-UD-Q4_K_XL.gguf";
+    auto head = models_dir() / "mtp-gemma-4-E4B-it.gguf";
     if (!std::filesystem::is_regular_file(target) ||
         !std::filesystem::is_regular_file(head)) {
         SKIP("MTP target/head GGUF not present");

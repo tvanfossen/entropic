@@ -81,7 +81,7 @@ repos:
   # Pinned, never a branch: a mutable ref once meant CI and local disagreed
   # 3 violations vs 578 on identical code.
   - repo: https://github.com/tvanfossen/clew
-    rev: v2.0.0
+    rev: v2.0.1
     hooks:
       - id: clew-guard
         files: \.(h|hpp|c|cpp|cc|cxx|py)$

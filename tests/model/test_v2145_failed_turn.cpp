@@ -14,7 +14,7 @@
  * Before v2.14.5 ask 2 came back as an ordinary answer: turn 1's text
  * (gh#209) or a completion call written as text (gh#212), with no error.
  *
- * Requires: GPU, gemma-4-E2B QAT GGUF on disk.
+ * Requires: GPU, gemma-4-E4B QAT GGUF on disk.
  * Run: inv test --model --model-only --filter v2145
  *
  * @version 2.14.5
@@ -76,15 +76,15 @@ Ask ask(entropic_handle_t h, const std::string& tier, const std::string& prompt)
 SCENARIO("v2.14.5: a failed turn is an error carrying only its own text",
          "[model][v2145][bridge][gh209][gh212]") {
     GIVEN("a served engine with a free tier and a tier that cannot complete") {
-        auto gguf = entropic::test::facade::model_gguf("gemma-4-E2B-it-qat-UD-Q4_K_XL.gguf");
+        auto gguf = entropic::test::facade::model_gguf("gemma-4-E4B-it-qat-UD-Q4_K_XL.gguf");
         if (gguf.empty() || !fs::is_regular_file(gguf)) {
-            SKIP("gemma-4-E2B QAT GGUF not present at " + gguf.string());
+            SKIP("gemma-4-E4B QAT GGUF not present at " + gguf.string());
         }
         entropic::test::facade::FacadeProject project("v2145_failed_turn");
         project.extra_mcp_config = "  external:\n    enabled: true\n";
         entropic::test::facade::TierSpec lead;
         lead.name = "lead";
-        lead.gguf_key = "gemma4_e2b_qat";
+        lead.gguf_key = "gemma4_e4b_qat";
         lead.adapter = "gemma4";
         lead.identity_body = "You are a terse assistant with a good memory.";
         lead.context_length = 4096;

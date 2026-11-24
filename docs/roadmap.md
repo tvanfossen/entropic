@@ -76,6 +76,14 @@ releases run the full model gate (02:00–06:00 window).
 
 ---
 
+## v2.14.6 — one turn cannot take down the host (gh#214, gh#216, gh#217, gh#220, gh#229)
+
+- Inference wrappers return the typed error; UTF-8-safe tool history that
+  cannot fail to serialize; exclusive release (#92). Follow-up gh#218.
+- clew 2.0.0: `clew-guard` replaces doxygen-guard and `check_requirements`
+  (`@dg_internal` → `@utility`, @req floor 0.5); the clew wiki replaces the
+  doxygen Pages site (gh#229).
+
 ## v2.14.5 — failed turns are failures (gh#209, gh#212) (SHIPPED)
 
 - `ENTROPIC_ERROR_TURN_FAILED`; reason + unconfirmed text in last_error;
@@ -1042,7 +1050,8 @@ place — no further ABI bump required):
 - Multi-resident coexistence when total footprint fits the budget
   (current path remains single-active swap).
 - Metrics counter/histogram sink wiring — INFO logs carry the
-  fields today, ready for [gh#26](https://github.com/tvanfossen/entropic/issues/26).
+  fields; per decision 94 (gh#26, 2026-11-23) they are the metrics
+  surface, and no registry is planned.
 
 **New ABI surface (strictly additive):**
 
@@ -1064,8 +1073,8 @@ place — no further ABI bump required):
 - ERROR log on `TIER_MODEL_TOO_LARGE` with full context.
 - Metrics: counters for `model_loads_total`, `model_evictions_total`,
   `tier_activation_swaps_total`; histograms for `model_load_seconds`,
-  `model_evict_seconds`. Routed through whatever lands in
-  [gh#26](https://github.com/tvanfossen/entropic/issues/26).
+  `model_evict_seconds`. Superseded by decision 94 (gh#26):
+  these are INFO log fields, not registry counters.
 
 **Out of scope (potential v2.3.x):**
 

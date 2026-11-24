@@ -66,6 +66,31 @@ inline int partial_gpu_layers_for(uint64_t file_bytes,
 }
 
 /**
+ * @brief Host memory host_can_hold_warm_load() requires (v2.14.6).
+ *
+ * The ONE place the requirement is computed, so a skip that quotes it quotes
+ * the number that decided. The model harness used to print file + 2 GiB — the
+ * first cut of this rule, rejected because it admitted a load that then died
+ * — while deciding on this, and so reported a host with "enough" memory as
+ * skipped for lack of it.
+ *
+ * 1.5x the file is deliberately conservative. Its original rationale (WARM
+ * and ACTIVE overlapping across the reload) was refuted in v2.13.0 (decision
+ * #65: the doubling was page cache), but loads admitted at a smaller margin
+ * were killed at buffer allocation, so the margin stands on that evidence.
+ *
+ * @param file_bytes Size of the GGUF on disk.
+ * @param headroom_bytes Slack for context, compute buffers and the process.
+ * @return Bytes of MemAvailable the gate requires.
+ * @utility
+ * @version 2.14.6
+ */
+inline uint64_t warm_load_needed_bytes(
+    uint64_t file_bytes, uint64_t headroom_bytes = 1024ull * 1024 * 1024) {
+    return file_bytes + (file_bytes / 2) + headroom_bytes;
+}
+
+/**
  * @brief Whether the host can hold a model's WARM load.
  *
  * The WARM state maps the ENTIRE GGUF into CPU RAM regardless of gpu_layers —
@@ -106,15 +131,13 @@ inline int partial_gpu_layers_for(uint64_t file_bytes,
  *         (0) returns true: refusing to run because we could not measure is
  *         worse than trying.
  * @req REQ-INFER-019
- * @version 2.12.0
+ * @version 2.14.6
  */
 inline bool host_can_hold_warm_load(
     uint64_t file_bytes, uint64_t available_bytes,
     uint64_t headroom_bytes = 1024ull * 1024 * 1024) {
-    if (available_bytes == 0) { return true; }
-    // WARM and ACTIVE residencies can overlap across the reload boundary.
-    const uint64_t peak = file_bytes + (file_bytes / 2);
-    return available_bytes >= peak + headroom_bytes;
+    return available_bytes == 0
+        || available_bytes >= warm_load_needed_bytes(file_bytes, headroom_bytes);
 }
 
 /// @brief Size above which a model counts as "large" for the waiver below.

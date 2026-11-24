@@ -327,6 +327,28 @@ public:
     }
 
     /**
+     * @brief Highest occupied KV position in one SESSION's sequence (gh#144).
+     *
+     * kv_pos_max() reads seq 0, which is only the session's own sequence when
+     * there is one session. With several (`max_sessions` > 1) each session
+     * holds its own slot, and seq 0 belongs to whichever took it first: the
+     * v2.14.6 gate's hybrid test read session a's sequence after every
+     * session-b turn and reported a desync that was a measurement error.
+     * @param session_key Session whose sequence to read.
+     * @return That sequence's pos_max, or -1 if not active or the session
+     *         holds no slot.
+     * @utility
+     * @version 2.14.6
+     */
+    int kv_pos_max_for(const std::string& session_key) const {
+        const int slot = residency_.slot_for(session_key);
+        return (ctx_ != nullptr && slot >= 0)
+            ? static_cast<int>(llama_memory_seq_pos_max(
+                  llama_get_memory(ctx_), static_cast<llama_seq_id>(slot)))
+            : -1;
+    }
+
+    /**
      * @brief Whole-file loads of a tier model in this process (gh#148).
      *
      * Deterministic instrumentation, in the same spirit as gh#161's
@@ -614,11 +636,18 @@ protected:
 public:
     /**
      * @brief The tool-call GBNF captured by the last render (gh#154).
-     * @return `tool_grammar_`, or "" when no tools were staged.
+     *
+     * v2.14.6: honours its contract. It returned `tool_grammar_` whether or
+     * not tools were staged, and that capture is sticky (gh#105), so a
+     * tool-less generation after a tooled one was handed a stale grammar.
+     *
+     * @return `tool_grammar_`, or "" when no tools are staged for this call.
      * @req REQ-INFER-008
-     * @version 2.13.0
+     * @version 2.14.6
      */
-    std::string active_tool_grammar() const override { return tool_grammar_; }
+    std::string active_tool_grammar() const override {
+        return active_tools_json_.empty() ? std::string{} : tool_grammar_;
+    }
 
     /**
      * @brief Speculative-decoding kernel with explicit draft backend.
@@ -1078,9 +1107,13 @@ protected:
      * `do_generate_text_only`, `do_generate_streaming_text_only`)
      * stay a one-liner — minimum diff to ship the seam.
      *
+     * v2.14.6: plain decode applies the staged tool-call grammar too
+     * (gh#134 only reached the common_sampler path).
+     *
      * @param params Generation parameters.
-     * @return Owned Sampler, or nullptr if no factory wired.
-     * @version 2.3.10
+     * @return Owned Sampler, or nullptr if no factory wired or the tool
+     *         grammar cannot be applied.
+     * @version 2.14.6
      */
     std::unique_ptr<Sampler> create_sampler(
         const GenerationParams& params) const;

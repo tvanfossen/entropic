@@ -1789,6 +1789,26 @@ bool EntropicServer::skip_duplicate_check(
 }
 
 /**
+ * @brief Engine directives are exempt from the host's approval gate.
+ *
+ * Every entropic tool is the engine directing itself — completing,
+ * delegating, pruning, introspecting — not an action on the user's system.
+ * A headless host (no approval callback) denied entropic.complete, so a
+ * forced completion retry could never conclude the turn (v2.14.6 gate,
+ * test-gh144-bridge-queue). Tier allow-lists and operator deny rules still
+ * apply; only the interactive approval step is skipped.
+ *
+ * @param tool_name Local tool name (unused: the answer is server-wide).
+ * @return false — no entropic tool needs approval.
+ * @req REQ-MCP-012
+ * @version 2.14.6
+ */
+bool EntropicServer::requires_approval(
+    const std::string& /*tool_name*/) const {
+    return false;
+}
+
+/**
  * @brief Set the engine state provider for introspection tools.
  *
  * Until this is called every introspection tool answers with the

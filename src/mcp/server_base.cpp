@@ -233,6 +233,21 @@ bool MCPServerBase::skip_duplicate_check(
 }
 
 /**
+ * @brief Default approval requirement: every tool is gated.
+ *
+ * Safe default: a server must opt a tool OUT of the host's approval gate.
+ *
+ * @param tool_name Local tool name (unused in the default).
+ * @return true — the approval gate applies.
+ * @req REQ-MCP-012
+ * @version 2.14.6
+ */
+bool MCPServerBase::requires_approval(
+    const std::string& /*tool_name*/) const {
+    return true;
+}
+
+/**
  * @brief Default configure: no-op.
  *
  * Extension point with a safe default so a server needing no

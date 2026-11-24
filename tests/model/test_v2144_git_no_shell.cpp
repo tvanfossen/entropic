@@ -10,7 +10,7 @@
  * a marker file). A later turn asks for the log. The message must land in
  * history verbatim and the marker must never exist.
  *
- * Requires: GPU, gemma-4-E2B QAT GGUF on disk.
+ * Requires: GPU, gemma-4-E4B QAT GGUF on disk.
  * Run: inv test --model --model-only --filter v2144
  *
  * @version 2.14.4
@@ -31,9 +31,9 @@ namespace fs = std::filesystem;
 SCENARIO("v2.14.4: a model's commit message with shell syntax is text, not a command",
          "[model][v2144][git][security]") {
     GIVEN("a git repository the model's git tools are rooted at") {
-        auto gguf = entropic::test::facade::model_gguf("gemma-4-E2B-it-qat-UD-Q4_K_XL.gguf");
+        auto gguf = entropic::test::facade::model_gguf("gemma-4-E4B-it-qat-UD-Q4_K_XL.gguf");
         if (gguf.empty() || !fs::is_regular_file(gguf)) {
-            SKIP("gemma-4-E2B QAT GGUF not present at " + gguf.string());
+            SKIP("gemma-4-E4B QAT GGUF not present at " + gguf.string());
         }
         const auto repo = fs::temp_directory_path() / ("entropic_v2144_" + std::to_string(::getpid()));
         fs::remove_all(repo);
@@ -50,7 +50,7 @@ SCENARIO("v2.14.4: a model's commit message with shell syntax is text, not a com
         project.extra_mcp_config = "  enable_git: true\n";
         entropic::test::facade::TierSpec lead;
         lead.name = "lead";
-        lead.gguf_key = "gemma4_e2b_qat";
+        lead.gguf_key = "gemma4_e4b_qat";
         lead.adapter = "gemma4";
         lead.identity_body = "You are a careful assistant with git tools. When asked "
                              "to commit, pass the user's message to git.commit exactly "

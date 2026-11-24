@@ -33,18 +33,20 @@
  *
  *  4. **Hybrid-arch KV.** Every KV-touching change is retested on a
  *     recurrent/hybrid architecture, never on plain-KV gemma alone (the rule
- *     gh#96/gh#97 bought). qwen35moe at gpu_layers=15, asserting the
- *     deterministic desync gate `kv_pos_max < input + max_tokens`.
+ *     gh#96/gh#97 bought). nemotron_h (Nemotron-3-Nano-4B, Mamba2 +
+ *     attention) at full offload, asserting the deterministic desync gate
+ *     `kv_pos_max < input + max_tokens`. v2.14.6: was qwen35moe
+ *     (Qwen3.6-35B-A3B) at gpu_layers=15, which left the pared model set.
  *
  * NOT run at pre-commit: GPU, real GGUFs, minutes. This is a G3 gate test.
  *
  * SIZING (v2.13.0). The first three arms carried the defect that broke the
  * gh#166 scenarios: the skip guard looked for the E4B **QAT** file while the
- * tier loaded `gguf_key = "gemma4_e4b"` — `gemma-4-E4B-it-Q8_0.gguf`, 7.6
+ * tier loaded `gguf_key = "gemma4_e4b_qat"` — `gemma-4-E4B-it-qat-UD-Q4_K_XL.gguf`, 7.6
  * GiB. Present-and-unchecked is not the same file as absent, so the guard
  * could not skip what the tier then failed to fit; it passed G3 only because
  * VRAM happened to be free. Guard and tier now name ONE model, the
- * registry's explicitly floor-safe entry (`gemma4_e2b_qat`, 2.44 GiB).
+ * registry's explicitly floor-safe entry (`gemma4_e4b_qat`, 2.44 GiB).
  *
  * They also ran `context_length: 2048` with the DEFAULT tool menu — all 27
  * registered tools, 18,594 bytes, ~5,000 prompt tokens — which is what
@@ -68,7 +70,7 @@
  * for B. Each arm now sets `explicit_completion = false`, and FacadeProject
  * writes `permissions.auto_approve: true`.
  *
- * Requires: GPU + gemma-4-E2B QAT GGUF (arms 1-4) and Qwen3.6-35B-A3B
+ * Requires: GPU + gemma-4-E4B QAT GGUF (arms 1-4) and Nemotron-3-Nano-4B
  * (arm 5). Run: ctest -L model -R gh158
  *
  * @version 2.13.0
@@ -151,15 +153,15 @@ SCENARIO("gh#158: two concurrent sessions do not bleed into each other",
 {
     GIVEN("one handle with concurrent_sessions enabled") {
         auto gguf = entropic::test::facade::model_gguf(
-            "gemma-4-E2B-it-qat-UD-Q4_K_XL.gguf");
+            "gemma-4-E4B-it-qat-UD-Q4_K_XL.gguf");
         if (gguf.empty() || !fs::is_regular_file(gguf)) {
-            SKIP("gemma-4-E2B QAT GGUF not present at " + gguf.string());
+            SKIP("gemma-4-E4B QAT GGUF not present at " + gguf.string());
         }
 
         entropic::test::facade::FacadeProject project("gh158_concurrent");
         entropic::test::facade::TierSpec lead;
         lead.name = "lead";
-        lead.gguf_key = "gemma4_e2b_qat";
+        lead.gguf_key = "gemma4_e4b_qat";
         lead.adapter = "gemma4";
         lead.identity_body =
             "You are a terse assistant. Answer in one short sentence.";
@@ -229,15 +231,15 @@ SCENARIO("gh#158: interrupting one session leaves the other running",
 {
     GIVEN("one handle with concurrent_sessions enabled") {
         auto gguf = entropic::test::facade::model_gguf(
-            "gemma-4-E2B-it-qat-UD-Q4_K_XL.gguf");
+            "gemma-4-E4B-it-qat-UD-Q4_K_XL.gguf");
         if (gguf.empty() || !fs::is_regular_file(gguf)) {
-            SKIP("gemma-4-E2B QAT GGUF not present at " + gguf.string());
+            SKIP("gemma-4-E4B QAT GGUF not present at " + gguf.string());
         }
 
         entropic::test::facade::FacadeProject project("gh158_interrupt");
         entropic::test::facade::TierSpec lead;
         lead.name = "lead";
-        lead.gguf_key = "gemma4_e2b_qat";
+        lead.gguf_key = "gemma4_e4b_qat";
         lead.adapter = "gemma4";
         lead.context_length = 4096;
         // See the first arm: one tool so the prompt fits, no completion
@@ -308,15 +310,15 @@ SCENARIO("gh#158: metrics and context reads are safe during live runs",
         // `entropic_context_usage` (which is exactly what a TUI status line
         // does, every frame) while two real decodes are in flight.
         auto gguf = entropic::test::facade::model_gguf(
-            "gemma-4-E2B-it-qat-UD-Q4_K_XL.gguf");
+            "gemma-4-E4B-it-qat-UD-Q4_K_XL.gguf");
         if (gguf.empty() || !fs::is_regular_file(gguf)) {
-            SKIP("gemma-4-E2B QAT GGUF not present at " + gguf.string());
+            SKIP("gemma-4-E4B QAT GGUF not present at " + gguf.string());
         }
 
         entropic::test::facade::FacadeProject project("gh158_metrics");
         entropic::test::facade::TierSpec lead;
         lead.name = "lead";
-        lead.gguf_key = "gemma4_e2b_qat";
+        lead.gguf_key = "gemma4_e4b_qat";
         lead.adapter = "gemma4";
         lead.context_length = 4096;
         // See the first arm. The poller needs two real decodes IN FLIGHT;
@@ -394,9 +396,9 @@ SCENARIO("gh#158: a batch does not wipe another session's resident KV",
 {
     GIVEN("a backend with a session pool and one resident session") {
         auto gguf = entropic::test::facade::model_gguf(
-            "gemma-4-E2B-it-qat-UD-Q4_K_XL.gguf");
+            "gemma-4-E4B-it-qat-UD-Q4_K_XL.gguf");
         if (gguf.empty() || !fs::is_regular_file(gguf)) {
-            SKIP("gemma-4-E2B QAT GGUF not present at " + gguf.string());
+            SKIP("gemma-4-E4B QAT GGUF not present at " + gguf.string());
         }
 
         entropic::LlamaCppBackend backend;
@@ -461,21 +463,21 @@ SCENARIO("gh#158: a batch does not wipe another session's resident KV",
 SCENARIO("gh#158: concurrent sessions on a HYBRID arch keep KV in sync",
          "[model][gh158][hybrid]")
 {
-    GIVEN("the hybrid repro model (Qwen3.6-35B-A3B, arch qwen35moe)") {
+    GIVEN("a hybrid model (Nemotron-3-Nano-4B, arch nemotron_h)") {
         const char* home = std::getenv("HOME");
         REQUIRE(home != nullptr);
         fs::path gguf = fs::path(home) / ".entropic" / "models"
-                        / "Qwen3.6-35B-A3B-UD-IQ3_XXS.gguf";
+                        / "NVIDIA-Nemotron-3-Nano-4B-UD-Q4_K_XL.gguf";
         if (!fs::is_regular_file(gguf)) {
-            SKIP("Qwen3.6-35B-A3B GGUF not present at " + gguf.string());
+            SKIP("Nemotron-3-Nano-4B GGUF not present at " + gguf.string());
         }
 
         entropic::LlamaCppBackend backend;
         entropic::ModelConfig cfg;
         cfg.path = gguf;
-        cfg.adapter = "qwen36";
+        cfg.adapter = "nemotron3";
         cfg.context_length = 4096;
-        cfg.gpu_layers = 15;  // ~13GB IQ3_XXS — OOM-safe partial offload
+        cfg.gpu_layers = 99;  // 3.1 GB — fits the 11GB card whole (the 13GB Qwen3.6 needed 15)
         cfg.flash_attn = false;
         cfg.max_sessions = 2;
         REQUIRE(backend.load(cfg));
@@ -500,8 +502,12 @@ SCENARIO("gh#158: concurrent sessions on a HYBRID arch keep KV in sync",
                                  + ": name one animal."});
                     params.session_key = keys[s];
                     auto r = backend.generate(convo[s], params);
+                    // v2.14.6: the SESSION's sequence. kv_pos_max() reads
+                    // seq 0 = session a, so every session-b turn compared
+                    // a's KV end with b's input (failed turns 3/5/7 only).
                     turns.push_back({backend.last_input_tokens(),
-                                     backend.kv_pos_max(), r.content});
+                                     backend.kv_pos_max_for(keys[s]),
+                                     r.content});
                     convo[s].push_back(
                         {"assistant",
                          r.content.empty() ? std::string("(none)")
@@ -521,6 +527,9 @@ SCENARIO("gh#158: concurrent sessions on a HYBRID arch keep KV in sync",
                     // tail inflates it past input + max_tokens.
                     CHECK(turns[i].pos_max
                           < turns[i].input + params.max_tokens);
+                    // v2.14.6: and the probe read a real sequence — a -1
+                    // (session holds no slot) would pass the bound above.
+                    CHECK(turns[i].pos_max >= turns[i].input - 1);
                 }
             }
         }

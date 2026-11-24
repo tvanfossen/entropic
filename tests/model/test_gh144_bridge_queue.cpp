@@ -29,7 +29,7 @@
  *      interrupt must NOT wait behind the turn it is cancelling, so nothing
  *      outside dispatch_ask may take turn_mutex_.
  *
- * Requires: GPU + gemma4_e2b QAT trunk. Run: ctest -L model -R gh144-bridge
+ * Requires: GPU + gemma4_e4b_qat trunk. Run: ctest -L model -R gh144-bridge
  *
  * @version 2.12.0
  */
@@ -152,7 +152,7 @@ SCENARIO("gh#144: concurrent bridge clients queue instead of racing",
         const char* home = std::getenv("HOME");
         REQUIRE(home != nullptr);
         fs::path trunk = fs::path(home) / ".entropic" / "models"
-                         / "gemma-4-E2B-it-qat-UD-Q4_K_XL.gguf";
+                         / "gemma-4-E4B-it-qat-UD-Q4_K_XL.gguf";
         REQUIRE(fs::is_regular_file(trunk));
 
         auto sock = std::string("/tmp/entropic-gh144-queue-")

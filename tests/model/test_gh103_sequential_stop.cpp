@@ -7,8 +7,11 @@
  *        (orchestrator::generate → resolve_and_stage → inject_sequential_stop →
  *         backend decode-loop stop → marker retained → common_chat parse).
  *
- * On the gh#103 repro / hybrid model (Qwen3.6-35B-A3B, arch qwen35moe,
- * PEG_NATIVE → close marker "</tool_call>"). The bug: terminal/looping tiers
+ * On a hybrid model (Nemotron-3-Nano-4B, arch nemotron_h — Mamba2 + attention;
+ * qwen3_coder-style XML tool calls, PEG_NATIVE → close marker "</tool_call>").
+ * v2.14.6: was the gh#103 repro model Qwen3.6-35B-A3B (arch qwen35moe, same
+ * marker), which left the pared model set; the hybrid-coherence half of the
+ * test is why its replacement is the hybrid Nemotron. The bug: terminal/looping tiers
  * generate PAST the tool call (wasted tokens; dependent traces never converge).
  * The fix: a sequential tier stops AT the first "</tool_call>".
  *
@@ -25,7 +28,7 @@
  * A batch contrast generation is logged (not asserted — model-dependent) to
  * make the difference visible.
  *
- * Requires: GPU + Qwen3.6-35B-A3B GGUF. Run: ctest -L model -R gh103
+ * Requires: GPU + Nemotron-3-Nano-4B GGUF. Run: ctest -L model -R gh103
  *
  * @version 2.8.2
  */
@@ -37,8 +40,8 @@
 #include <string>
 #include <vector>
 
-namespace { constexpr char K_QWEN36[] = "qwen3_6_a3b"; }
-CATCH_REGISTER_LISTENER(V219FamilyListener<K_QWEN36>)
+namespace { constexpr char K_NEMOTRON3[] = "nemotron3_nano_4b"; }
+CATCH_REGISTER_LISTENER(V219FamilyListener<K_NEMOTRON3>)
 
 namespace {
 
@@ -77,11 +80,11 @@ const char* kTwoTools =
 }  // namespace
 
 SCENARIO("gh#103: sequential tool_call_mode hard-stops at the first tool call "
-         "(emergent multi-turn, combined orchestrator path, qwen35moe)",
+         "(emergent multi-turn, combined orchestrator path, nemotron_h)",
          "[model][gh103][sequential]")
 {
     if (!g_ctx.initialized) {
-        SKIP(skip_reason_or_default("qwen3_6_a3b"));
+        SKIP(skip_reason_or_default("nemotron3_nano_4b"));
     }
     GIVEN("a sequential tier with two tools over a persistent session") {
         start_test_log("gh103_sequential_stop");
@@ -162,7 +165,7 @@ SCENARIO("gh#103: sequential tool_call_mode hard-stops at the first tool call "
 SCENARIO("gh#103 contrast: batch mode may generate past the tool call",
          "[model][gh103][sequential]")
 {
-    if (!g_ctx.initialized) { SKIP(skip_reason_or_default("qwen3_6_a3b")); }
+    if (!g_ctx.initialized) { SKIP(skip_reason_or_default("nemotron3_nano_4b")); }
     GIVEN("the same prompt in batch (default) tool_call_mode") {
         auto params = test_gen_params();
         params.tools = kTwoTools;

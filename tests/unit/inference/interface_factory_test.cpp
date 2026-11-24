@@ -51,6 +51,9 @@ TEST_CASE("interface_factory: wiring + iface_* surface sweep",
     }
 
     SECTION("iface_generate drives parse_msgs / parse_params / extract_tier") {
+        // gh#214 (v2.14.6): these asserted 0 — the wrappers swallowed the
+        // no-model GENERATE_FAILED. The parse paths are still driven; the
+        // typed failure now comes back as the return code.
         InterfaceFixture fx("default-tier");
         char* out = nullptr;
         // Every parse_params field branch + explicit tier.
@@ -61,24 +64,24 @@ TEST_CASE("interface_factory: wiring + iface_* surface sweep",
         })";
         REQUIRE(fx.iface.generate(
             R"([{"role":"user","content":"hi"}])",
-            full, &out, fx.iface.backend_data) == 0);
+            full, &out, fx.iface.backend_data) == ENTROPIC_ERROR_GENERATE_FAILED);
         fx.iface.free_fn(out); out = nullptr;
         // Null msgs/params → parse_* return defaults.
         REQUIRE(fx.iface.generate(
-            nullptr, nullptr, &out, fx.iface.backend_data) == 0);
+            nullptr, nullptr, &out, fx.iface.backend_data) == ENTROPIC_ERROR_GENERATE_FAILED);
         fx.iface.free_fn(out); out = nullptr;
         // Malformed JSON → discarded → defaults.
         REQUIRE(fx.iface.generate(
-            "not json", "also not", &out, fx.iface.backend_data) == 0);
+            "not json", "also not", &out, fx.iface.backend_data) == ENTROPIC_ERROR_GENERATE_FAILED);
         fx.iface.free_fn(out); out = nullptr;
         // Non-object params (extract_tier fallback).
         REQUIRE(fx.iface.generate(
-            "[]", "[1,2,3]", &out, fx.iface.backend_data) == 0);
+            "[]", "[1,2,3]", &out, fx.iface.backend_data) == ENTROPIC_ERROR_GENERATE_FAILED);
         fx.iface.free_fn(out); out = nullptr;
         // Missing-tier branch.
         REQUIRE(fx.iface.generate(
             "[]", R"({"max_tokens":1})",
-            &out, fx.iface.backend_data) == 0);
+            &out, fx.iface.backend_data) == ENTROPIC_ERROR_GENERATE_FAILED);
         fx.iface.free_fn(out);
     }
 
@@ -89,11 +92,11 @@ TEST_CASE("interface_factory: wiring + iface_* surface sweep",
             R"([{"role":"user","content":"x"}])",
             R"({"max_tokens":1})",
             [](const char*, size_t, void*) {}, nullptr, &cancel,
-            fx.iface.backend_data) == 0);
+            fx.iface.backend_data) == ENTROPIC_ERROR_GENERATE_FAILED);
         int pre = 1;
         REQUIRE(fx.iface.generate_stream(
             "[]", "{}", [](const char*, size_t, void*) {},
-            nullptr, &pre, fx.iface.backend_data) == 0);
+            nullptr, &pre, fx.iface.backend_data) == ENTROPIC_ERROR_GENERATE_FAILED);
 
         char* out = nullptr;
         REQUIRE(fx.iface.route(
@@ -336,4 +339,30 @@ TEST_CASE("gh#127: ambiguous fenced args object returns empty (no false positive
     iface.free_fn(calls);
     entropic::destroy_orchestrator_interface(ctx);
     std::filesystem::remove(dummy);
+}
+
+TEST_CASE("gh#214: a typed generation failure reaches the engine as its rc",
+          "[v2.14.6][inference][interface_factory][gh214]")
+{
+    // All three wrappers returned 0 whatever the orchestrator said, so
+    // every typed failure — a prompt that does not fit (EVAL_CONTEXT_FULL,
+    // v2.13.0), a failed MTP decode, a residency refusal — reached the loop
+    // as finish=stop with 0 chars and fell into the empty-turn ladder. The
+    // engine's context_overflow handling had only ever seen the code from a
+    // unit-test mock. An orchestrator with no model returns GENERATE_FAILED.
+    InterfaceFixture fx;
+    const char* msgs = R"([{"role":"user","content":"x"}])";
+    char* out = nullptr;
+    CHECK(fx.iface.generate(msgs, "{}", &out, fx.iface.backend_data)
+          == ENTROPIC_ERROR_GENERATE_FAILED);
+    fx.iface.free_fn(out); out = nullptr;
+    int cancel = 0;
+    CHECK(fx.iface.generate_cancellable(msgs, "{}", &out, &cancel,
+                                        fx.iface.backend_data)
+          == ENTROPIC_ERROR_GENERATE_FAILED);
+    fx.iface.free_fn(out);
+    CHECK(fx.iface.generate_stream(msgs, "{}",
+                                   [](const char*, size_t, void*) {}, nullptr,
+                                   &cancel, fx.iface.backend_data)
+          == ENTROPIC_ERROR_GENERATE_FAILED);
 }

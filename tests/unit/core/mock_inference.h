@@ -57,6 +57,15 @@ struct MockInference {
     /// "this prompt cannot fit the tier context") had no CPU coverage at all.
     int generate_rc = 0;
 
+    /// @brief v2.14.6: every messages_json the generate callbacks received,
+    /// in order — what the model was actually shown.
+    std::vector<std::string> seen_messages;
+    /// @brief v2.14.6: every params_json the generate callbacks received.
+    std::vector<std::string> seen_params;
+    /// @brief v2.14.6: the tier's tool defs (MCP JSON array) that
+    ///        get_tool_prompt hands out; empty = no tools (callback returns 1).
+    std::string tools_json;
+
     /// @brief gh#208 (v2.14.2): sleep this long before each streamed token,
     ///        so two concurrent streaming runs overlap deterministically.
     int token_delay_ms = 0;
@@ -108,13 +117,15 @@ inline void mock_free(void* ptr) {
  * @version 1.10.1
  */
 inline int mock_generate(
-    const char* /*messages_json*/,
-    const char* /*params_json*/,
+    const char* messages_json,
+    const char* params_json,
     char** result_json,
     void* user_data) {
     auto* mock = static_cast<MockInference*>(user_data);
     std::lock_guard<std::mutex> lock(mock->mutex);
     mock->generate_call_count++;
+    mock->seen_messages.emplace_back(messages_json != nullptr ? messages_json : "");
+    mock->seen_params.emplace_back(params_json != nullptr ? params_json : "");
     if (!mock->response_queue.empty()) {
         *result_json = mock_strdup(mock->response_queue.front());
         mock->response_queue.erase(mock->response_queue.begin());
@@ -137,8 +148,8 @@ inline int mock_generate(
  * @version 1.10.1
  */
 inline int mock_generate_stream(
-    const char* /*messages_json*/,
-    const char* /*params_json*/,
+    const char* messages_json,
+    const char* params_json,
     void (*on_token)(const char*, size_t, void*),
     void* token_ud,
     int* cancel,
@@ -155,6 +166,8 @@ inline int mock_generate_stream(
     {
         std::lock_guard<std::mutex> lock(mock->mutex);
         mock->generate_call_count++;
+        mock->seen_messages.emplace_back(messages_json != nullptr ? messages_json : "");
+        mock->seen_params.emplace_back(params_json != nullptr ? params_json : "");
         rc = mock->generate_rc;
         resp = mock->response_queue.empty()
             ? mock->response
@@ -278,10 +291,29 @@ inline int mock_is_complete(
 }
 
 /**
+ * @brief Mock get_tool_prompt — hands out MockInference::tools_json.
+ * @param tier Tier name (unused).
+ * @param result Output: heap copy of tools_json.
+ * @param user_data MockInference pointer.
+ * @return 0 when tools_json is set, 1 (no tools) otherwise.
+ * @internal
+ * @version 2.14.6
+ */
+inline int mock_get_tool_prompt(const char* /*tier*/, char** result,
+                                void* user_data) {
+    auto* mock = static_cast<MockInference*>(user_data);
+    std::lock_guard<std::mutex> lock(mock->mutex);
+    *result = nullptr;
+    if (mock->tools_json.empty()) { return 1; }
+    *result = mock_strdup(mock->tools_json);
+    return 0;
+}
+
+/**
  * @brief Build an InferenceInterface wired to a MockInference.
  * @param mock Mock state (caller must keep alive).
  * @return Wired interface with all callbacks.
- * @version 1.10.1
+ * @version 2.14.6
  */
 inline entropic::InferenceInterface make_mock_interface(
     MockInference& mock) {
@@ -293,6 +325,8 @@ inline entropic::InferenceInterface make_mock_interface(
     iface.parse_tool_calls = mock_parse_tool_calls;
     iface.is_response_complete = mock_is_complete;
     iface.free_fn = mock_free;
+    iface.get_tool_prompt = mock_get_tool_prompt;  // v2.14.6
+    iface.tool_prompt_data = &mock;
     iface.backend_data = &mock;
     iface.orchestrator_data = &mock;
     iface.adapter_data = &mock;

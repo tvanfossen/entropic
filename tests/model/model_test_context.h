@@ -14,6 +14,7 @@
 #pragma once
 
 #include <entropic/config/bundled_models.h>
+#include <entropic/inference/interface_factory.h>
 #include <entropic/config/identity.h>
 #include <entropic/config/loader.h>
 #include <entropic/core/identity_manager.h>
@@ -47,6 +48,7 @@
 #include <spdlog/sinks/stdout_color_sinks.h>
 
 #include <atomic>
+#include <cctype>
 #include <cstdlib>
 #include <cstring>
 #include <algorithm>
@@ -54,6 +56,7 @@
 #include <chrono>
 #include <thread>
 #include <fstream>
+#include <stdexcept>
 #include <string>
 #include <vector>
 
@@ -69,6 +72,7 @@ using namespace entropic;
  */
 struct ModelTestContext {
     std::unique_ptr<ModelOrchestrator> orchestrator; ///< Model orchestrator
+    InterfaceContext* iface_ctx = nullptr;           ///< v2.14.6: production iface context (make_real_interface)
     config::BundledModels registry;                  ///< Bundled model registry
     ParsedConfig config;                             ///< Parsed configuration
     std::string model_path;                          ///< Resolved model path
@@ -246,6 +250,35 @@ inline bool load_harness_inputs(ModelTestContext& ctx,
  * @version 1.10.2
  */
 /**
+ * @brief Give a repointed tier the substitute model's own projector.
+ *
+ * The registry entry's `mmproj_key` is used when it names a file on disk.
+ * Otherwise the stale projector is dropped along with the `vision`
+ * capability, since no projector means no vision.
+ *
+ * @param ctx Test context (registry).
+ * @param tier Tier config being repointed (mutated).
+ * @param entry Registry entry of the substitute model.
+ * @param name Tier name (for the log line).
+ * @utility
+ * @version 2.14.6
+ */
+inline void repoint_mmproj(ModelTestContext& ctx, TierConfig& tier,
+                           const entropic::config::BundledModelEntry& entry,
+                           const std::string& name) {
+    auto mmproj = entry.mmproj_key.empty()
+        ? fs::path{} : ctx.registry.resolve(entry.mmproj_key);
+    if (!mmproj.empty() && !fs::is_regular_file(mmproj)) { mmproj.clear(); }
+    if (mmproj.empty() && !tier.mmproj_path.empty()) {
+        auto& caps = tier.capabilities;
+        caps.erase(std::remove(caps.begin(), caps.end(), "vision"), caps.end());
+    }
+    spdlog::info("Test harness: tier '{}' mmproj '{}' -> '{}'", name,
+                 tier.mmproj_path.string(), mmproj.string());
+    tier.mmproj_path = mmproj;
+}
+
+/**
  * @brief Repoint large default tiers to a small model for generic tests.
  *
  * gh#87 (v2.7.0): the generic subsystem + engine-loop tests validate ENGINE
@@ -263,19 +296,24 @@ inline bool load_harness_inputs(ModelTestContext& ctx,
  * generic-test harness.
  *
  * @param ctx Test context (config tiers mutated in place).
+ * @throws std::runtime_error when the small model is not on disk (v2.14.6).
  * @utility
- * @version 2.7.0
+ * @version 2.14.6
  */
 inline void use_small_default_model(ModelTestContext& ctx) {
     constexpr uintmax_t LARGE_GGUF_BYTES = 10ULL * 1024 * 1024 * 1024;
-    const std::string small_key = "qwen3_5_4b";
+    // v2.14.6: the pared model set's workhorse (user, 2026-10-17). It was
+    // qwen3_5_4b, which left the set; and a missing small model now FAILS
+    // the run instead of falling back to the configured (large) model — that
+    // fallback is how a deleted file turned engine-logic tests into a 13 GB
+    // load on a busy host.
+    const std::string small_key = "gemma4_e4b_qat";
     const auto* entry = ctx.registry.get(small_key);
     auto small_path = ctx.registry.resolve(small_key);
     if (entry == nullptr || !fs::is_regular_file(small_path)) {
-        spdlog::warn("Small test model '{}' unavailable at {} — generic tests "
-                     "fall back to the configured model.",
-                     small_key, small_path.string());
-        return;
+        throw std::runtime_error("generic model tests need '" + small_key
+            + "' at " + small_path.string() + " — run `entropic download "
+            + small_key + "`");
     }
     for (auto& [name, tier] : ctx.config.models.tiers) {
         std::error_code size_ec;
@@ -286,6 +324,11 @@ inline void use_small_default_model(ModelTestContext& ctx) {
                          name, small_key, sz);
             tier.path = small_path;
             tier.adapter = entry->adapter;
+            // v2.14.6: the tier's projector belongs to the model it USED to
+            // name. Keeping Qwen's mmproj on E4B (n_embd 2048 vs 2560) failed
+            // every activation and leaked ~1.1 GB VRAM each time, until a
+            // delegation round-trip aborted the process in clip load.
+            repoint_mmproj(ctx, tier, *entry, name);
         }
     }
 }
@@ -562,45 +605,6 @@ inline std::vector<Message> parse_messages_json(const char* msgs_json) {
 }
 
 /**
- * @brief Parse generation params from JSON, with test defaults.
- * @param params_json JSON params string from engine.
- * @return GenerationParams with engine values or test defaults.
- * @utility
- * @version 1.10.2
- */
-inline GenerationParams parse_gen_params(const char* params_json) {
-    auto params = test_gen_params();
-    if (params_json == nullptr) { return params; }
-    auto obj = json::parse(params_json, nullptr, false);
-    if (!obj.is_object()) { return params; }
-    if (obj.contains("max_tokens")) {
-        params.max_tokens = obj["max_tokens"].get<int>();
-    }
-    if (obj.contains("temperature")) {
-        params.temperature = obj["temperature"].get<float>();
-    }
-    // gh#87 (v2.7.0): carry the per-turn tool defs so they reach the
-    // orchestrator → set_active_tools → common_chat render. Without this
-    // the engine-loop harness would drop tools and fall back to no-tool
-    // rendering (the GenericAdapter can't parse native formats).
-    if (obj.contains("tools") && obj["tools"].is_string()) {
-        params.tools = obj["tools"].get<std::string>();
-    }
-    // gh#89: carry grammar selection through the harness, matching the
-    // production param parser. Without this the harness DROPPED grammar_key,
-    // so grammar-constrained generation (e.g. the constitutional critique
-    // schema) silently ran UNCONSTRAINED — the validator then fell through
-    // its fail-open net on the bundled model's free-form output.
-    if (obj.contains("grammar_key") && obj["grammar_key"].is_string()) {
-        params.grammar_key = obj["grammar_key"].get<std::string>();
-    }
-    if (obj.contains("grammar") && obj["grammar"].is_string()) {
-        params.grammar = obj["grammar"].get<std::string>();
-    }
-    return params;
-}
-
-/**
  * @brief Allocate a C string copy (freed by real_free).
  * @param s Source string.
  * @return Heap-allocated copy.
@@ -620,105 +624,6 @@ inline char* alloc_cstr(const std::string& s) {
 // user_data points to ModelTestContext (g_ctx).
 
 /**
- * @brief Batch generate via orchestrator (C wrapper).
- * @param msgs_json JSON messages (borrowed).
- * @param params_json Generation params JSON (parsed for overrides).
- * @param result_json Output response string.
- * @param user_data ModelTestContext pointer.
- * @return 0 on success.
- * @callback
- * @version 1.10.2
- */
-inline int real_generate(const char* msgs_json,
-                         const char* params_json,
-                         char** result_json,
-                         void* user_data) {
-    auto* ctx = static_cast<ModelTestContext*>(user_data);
-    auto messages = parse_messages_json(msgs_json);
-    auto params = parse_gen_params(params_json);
-    auto result = ctx->orchestrator->generate(
-        messages, params, ctx->default_tier);
-    *result_json = alloc_cstr(result.raw_content.empty()
-        ? result.content : result.raw_content);
-    return 0;
-}
-
-/**
- * @brief Streaming generate via orchestrator (C wrapper).
- * @param msgs_json JSON messages.
- * @param params_json Generation params JSON (parsed for overrides).
- * @param on_token Token callback.
- * @param token_ud Token callback user data.
- * @param cancel Cancel flag pointer.
- * @param user_data ModelTestContext pointer.
- * @return 0 on success.
- * @callback
- * @version 1.10.2
- */
-inline int real_generate_stream(const char* msgs_json,
-                                const char* params_json,
-                                void (*on_token)(const char*, size_t, void*),
-                                void* token_ud,
-                                int* cancel,
-                                void* user_data)
-{
-    if (cancel != nullptr && *cancel != 0) { return 0; }
-    auto* ctx = static_cast<ModelTestContext*>(user_data);
-    auto messages = parse_messages_json(msgs_json);
-    auto params = parse_gen_params(params_json);
-    std::atomic<bool> cancel_flag(false);
-    std::function<void(std::string_view)> stream_cb =
-        [on_token, token_ud](std::string_view tok)
-        { on_token(tok.data(), tok.size(), token_ud); };
-    ctx->orchestrator->generate_streaming(
-        messages, params, stream_cb, cancel_flag, ctx->default_tier);
-    return 0;
-}
-
-/**
- * @brief Route messages to tier (C wrapper).
- * @param msgs_json JSON messages.
- * @param result_json Output tier name.
- * @param user_data ModelTestContext pointer.
- * @return 0 on success.
- * @callback
- * @version 1.10.2
- */
-inline int real_route(const char* msgs_json,
-                      char** result_json,
-                      void* user_data) {
-    auto* ctx = static_cast<ModelTestContext*>(user_data);
-    auto messages = parse_messages_json(msgs_json);
-    auto tier = ctx->orchestrator->route(messages);
-    *result_json = alloc_cstr(tier);
-    return 0;
-}
-
-/**
- * @brief Raw text completion (C wrapper).
- * @param prompt Raw prompt string.
- * @param params_json Params (unused).
- * @param result_json Output response string.
- * @param user_data ModelTestContext pointer.
- * @return 0 on success.
- * @callback
- * @version 1.10.2
- */
-inline int real_complete(const char* prompt,
-                         const char* /*params_json*/,
-                         char** result_json,
-                         void* user_data) {
-    auto* ctx = static_cast<ModelTestContext*>(user_data);
-    auto messages = make_messages("", prompt);
-    auto params = test_gen_params();
-    params.max_tokens = 1;
-    auto result = ctx->orchestrator->generate(
-        messages, params, ctx->default_tier);
-    *result_json = alloc_cstr(result.content);
-    return 0;
-}
-
-/**
  * @brief Parse tool calls from raw content (C wrapper).
  * @param raw_content Raw model output.
  * @param cleaned_content Output cleaned content.
@@ -728,79 +633,6 @@ inline int real_complete(const char* prompt,
  * @callback
  * @version 1.10.2
  */
-/**
- * @brief Parse tool calls from raw model output via the adapter.
- * @param raw_content Raw model output string.
- * @param cleaned_content Output: content with tool calls stripped.
- * @param tool_calls_json Output: JSON array of parsed tool calls.
- * @param user_data Pointer to ModelTestContext.
- * @return 0 on success, non-zero on failure.
- * @internal
- * @version 2.7.1
- */
-inline int real_parse_tool_calls(const char* raw_content,
-                                 char** cleaned_content,
-                                 char** tool_calls_json,
-                                 void* user_data)
-{
-    auto* ctx = static_cast<ModelTestContext*>(user_data);
-    std::string raw = raw_content ? raw_content : "";
-
-    // gh#87 (v2.7.0): mirror production iface_parse_tool_calls — when the
-    // last generate rendered through common_chat (tools staged), parse via
-    // the backend's captured params; the model emitted its native format.
-    auto tier = ctx->orchestrator->last_used_tier();
-    if (tier.empty()) { tier = ctx->default_tier; }
-    auto* llama = dynamic_cast<LlamaCppBackend*>(
-        ctx->orchestrator->get_backend(tier));
-    if (llama != nullptr && llama->common_chat_parse_reliable()) {
-        auto cc = llama->parse_response(raw);
-        apply_action_envelope_recovery(cc.tool_calls, raw);  // gh#88
-        *cleaned_content = alloc_cstr(cc.content);
-        // gh#93: shared typed serialization — mirror production exactly.
-        *tool_calls_json = alloc_cstr(serialize_tool_calls(cc.tool_calls));
-        return 0;
-    }
-
-    auto* adapter = ctx->orchestrator->get_adapter(tier);  // gh#89: routed tier
-    if (adapter == nullptr) {
-        *cleaned_content = alloc_cstr(raw);
-        *tool_calls_json = alloc_cstr("[]");
-        return 0;
-    }
-    auto parsed = adapter->parse_tool_calls(raw);
-    *cleaned_content = alloc_cstr(parsed.cleaned_content);
-    *tool_calls_json = alloc_cstr(serialize_tool_calls(parsed.tool_calls));
-    return 0;
-}
-
-/**
- * @brief Check if response is complete (C wrapper).
- * @param content Response content.
- * @param tool_calls_json Tool calls JSON.
- * @param user_data Unused.
- * @return 1 if complete, 0 if not.
- * @callback
- * @version 1.10.2
- */
-inline int real_is_complete(const char* /*content*/,
-                            const char* tool_calls_json,
-                            void* /*user_data*/) {
-    auto tc = json::parse(tool_calls_json, nullptr, false);
-    if (tc.is_array() && !tc.empty()) { return 0; }
-    return 1;
-}
-
-/**
- * @brief Free a C string allocated by wrappers.
- * @param ptr Pointer to free.
- * @callback
- * @version 1.10.2
- */
-inline void real_free(void* ptr) {
-    free(ptr);
-}
-
 /**
  * @brief Provide structured tool defs for engine-loop tests (gh#87).
  *
@@ -836,24 +668,30 @@ inline int real_get_tool_prompt(const char* /*tier*/, char** result,
 
 /**
  * @brief Build an InferenceInterface wired to the live model.
+ *
+ * v2.14.6: the PRODUCTION wrappers (`build_orchestrator_interface`), not a
+ * harness copy. The copy had drifted three ways at once: it returned 0
+ * whatever the orchestrator said (gh#214), it parsed params without
+ * `force_tool_call`, and it parsed messages without the tool-call fields the
+ * native tool turns need — so model tests ran a degraded engine and passed
+ * or failed for the wrong reasons. Only `get_tool_prompt` stays the
+ * harness's (the facade supplies it in production).
+ *
+ * Built once and reused: an engine in one scenario must never see its
+ * interface context destroyed by the next scenario's call.
+ *
  * @return Wired interface.
  * @utility
- * @version 2.7.0
+ * @version 2.14.6
  */
 inline InferenceInterface make_real_interface() {
-    InferenceInterface iface;
-    iface.generate = real_generate;
-    iface.generate_stream = real_generate_stream;
-    iface.route = real_route;
-    iface.complete = real_complete;
-    iface.parse_tool_calls = real_parse_tool_calls;
-    iface.is_response_complete = real_is_complete;
-    iface.get_tool_prompt = real_get_tool_prompt;  // gh#87: params.tools path
-    iface.tool_prompt_data = &g_ctx;
-    iface.free_fn = real_free;
-    iface.backend_data = &g_ctx;
-    iface.orchestrator_data = &g_ctx;
-    iface.adapter_data = &g_ctx;
+    static InferenceInterface iface{};
+    if (g_ctx.iface_ctx == nullptr) {
+        iface = build_orchestrator_interface(
+            g_ctx.orchestrator.get(), g_ctx.default_tier, &g_ctx.iface_ctx);
+        iface.get_tool_prompt = real_get_tool_prompt;  // gh#87: params.tools path
+        iface.tool_prompt_data = &g_ctx;
+    }
     return iface;
 }
 
@@ -966,6 +804,37 @@ inline bool test_log_contains(const std::string& test_name,
     return false;
 }
 
+/**
+ * @brief The integer that follows `prefix` on the first log line holding it.
+ *
+ * v2.14.6: lets a model test read a NUMBER the engine logged — the layer
+ * count `gpu_layers: auto` chose, an `n_past` — instead of trusting a figure
+ * the test computed for itself. Same file and flush rule as
+ * test_log_contains.
+ *
+ * @param test_name The name passed to start_test_log (the log file stem).
+ * @param prefix Text immediately before the integer.
+ * @return The integer, or -1 when no line carries `prefix` followed by digits.
+ * @utility
+ * @version 2.14.6
+ */
+inline long test_log_int_after(const std::string& test_name,
+                               const std::string& prefix) {
+    if (g_file_sink) { g_file_sink->flush(); }
+    std::ifstream in((LOG_DIR / (test_name + ".log")).string());
+    std::string line;
+    long value = -1;
+    while (value < 0 && std::getline(in, line)) {
+        const auto at = line.find(prefix);
+        const auto start = at == std::string::npos ? at : at + prefix.size();
+        if (start != std::string::npos && start < line.size()
+            && std::isdigit(static_cast<unsigned char>(line[start])) != 0) {
+            value = std::stol(line.substr(start));
+        }
+    }
+    return value;
+}
+
 // ── Catch2 event listener for model lifecycle ───────────────
 
 /// @brief VRAM monitoring threshold (64 MB).
@@ -1070,7 +939,7 @@ public:
         // gh#87: generic engine-logic tests use a small model (footprint /
         // OOM safety). Family tests use init_orchestrator_for_v219_* and keep
         // their large models — they do NOT go through this listener.
-        if (ok) { use_small_default_model(g_ctx); }
+        if (ok) { use_small_default_model(g_ctx); adjust_config(g_ctx); }
         ok = ok && init_orchestrator(g_ctx);
         if (!ok) {
             spdlog::error("Model test init failed — tests will skip: {}",
@@ -1085,11 +954,28 @@ public:
      * @version 2.14.0
      */
     void testRunEnded(Catch::TestRunStats const& stats) override {
+        // v2.14.6: release the production iface context before the
+        // orchestrator it points at shuts down.
+        destroy_orchestrator_interface(g_ctx.iface_ctx);
+        g_ctx.iface_ctx = nullptr;
         if (g_ctx.orchestrator) {
             g_ctx.orchestrator->shutdown();
         }
         VramMonitorListener::testRunEnded(stats);
     }
+
+protected:
+    /**
+     * @brief Per-test config adjustment before the orchestrator loads.
+     * @param ctx Harness context whose config is about to be loaded.
+     * @utility
+     * @version 2.14.6
+     *
+     * Default: no change. A test whose premise needs a different shape of
+     * the shared model (e.g. text-only) overrides this rather than editing
+     * the developer's config.local.yaml.
+     */
+    virtual void adjust_config(ModelTestContext& /*ctx*/) {}
 };
 
 /**

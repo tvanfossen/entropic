@@ -34,7 +34,7 @@
  * as a log line — see llama_cpp_backend.cpp's "Speculative: generated=..."
  * emission, gated on n_drafted > 0).
  *
- * Requires: GPU + gemma4_e2b target GGUF + its MTP head GGUF. Run:
+ * Requires: GPU + gemma4_e4b_qat target GGUF + its MTP head (mtp_e4b). Run:
  * ctest -L model -R gh110
  *
  * @version 2.9.6
@@ -78,8 +78,8 @@ SCENARIO("gh#110: MTP engages through the real agent loop (entropic_run)",
         const char* home = std::getenv("HOME");
         REQUIRE(home != nullptr);
         fs::path models_dir = fs::path(home) / ".entropic" / "models";
-        fs::path target = models_dir / "gemma-4-E2B-it-Q8_0.gguf";
-        fs::path head = models_dir / "mtp-gemma-4-E2B-it.gguf";
+        fs::path target = models_dir / "gemma-4-E4B-it-qat-UD-Q4_K_XL.gguf";
+        fs::path head = models_dir / "mtp-gemma-4-E4B-it.gguf";
         if (!fs::is_regular_file(target) || !fs::is_regular_file(head)) {
             SKIP("MTP target/head GGUF not present under " + models_dir.string());
         }

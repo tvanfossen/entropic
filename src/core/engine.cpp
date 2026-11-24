@@ -538,16 +538,42 @@ void AgentEngine::init_session_conversation(LoopContext& ctx) {
 }
 
 /**
+ * @brief The sentence a caller can act on, for each known failure reason.
+ * @param reason failure_reason recorded by the loop.
+ * @return The explanation, or "" for a reason with none (reported by name).
+ * @utility
+ * @version 2.14.6
+ */
+static std::string failure_explanation(const std::string& reason) {
+    static const std::unordered_map<std::string, std::string> kWhy = {
+        {"zero_tool_calls_with_explicit_completion",
+         ": the tier must end every turn with a tool call "
+         "(explicit_completion), and it answered without one through every "
+         "retry"},
+        {"context_overflow",
+         ": the prompt does not fit the tier's context window"},
+        {"generation_failed",
+         ": generation failed on every retry — see the inference log for "
+         "the backend error"},
+        {"empty_response",
+         ": the model replied with nothing — no answer and no tool call — "
+         "through every retry"},
+    };
+    const auto it = kWhy.find(reason);
+    return it == kWhy.end() ? std::string{} : it->second;
+}
+
+/**
  * @brief Describe a failed top-level turn for its caller (gh#209/#212).
  *
- * Reads the reason the loop recorded when it entered ERROR. The two reasons
- * that end a turn in ERROR today get a sentence a caller can act on; any
- * other is reported by name.
+ * Reads the reason the loop recorded when it entered ERROR; known reasons
+ * get a sentence a caller can act on (failure_explanation), any other is
+ * reported by name.
  *
  * @param ctx Finished loop context.
  * @return "" unless the run ended in ERROR.
  * @utility
- * @version 2.14.5
+ * @version 2.14.6
  */
 static std::string describe_turn_failure(const LoopContext& ctx) {
     std::string why;
@@ -558,14 +584,8 @@ static std::string describe_turn_failure(const LoopContext& ctx) {
         };
         const auto reason = meta("failure_reason");
         why = (reason.empty() ? std::string("unknown") : reason)
-            + " (tier '" + meta("failure_tier") + "')";
-        if (reason == "zero_tool_calls_with_explicit_completion") {
-            why += ": the tier must end every turn with a tool call "
-                   "(explicit_completion), and it answered without one "
-                   "through every retry";
-        } else if (reason == "context_overflow") {
-            why += ": the prompt does not fit the tier's context window";
-        }
+            + " (tier '" + meta("failure_tier") + "')"
+            + failure_explanation(reason);
     }
     return why;
 }
@@ -892,11 +912,27 @@ void AgentEngine::execute_iteration(LoopContext& ctx) {
 }
 
 /**
+ * @brief A turn's parsed tool calls as the JSON the prompt carries (v2.14.6).
+ * @param calls Parsed calls.
+ * @return JSON array text: [{id, name, arguments}], arguments as JSON text.
+ * @utility
+ * @version 2.14.6
+ */
+static std::string tool_calls_to_json(const std::vector<ToolCall>& calls) {
+    auto arr = nlohmann::json::array();
+    for (const auto& c : calls) {
+        arr.push_back({{"id", c.id}, {"name", c.name},
+                       {"arguments", c.arguments_json.empty() ? "{}" : c.arguments_json}});
+    }
+    return arr.dump(-1, ' ', false, nlohmann::json::error_handler_t::replace);
+}
+
+/**
  * @brief Turn a generation result into the next loop state.
  * @param ctx Loop context.
  * @param result Generation result.
  * @req REQ-LOOP-003
- * @version 2.9.19
+ * @version 2.14.6 [reviewed]
  */
 void AgentEngine::process_generation_result(LoopContext& ctx,
                                             GenerateResult& result) {
@@ -905,6 +941,16 @@ void AgentEngine::process_generation_result(LoopContext& ctx,
                  result.finish_reason, tool_calls.size(),
                  cleaned.size());
     Message assistant_msg{"assistant", cleaned};
+    // v2.14.6: keep the model's own call for the prompt it is shown next.
+    // Only the cleaned text was stored, so the history read "question, empty
+    // reply, result" — results with no call — and the model began writing
+    // result-shaped prose ("Error: not_found") instead of calling the tool.
+    // `content` stays clean for consumers, storage and answer selection;
+    // ResponseGenerator::serialize_messages renders this instead.
+    if (!tool_calls.empty()) {
+        assistant_msg.metadata[tool_meta::kCallText] = result.content;
+        assistant_msg.metadata[tool_meta::kCalls] = tool_calls_to_json(tool_calls);
+    }
     ctx.messages.push_back(std::move(assistant_msg));
 
     bool made_tool_call =
@@ -919,6 +965,7 @@ void AgentEngine::process_generation_result(LoopContext& ctx,
         // consecutive-empty-turn debt.
         if (made_progress) {
             ctx.metadata["zero_tool_call_retries"] = "0";
+            ctx.metadata.erase("force_tool_call");  // v2.14.6: complied
         }
     } else {
         evaluate_no_tool_decision(ctx, cleaned, result.finish_reason);
@@ -1087,7 +1134,7 @@ void AgentEngine::dispatch_pending_or_halt(LoopContext& ctx) {
  * @param content Response content.
  * @param finish_reason Finish reason from generation.
  * @req REQ-LOOP-004
- * @version 2.0.6-rc16
+ * @version 2.14.6
  */
 void AgentEngine::evaluate_no_tool_decision(
     LoopContext& ctx,
@@ -1098,7 +1145,9 @@ void AgentEngine::evaluate_no_tool_decision(
         logger->info("[DECISION] auto-chain triggered");
         return;
     }
-    if (record_explicit_completion_failure(ctx, finish_reason)) { return; }
+    if (record_explicit_completion_failure(ctx, finish_reason, content)) {
+        return;
+    }
     if (response_generator_.is_response_complete(content, "[]")) {
         logger->info("[DECISION] response complete");
         set_state(ctx, AgentState::COMPLETE);
@@ -1150,45 +1199,36 @@ bool AgentEngine::handle_terminal_finish_reasons(
 }
 
 /**
- * @brief Record a structured failure when a tier requires explicit
- *        completion but returned zero tool calls. (P1-6, 2.0.6-rc16)
- *
- * @param ctx Loop context (metadata is mutated).
- * @param finish_reason Generation finish reason (for logging).
- * @return true if the failure was recorded and state transitioned.
- * @req REQ-LOOP-004
- * @version 2.14.5
+ * @brief How many empty or tool-less turns a tier may take before failing.
+ * @param tier Tier name.
+ * @return max_consecutive_empty_turns for the tier, default 3 (gh#123).
+ * @utility
+ * @version 2.14.6
  */
-bool AgentEngine::record_explicit_completion_failure(
-    LoopContext& ctx, const std::string& finish_reason) {
-    if (!tier_requires_explicit_completion(ctx.locked_tier)) {
-        return false;
-    }
-    auto& retries = ctx.metadata["zero_tool_call_retries"];
-    int n = retries.empty() ? 0 : std::atoi(retries.c_str());
-    // gh#123: default 3; per-tier override via max_consecutive_empty_turns
+int AgentEngine::empty_turn_ceiling(const std::string& tier) const {
     int ceiling = 3;
     if (tier_res_.get_tier_param != nullptr) {
         auto cv = tier_res_.get_tier_param(
-            ctx.locked_tier, "max_consecutive_empty_turns",
-            tier_res_.user_data);
+            tier, "max_consecutive_empty_turns", tier_res_.user_data);
         if (!cv.empty()) { ceiling = std::atoi(cv.c_str()); }
     }
-    if (n >= ceiling) {
-        // Allowance exhausted — this is a genuine failure.
-        ctx.metadata["failure_reason"] =
-            "zero_tool_calls_with_explicit_completion";
-        ctx.metadata["failure_tier"] = ctx.locked_tier;
-        logger->error("[DECISION] empty-turn allowance exhausted "
-                      "(tier={}, n={}/{}), failing turn",
-                      ctx.locked_tier, n, ceiling);
-        set_state(ctx, AgentState::ERROR);
-        return true;
-    }
-    // Reasoning turn — nudge toward action, not a failure yet.
-    logger->info("[DECISION] tier '{}' empty turn {}/{} "
-                 "(finish_reason={}), nudging toward action",
-                 ctx.locked_tier, n + 1, ceiling, finish_reason);
+    return ceiling;
+}
+
+/**
+ * @brief The correction appended after an empty or tool-less turn (v2.14.6).
+ *
+ * A tier that owes a completion call is told to make one, naming the tools
+ * it can call; a tier that owes only an answer is told its reply was empty.
+ *
+ * @param ctx Loop context.
+ * @param owes_call true when the tier requires explicit completion.
+ * @return The [SYSTEM] correction text.
+ * @utility
+ * @version 2.14.6
+ */
+std::string AgentEngine::empty_turn_nudge(const LoopContext& ctx,
+                                          bool owes_call) const {
     std::string tools_hint =
         "(entropic.complete, entropic.delegate, or entropic.inspect)";
     if (tier_res_.get_tier_param != nullptr) {
@@ -1196,13 +1236,71 @@ bool AgentEngine::record_explicit_completion_failure(
             ctx.locked_tier, "allowed_tools", tier_res_.user_data);
         if (!allowed.empty()) { tools_hint = "(" + allowed + ")"; }
     }
+    return owes_call
+        ? "[SYSTEM] Your previous response contained no tool call. "
+          "You must end every turn with exactly one tool call "
+          + tools_hint + ". Make it an actual tool call, not as text or "
+          "JSON in your reply. Retry."
+        : std::string("[SYSTEM] Your previous response was empty: it gave "
+          "no answer and made no tool call. Answer the user's last "
+          "request, or call a tool. Retry.");
+}
+
+/**
+ * @brief Retry, then fail, a turn that owes more than it delivered.
+ *
+ * P1-6 (2.0.6-rc16): a tier that requires explicit completion and made no
+ * tool call. v2.14.6: ALSO a turn that delivered nothing at all — no
+ * content, no tool call — whatever the tier's contract. test-e7 on E4B
+ * ended a turn inside an unterminated thinking block and the engine
+ * accepted the empty result as COMPLETE, so the lead never acted. Both
+ * share one bounded allowance (max_consecutive_empty_turns, default 3);
+ * when it runs out the turn FAILS with a reason naming which it was.
+ *
+ * @param ctx Loop context (metadata is mutated).
+ * @param finish_reason Generation finish reason (for logging).
+ * @param content The turn's visible content; non-empty means the forced
+ *        retry may only call entropic.complete.
+ * @return true if the turn was nudged or failed (caller returns).
+ * @req REQ-LOOP-004
+ * @version 2.14.6 [reviewed 2]
+ */
+bool AgentEngine::record_explicit_completion_failure(
+    LoopContext& ctx, const std::string& finish_reason,
+    const std::string& content) {
+    const bool owes_call = tier_requires_explicit_completion(ctx.locked_tier);
+    if (!owes_call && !content.empty()) {
+        return false;
+    }
+    auto& retries = ctx.metadata["zero_tool_call_retries"];
+    int n = retries.empty() ? 0 : std::atoi(retries.c_str());
+    const int ceiling = empty_turn_ceiling(ctx.locked_tier);
+    if (n >= ceiling) {
+        ctx.metadata["failure_reason"] = owes_call
+            ? "zero_tool_calls_with_explicit_completion"
+            : (finish_reason == "error" ? "generation_failed"
+                                        : "empty_response");
+        ctx.metadata["failure_tier"] = ctx.locked_tier;
+        logger->error("[DECISION] empty-turn allowance exhausted "
+                      "(tier={}, n={}/{}, {}), failing turn", ctx.locked_tier,
+                      n, ceiling, ctx.metadata["failure_reason"]);
+        set_state(ctx, AgentState::ERROR);
+        return true;
+    }
+    logger->info("[DECISION] tier '{}' {} turn {}/{} (finish_reason={}), "
+                 "nudging", ctx.locked_tier,
+                 owes_call ? "no-tool-call" : "empty", n + 1, ceiling,
+                 finish_reason);
+    // v2.14.6: the nudge only ASKED; a stalled model kept emitting
+    // thinking-only turns. The retry for a tier that owes a call is forced.
+    // A turn that already answered in prose may only conclude: its forced
+    // retry is offered entropic.complete alone (e7 re-delegated instead).
+    if (owes_call) {
+        ctx.metadata["force_tool_call"] = content.empty() ? "1" : "complete";
+    }
     Message correction;
     correction.role = "user";
-    correction.content =
-        "[SYSTEM] Your previous response contained no tool call. "
-        "You must end every turn with exactly one tool call "
-        + tools_hint + ". Make it an actual tool call, not as text or "
-        "JSON in your reply. Retry.";
+    correction.content = empty_turn_nudge(ctx, owes_call);
     ctx.messages.push_back(std::move(correction));
     retries = std::to_string(n + 1);
     set_state(ctx, AgentState::EXECUTING);
@@ -3711,16 +3809,20 @@ void AgentEngine::set_active_session(const std::string& key) {
  * @utility
  * @version 2.13.0
  */
-bool AgentEngine::try_begin_turn(const std::string& key) {
+bool AgentEngine::try_begin_turn(const std::string& key, bool exclusive) {
     {
         std::lock_guard<std::mutex> guard(runs_mutex_);
         // Same key twice is a genuine conflict whatever the configuration:
         // the two runs share one conversation. A DIFFERENT key is refused
         // only while per-session concurrency is off, which is the shipped
         // default and reproduces v2.12.0 exactly.
-        const bool blocked = active_runs_.count(key) > 0
-            || (!concurrent_sessions_ && !active_runs_.empty());
+        // gh#217 (v2.14.6): an EXCLUSIVE claim (model release) needs no run
+        // in flight on ANY key, and while held refuses every other claim —
+        // unloading frees the context a decode in another session is using.
+        const bool blocked = active_runs_.count(key) > 0 || exclusive_turn_
+            || ((exclusive || !concurrent_sessions_) && !active_runs_.empty());
         if (blocked) { return false; }
+        exclusive_turn_ = exclusive;
         auto claimed = std::make_shared<RunState>();
         claimed->key = key;
         active_runs_[key] = claimed;
@@ -3741,13 +3843,16 @@ bool AgentEngine::try_begin_turn(const std::string& key) {
  * @brief Release a turn claimed for a named session — see header.
  * @param key Session key that was claimed.
  * @utility
- * @version 2.13.0
+ * @version 2.14.6
  */
 void AgentEngine::end_turn(const std::string& key) {
     {
         std::lock_guard<std::mutex> guard(runs_mutex_);
         active_runs_.erase(key);
         running_flag_.store(!active_runs_.empty());
+        // gh#217: an exclusive claim admits no other run, so the engine is
+        // empty exactly when the exclusive holder releases.
+        if (active_runs_.empty()) { exclusive_turn_ = false; }
     }
     // Releasing the claim releases the binding with it — see try_begin_turn.
     // Guarded on the key so a nested release cannot unbind an outer run.

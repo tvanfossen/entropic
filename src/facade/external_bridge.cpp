@@ -22,6 +22,7 @@
 #include <nlohmann/json.hpp>
 
 #include <atomic>
+#include <csignal>
 #include <cerrno>
 #include <algorithm>
 #include <chrono>
@@ -134,6 +135,7 @@ constexpr const char* kStatus        = "status";
 constexpr const char* kContextClear  = "context_clear";
 constexpr const char* kContextCount  = "context_count";
 constexpr const char* kRelease       = "release";  // v2.14.3
+constexpr const char* kShutdown      = "shutdown"; // v2.14.6
 } // namespace tool_suffix
 
 /**
@@ -295,10 +297,10 @@ static json ask_status_tool(const ExternalMCPConfig& cfg) {
  * @param cfg External MCP config supplying prefix and description overrides.
  * @return JSON array of tool schemas.
  * @req REQ-BRIDGE-001
- * @version 2.14.3
+ * @version 2.14.6
  */
 static json tool_definitions(const ExternalMCPConfig& cfg) {
-    return json::array({
+    auto tools = json::array({
         ask_tool(cfg),
         ask_status_tool(cfg),
         no_args_tool(cfg, tool_suffix::kStatus,
@@ -314,6 +316,14 @@ static json tool_definitions(const ExternalMCPConfig& cfg) {
                      "ask reloads the model. Call when you are done for "
                      "now. Refused while a turn is running — retry then."),
     });
+    // v2.14.6: only when the host opted in (entropic serve --allow-shutdown).
+    if (cfg.allow_shutdown) {
+        tools.push_back(no_args_tool(cfg, tool_suffix::kShutdown,
+            "Stop this host process: models are unloaded, every session "
+            "ends, the token is removed. Refused while a turn is running — "
+            "retry then. Use release instead to only free the GPU."));
+    }
+    return tools;
 }
 
 // ── Tool handlers ────────────────────────────────────────
@@ -1164,6 +1174,44 @@ static json handle_release(entropic_handle_t handle) {
     return result;
 }
 
+/**
+ * @brief Handle `<prefix>.shutdown`: stop the host over MCP (v2.14.6).
+ *
+ * The consumer's operator denies `kill`, so a signal from outside was the
+ * one way to stop `entropic serve` that it no longer had. Only advertised
+ * and only callable when the host set `allow_shutdown`. Takes the EXCLUSIVE
+ * claim release takes (gh#217) and keeps it: refused while any session is
+ * decoding, and no turn can start once accepted. The reply goes first; a
+ * detached thread then raises SIGTERM, which serve's sigwait loop turns into
+ * its normal clean stop (listener closed, models unloaded, token removed).
+ *
+ * @param handle Engine handle.
+ * @param bridge Bridge (for its config).
+ * @return MCP tool result: "stopping", or a retryable isError.
+ * @req REQ-BRIDGE-001
+ * @utility
+ * @version 2.14.6
+ */
+static json handle_shutdown(entropic_handle_t handle, ExternalBridge* bridge) {
+    if (!bridge->config().allow_shutdown) {
+        return tool_text("error: unknown tool 'shutdown'");
+    }
+    const bool claimed = handle->engine == nullptr
+        || handle->engine->try_begin_turn("__shutdown__", /*exclusive=*/true);
+    if (!claimed) {
+        return tool_error("error: a turn is running on this engine; not "
+                          "stopping — retry when it finishes");
+    }
+    logger->warn("[shutdown] accepted over MCP — stopping the host");
+    std::thread([] {
+        // Let the reply reach the client before teardown closes the listener.
+        std::this_thread::sleep_for(std::chrono::milliseconds(250));
+        ::kill(::getpid(), SIGTERM);
+    }).detach();
+    return tool_text("stopping: the host is shutting down — models unloaded, "
+                     "sessions ended, token removed");
+}
+
 /// @brief A non-ask tool's handler (v2.14.3).
 using ToolHandler = json (*)(entropic_handle_t, ExternalBridge*, const json&);
 
@@ -1176,7 +1224,7 @@ using ToolHandler = json (*)(entropic_handle_t, ExternalBridge*, const json&);
  *
  * @return Suffix → handler.
  * @req REQ-BRIDGE-001
- * @version 2.14.3
+ * @version 2.14.6
  */
 static const std::unordered_map<std::string, ToolHandler>& tool_handlers() {
     static const std::unordered_map<std::string, ToolHandler> table = {
@@ -1190,6 +1238,8 @@ static const std::unordered_map<std::string, ToolHandler>& tool_handlers() {
              return handle_count(h, a.value("session", std::string{})); }},
         {tool_suffix::kRelease, [](entropic_handle_t h, ExternalBridge*, const json&) {
              return handle_release(h); }},
+        {tool_suffix::kShutdown, [](entropic_handle_t h, ExternalBridge* b, const json&) {
+             return handle_shutdown(h, b); }},
     };
     return table;
 }

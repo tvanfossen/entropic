@@ -77,7 +77,7 @@
  *    gh#165 trap, c51d76d).
  *
  * @par Sizing for the floor card (a 1080 Ti, 11 GB)
- * Guard and both tiers name `gemma4_e2b_qat` / gemma-4-E2B-it-qat-UD-Q4_K_XL
+ * Guard and both tiers name `gemma4_e4b_qat` / gemma-4-E4B-it-qat-UD-Q4_K_XL
  * (2.44 GiB), the registry's explicitly floor-safe entry. Both tiers point at
  * the same GGUF, so `ModelOrchestrator::create_tier_backends` keys its
  * model_pool_ by path and loads ONE backend for the pair. Each tier declares
@@ -91,7 +91,7 @@
  * CANNOT emit, because a tier that may close its own turn never reaches
  * either terminal.
  *
- * Requires: GPU, gemma-4-E2B QAT GGUF on disk.
+ * Requires: GPU, gemma-4-E4B QAT GGUF on disk.
  * Run: ctest -L model -R gh169-gh181-budget-carry
  *
  * @version 2.13.0
@@ -128,7 +128,7 @@ bool has_ci(const std::string& hay, const std::string& needle) {
 
 /// @brief The GGUF both scenarios stand on — floor-safe, 2.44 GiB.
 /// @version 2.13.0
-constexpr const char* kFloorGguf = "gemma-4-E2B-it-qat-UD-Q4_K_XL.gguf";
+constexpr const char* kFloorGguf = "gemma-4-E4B-it-qat-UD-Q4_K_XL.gguf";
 
 /// @brief The iteration cap's annotation opener (gh#169).
 /// @version 2.13.0
@@ -272,7 +272,7 @@ void expect_carried_handback(DelegateCapture& cap, const std::string& marker,
 entropic::test::facade::TierSpec make_lead(const std::string& body) {
     entropic::test::facade::TierSpec lead;
     lead.name = "lead";
-    lead.gguf_key = "gemma4_e2b_qat";
+    lead.gguf_key = "gemma4_e4b_qat";
     lead.adapter = "gemma4";
     lead.context_length = 4096;
     lead.identity_body = body
@@ -295,7 +295,7 @@ SCENARIO("gh#169: an iteration-capped delegate hands its parent the audit it "
           "at three iterations") {
         auto gguf = entropic::test::facade::model_gguf(kFloorGguf);
         if (gguf.empty() || !fs::is_regular_file(gguf)) {
-            SKIP("gemma-4-E2B QAT GGUF not present at " + gguf.string());
+            SKIP("gemma-4-E4B QAT GGUF not present at " + gguf.string());
         }
 
         entropic::test::facade::FacadeProject project("gh169_cap_carry");
@@ -323,7 +323,7 @@ SCENARIO("gh#169: an iteration-capped delegate hands its parent the audit it "
 
         entropic::test::facade::TierSpec eng;
         eng.name = "eng";
-        eng.gguf_key = "gemma4_e2b_qat";
+        eng.gguf_key = "gemma4_e4b_qat";
         eng.adapter = "gemma4";
         eng.context_length = 4096;
         eng.identity_body =
@@ -429,7 +429,7 @@ SCENARIO("gh#181: a delegate hard-cut by the thinking budget hands its "
           "an 'eng' tier that can only narrate") {
         auto gguf = entropic::test::facade::model_gguf(kFloorGguf);
         if (gguf.empty() || !fs::is_regular_file(gguf)) {
-            SKIP("gemma-4-E2B QAT GGUF not present at " + gguf.string());
+            SKIP("gemma-4-E4B QAT GGUF not present at " + gguf.string());
         }
 
         // An EMPTY filesystem root, on purpose. The child owes a tool call it
@@ -470,7 +470,7 @@ SCENARIO("gh#181: a delegate hard-cut by the thinking budget hands its "
 
         entropic::test::facade::TierSpec eng;
         eng.name = "eng";
-        eng.gguf_key = "gemma4_e2b_qat";
+        eng.gguf_key = "gemma4_e4b_qat";
         eng.adapter = "gemma4";
         eng.context_length = 4096;
         // The needle lives in the CHILD's identity — the lead's prompt and

@@ -11,6 +11,7 @@
 #include <entropic/core/engine_types.h>
 #include "mock_inference.h"
 #include <catch2/catch_test_macros.hpp>
+#include <nlohmann/json.hpp>
 
 using namespace entropic;
 using namespace entropic::test;
@@ -541,6 +542,258 @@ SCENARIO("gh#209/#212: a failed turn is rolled out of the session",
                 CHECK(turn.front().content == "second question");
                 CHECK(turn.size() > 1);
             }
+        }
+    }
+}
+
+SCENARIO("v2.14.6: the model's own tool call stays in the history it is shown",
+         "[engine][history][2.14.6]")
+{
+    // The assistant message kept only the CLEANED text, so a turn that made
+    // a tool call stored an empty assistant message, then the result as a
+    // bare user message. On the next turn the model saw results that arrive
+    // without calls and imitated one: "Error: not_found" as prose instead of
+    // calling read_file (test-outside-root-approval, ~13% pass). Keeping the
+    // call raised it to 5/7 in an A/B run.
+    GIVEN("a generation that makes a tool call") {
+        MockInference mock;
+        const std::string raw =
+            "<|tool_call>call:filesystem.read_file{path:<|\"|>a.txt<|\"|>}<tool_call|>";
+        mock.response_queue = {raw, "Done."};
+        mock.tool_calls_queue = {
+            R"([{"name":"filesystem.read_file","arguments":{"path":"a.txt"}}])", "[]"};
+        mock.parse_cleaned_override = "Reading the file.";
+        auto iface = make_mock_interface(mock);
+        LoopConfig lc;
+        lc.max_iterations = 4;
+        CompactionConfig cc;
+        AgentEngine engine(iface, lc, cc);
+        ToolExecutionInterface tex{};
+        tex.process_tool_calls = [](LoopContext&, const std::vector<ToolCall>&,
+                                    void*) -> std::vector<Message> {
+            Message r;  // shaped like ToolExecutor's result message
+            r.role = "user";
+            r.content = R"({"lines":[{"content":"x","line":1}]})";
+            r.metadata["tool_call_id"] = "tc-1";
+            r.metadata["tool_name"] = "filesystem.read_file";
+            return {r};
+        };
+        engine.set_tool_executor(tex);
+        auto out = engine.run(make_messages());
+        THEN("its assistant message carries the call for the prompt, content stays clean") {
+            const Message* call_msg = nullptr;
+            for (const auto& m : out) {
+                if (m.role == "assistant" && m.metadata.count("tool_call_text") > 0) {
+                    call_msg = &m;
+                }
+            }
+            REQUIRE(call_msg != nullptr);
+            CHECK(call_msg->metadata.at("tool_call_text") == raw);
+            CHECK(call_msg->content.find("<|tool_call>") == std::string::npos);
+        }
+        AND_THEN("the next generation is sent the call and its result as tool turns") {
+            // Structured, so the backend renders the template's native
+            // tool-call and tool-response turns; the raw text rides along for
+            // the template-less path.
+            REQUIRE(mock.seen_messages.size() >= 2);
+            auto sent = nlohmann::json::parse(mock.seen_messages[1]);
+            bool call = false;
+            bool response = false;
+            for (const auto& m : sent) {
+                if (m.value("role", "") == "assistant" && m.contains("tool_calls")) {
+                    call = m["tool_calls"].size() == 1
+                        && m["tool_calls"][0].value("name", "") == "filesystem.read_file"
+                        && m.value("tool_call_text", "") == raw;
+                }
+                response = response
+                    || m.value("tool_name", "") == "filesystem.read_file";
+            }
+            CHECK(call);
+            CHECK(response);
+        }
+    }
+}
+
+SCENARIO("v2.14.6: an empty turn is retried, never accepted as complete",
+         "[engine][empty_turn][2.14.6]")
+{
+    // test-e7-delegation on E4B: the lead ended its turn inside an
+    // unterminated thinking block — no content, no tool call — and the
+    // engine accepted that as COMPLETE, so it never delegated. Without
+    // explicit_completion a turn still owes the user SOMETHING.
+    GIVEN("a tier with no completion contract whose first reply is empty") {
+        MockInference mock;
+        mock.response_queue = {"", "Here is the answer."};
+        mock.tier = "lead";
+        mock.is_complete = true;
+        auto iface = make_mock_interface(mock);
+        LoopConfig lc;
+        lc.max_iterations = 6;
+        CompactionConfig cc;
+        AgentEngine engine(iface, lc, cc);
+        auto out = engine.run(make_messages());
+        THEN("the model is asked again and its real answer is the result") {
+            CHECK(mock.generate_call_count == 2);
+            CHECK(out.back().content == "Here is the answer.");
+            CHECK(engine.last_turn_failure().empty());
+        }
+    }
+    GIVEN("a tier that keeps replying with nothing") {
+        MockInference mock;
+        mock.response = "";
+        mock.tier = "lead";
+        mock.is_complete = true;
+        auto iface = make_mock_interface(mock);
+        LoopConfig lc;
+        lc.max_iterations = 15;
+        CompactionConfig cc;
+        AgentEngine engine(iface, lc, cc);
+        engine.run(make_messages());
+        THEN("the turn fails, bounded, with a reason that says so") {
+            CHECK(mock.generate_call_count <= 4);
+            CHECK(engine.last_turn_failure().find("empty_response")
+                  != std::string::npos);
+        }
+    }
+}
+
+SCENARIO("v2.14.6: after a nudge, a tier that owes a tool call is forced to make one",
+         "[engine][explicit_completion][2.14.6]")
+{
+    // E4B under explicit_completion answered in prose, was nudged, then
+    // emitted thinking-only empty turns until the turn failed (e7, and the
+    // consumer's 18/102). The nudge only ASKED. After one nudge, the retry
+    // is generated with the tool-call grammar forced (gh#134's mechanism).
+    GIVEN("a lead that owes a tool call and answers in prose") {
+        MockInference mock;
+        mock.response_queue = {"I'll have eng do it.", "still prose"};
+        mock.tier = "lead";
+        mock.is_complete = true;
+        auto iface = make_mock_interface(mock);
+        LoopConfig lc;
+        lc.max_iterations = 6;
+        CompactionConfig cc;
+        AgentEngine engine(iface, lc, cc);
+        TierResolutionInterface tri{};
+        tri.get_tier_param = [](const std::string& tier, const std::string& param,
+                                void*) -> std::string {
+            return (tier == "lead" && param == "explicit_completion") ? "true" : "";
+        };
+        engine.set_tier_resolution(tri);
+        engine.run(make_messages());
+        THEN("the first generation is free-form and the retry is forced") {
+            REQUIRE(mock.seen_params.size() >= 2);
+            CHECK(mock.seen_params[0].find("force_tool_call") == std::string::npos);
+            CHECK(mock.seen_params[1].find("\"force_tool_call\":true")
+                  != std::string::npos);
+        }
+    }
+}
+
+// ── v2.14.6: a prose answer's forced retry may only conclude ────
+
+namespace {
+
+/// Tool defs a lead sees: one working tool plus the completion tool.
+const char* kLeadTools =
+    R"([{"name":"entropic.delegate","description":"d","inputSchema":{}},)"
+    R"({"name":"entropic.complete","description":"c","inputSchema":{}}])";
+
+/**
+ * @brief Names in the params' tools array of generation @p i.
+ * @param mock Mock that recorded the params.
+ * @param i Generation index.
+ * @return Tool names, in order (empty when the params carry no tools).
+ * @utility
+ * @version 2.14.6
+ */
+std::vector<std::string> tool_names_sent(const MockInference& mock, size_t i) {
+    std::vector<std::string> names;
+    auto params = nlohmann::json::parse(mock.seen_params.at(i));
+    if (params.contains("tools")) {
+        const auto tools = nlohmann::json::parse(params["tools"].get<std::string>());
+        for (const auto& t : tools) { names.push_back(t.value("name", "")); }
+    }
+    return names;
+}
+
+/**
+ * @brief Run a lead that owes a tool call through @p turns of scripted output.
+ * @param mock Mock to script and inspect.
+ * @param turns Scripted generations, in order.
+ * @param tools Tool defs the lead is offered.
+ * @utility
+ * @version 2.14.6
+ */
+void run_owing_lead(MockInference& mock, std::vector<std::string> turns,
+                    const std::string& tools) {
+    mock.response_queue = std::move(turns);
+    mock.tier = "lead";
+    mock.is_complete = true;
+    mock.tools_json = tools;
+    auto iface = make_mock_interface(mock);
+    LoopConfig lc;
+    lc.max_iterations = 6;
+    CompactionConfig cc;
+    AgentEngine engine(iface, lc, cc);
+    TierResolutionInterface tri{};
+    tri.get_tier_param = [](const std::string& tier, const std::string& param,
+                            void*) -> std::string {
+        return (tier == "lead" && param == "explicit_completion") ? "true" : "";
+    };
+    engine.set_tier_resolution(tri);
+    engine.run(make_messages());
+}
+
+} // namespace
+
+SCENARIO("v2.14.6: after a prose answer is nudged, the forced retry may only "
+         "call entropic.complete",
+         "[engine][explicit_completion][2.14.6]")
+{
+    // e7 flake: the lead answered in prose, was nudged, and the forced retry
+    // re-delegated instead of concluding. The prose already IS the answer, so
+    // the user's decision: the forced retry offers entropic.complete only.
+    GIVEN("a lead that owes a tool call, answers in prose, and is nudged") {
+        MockInference mock;
+        run_owing_lead(mock, {"Here is the answer.", "still prose"}, kLeadTools);
+        THEN("the first generation sees every tool, the retry only complete") {
+            REQUIRE(mock.seen_params.size() >= 2);
+            CHECK(tool_names_sent(mock, 0)
+                  == std::vector<std::string>{"entropic.delegate",
+                                              "entropic.complete"});
+            CHECK(tool_names_sent(mock, 1)
+                  == std::vector<std::string>{"entropic.complete"});
+            CHECK(mock.seen_params[1].find("\"force_tool_call\":true")
+                  != std::string::npos);
+        }
+    }
+    GIVEN("a lead that owes a tool call and emits an EMPTY turn") {
+        MockInference mock;
+        run_owing_lead(mock, {"", "still nothing"}, kLeadTools);
+        THEN("the forced retry keeps every tool: no answer exists to conclude with") {
+            REQUIRE(mock.seen_params.size() >= 2);
+            CHECK(tool_names_sent(mock, 1)
+                  == std::vector<std::string>{"entropic.delegate",
+                                              "entropic.complete"});
+            CHECK(mock.seen_params[1].find("\"force_tool_call\":true")
+                  != std::string::npos);
+        }
+    }
+    GIVEN("a prose answer from a lead whose tools lack entropic.complete") {
+        MockInference mock;
+        run_owing_lead(mock, {"Here is the answer.", "still prose"},
+                       R"([{"name":"entropic.delegate","description":"d","inputSchema":{}}])");
+        THEN("the retry keeps the tools it has and is NOT forced") {
+            REQUIRE(mock.seen_params.size() >= 2);
+            CHECK(tool_names_sent(mock, 1)
+                  == std::vector<std::string>{"entropic.delegate"});
+            // v2.14.6 gate (gh#181): forcing "any tool" on a tier that cannot
+            // conclude only manufactures junk calls, and keeps the model from
+            // narrating into the iteration cap or the thinking-budget cut —
+            // the only exits such a tier has. The nudge still fires.
+            CHECK(mock.seen_params[1].find("force_tool_call")
+                  == std::string::npos);
         }
     }
 }

@@ -63,7 +63,7 @@ SCENARIO("gh#194: a plain generation publishes the prefill it performed",
         entropic::test::facade::FacadeProject project("gh194_prefill");
         entropic::test::facade::TierSpec lead;
         lead.name = "lead";
-        lead.gguf_key = "gemma4_e2b_qat";
+        lead.gguf_key = "gemma4_e4b_qat";
         lead.adapter = "gemma4";
         lead.identity_body = "You are a terse assistant. Answer in one"
                              "sentence.";

@@ -163,6 +163,20 @@ public:
     virtual bool set_working_dir(const std::string& path);
 
     /**
+     * @brief Whether a call to this tool needs the host's approval.
+     * @param tool_name Local tool name (without server prefix).
+     * @return true when the approval gate applies (the default); false for
+     *         a tool that is the engine directing itself rather than an
+     *         action on the user's system.
+     * @version 2.14.6
+     *
+     * Default: true. Only an in-process server is consulted, so a plugin or
+     * external server can never exempt its own tools. Declared after every
+     * other virtual so existing vtable slots keep their positions.
+     */
+    virtual bool requires_approval(const std::string& tool_name) const;
+
+    /**
      * @brief Get the tool registry (const).
      * @return Reference to this server's tool registry.
      * @utility

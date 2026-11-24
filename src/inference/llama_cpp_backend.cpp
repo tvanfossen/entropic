@@ -17,6 +17,7 @@
 #include <entropic/mcp/utf8_sanitize.h>
 #include "generation_summary.h"  // gh#151: one summary line, both paths
 #include "grammar_source.h"
+#include "gemma4_required_grammar.h"  // v2.14.6: f072b10371 root mirror
 #include "llama_cpp_sampler.h"
 #include "llama_cpp_tokenizer.h"
 #include "session_pool_util.h"
@@ -144,6 +145,31 @@ void finalize_result(GenerationResult& result,
 }
 
 /**
+ * @brief Report a decode that ran to max_tokens as finish_reason "length".
+ *
+ * v2.14.6: the loops checked `finish_reason.empty()`, but GenerationResult
+ * defaults finish_reason to "stop", so the check never fired and a decode
+ * cut off at the cap reported "stop" (a forced E4B retry logged 4096 tokens,
+ * finish=stop). Every loop breaks with n_generated < max_tokens, so reaching
+ * the cap means the loop condition ended it and the reason is still the
+ * default. An explicit "error"/"cancelled" is never overwritten.
+ *
+ * @param result Result accumulated by the loop (mutated).
+ * @param n_generated Tokens generated.
+ * @param max_tokens Token cap for this generation.
+ * @utility
+ * @version 2.14.6
+ */
+void mark_length_finish(GenerationResult& result, int n_generated,
+                        int max_tokens) {
+    const bool untouched = result.finish_reason.empty()
+        || result.finish_reason == "stop";
+    if (n_generated >= max_tokens && untouched) {
+        result.finish_reason = "length";
+    }
+}
+
+/**
  * @brief Apply the terminal length-finish + content/token-count fields and
  *        finalize timing on a completed text-generation result.
  *
@@ -153,15 +179,16 @@ void finalize_result(GenerationResult& result,
  * "ran to the token cap => finish_reason=length" convention lives in one place.
  *
  * @param result      Result accumulated by the loop. finish_reason is set by
- *                    the loop on EOS/stop/error/cancel; empty here means the
- *                    loop ran to the token cap (=> "length").
+ *                    the loop on EOS/stop/error/cancel; reaching the cap
+ *                    with it still the default means "length" (v2.14.6,
+ *                    see mark_length_finish).
  * @param generated   Accumulated decoded text.
  * @param n_generated Tokens generated.
  * @param params      Generation params (max_tokens for the length check).
  * @param t0          Loop start time, passed through to finalize_result.
  * @param prefill_tokens Prompt tokens this turn actually decoded (gh#194).
  * @utility
- * @version 2.13.2
+ * @version 2.14.6
  */
 void finalize_generation(GenerationResult& result,
     const std::string& generated, int n_generated,
@@ -184,10 +211,7 @@ void finalize_generation(GenerationResult& result,
     // twice while writing this fix — the overload pair is exactly the seam a
     // per-path fix falls through.
     result.prefill_tokens = prefill_tokens;
-    if (n_generated >= params.max_tokens
-            && result.finish_reason.empty()) {
-        result.finish_reason = "length";
-    }
+    mark_length_finish(result, n_generated, params.max_tokens);  // v2.14.6
     // gh#136 (4th type_error.316 recurrence): sanitize at INGRESS, where model
     // bytes first become a std::string, rather than at each of the ~18 .dump()
     // sites downstream. gh#112/113 were closed as "permanent closure of the
@@ -1310,19 +1334,64 @@ float LlamaCppBackend::extract_token_logprob(
 
 /**
  * @brief Convert engine messages to llama_chat_message views.
+ *
+ * v2.14.6: the template-less path has no tool turns, so an assistant turn
+ * that made a call shows the call text the model wrote rather than its
+ * (empty) cleaned content.
+ *
  * @param messages Source messages (must outlive the returned views).
  * @return Vector of {role, content} c_str pointers into `messages`.
  * @utility
- * @version 2.3.7
+ * @version 2.14.6
  */
 static std::vector<llama_chat_message> to_llama_chat(
     const std::vector<Message>& messages) {
     std::vector<llama_chat_message> chat_msgs;
     chat_msgs.reserve(messages.size());
     for (const auto& msg : messages) {
-        chat_msgs.push_back({msg.role.c_str(), msg.content.c_str()});
+        const auto call = msg.metadata.find(tool_meta::kCallText);
+        chat_msgs.push_back({msg.role.c_str(), call != msg.metadata.end()
+                                 ? call->second.c_str() : msg.content.c_str()});
     }
     return chat_msgs;
+}
+
+/**
+ * @brief One engine message as a common_chat_msg, tool turns native (v2.14.6).
+ *
+ * An assistant turn that made calls carries them as `tool_calls`; a tool
+ * result becomes role "tool" with its call id and tool name. The template
+ * then renders its own tool-call and tool-response turns (gemma4:
+ * `<|tool_call>` / `<|tool_response>`). Before v2.14.6 the call vanished and
+ * the result was a bare user message, so the model learned that results
+ * arrive without calls and began writing them itself.
+ *
+ * @param msg Engine message.
+ * @return The converted message.
+ * @utility
+ * @version 2.14.6
+ */
+static common_chat_msg to_common_chat_msg(const Message& msg) {
+    common_chat_msg cm;
+    cm.role = msg.role;
+    cm.content = msg.content;
+    const auto calls = msg.metadata.find(tool_meta::kCalls);
+    auto arr = calls != msg.metadata.end()
+        ? nlohmann::json::parse(calls->second, nullptr, false) : nlohmann::json();
+    const size_t n = arr.is_array() ? arr.size() : 0;
+    for (size_t i = 0; n > i; ++i) {
+        cm.tool_calls.push_back({arr[i].value("name", ""),
+                                 arr[i].value("arguments", "{}"),
+                                 arr[i].value("id", "")});
+    }
+    const auto id = msg.metadata.find(tool_meta::kCallId);
+    if (id != msg.metadata.end()) {
+        cm.role = "tool";
+        cm.tool_call_id = id->second;
+        const auto name = msg.metadata.find(tool_meta::kName);
+        cm.tool_name = name != msg.metadata.end() ? name->second : std::string();
+    }
+    return cm;
 }
 
 /**
@@ -1336,17 +1405,22 @@ static std::vector<llama_chat_message> to_llama_chat(
  * @param messages Source messages.
  * @return Vector of common_chat_msg.
  * @req REQ-INFER-009
- * @version 2.6.1
+ * @version 2.14.6
  */
 static std::vector<common_chat_msg> to_common_chat(
     const std::vector<Message>& messages) {
     std::vector<common_chat_msg> out;
     out.reserve(messages.size());
+    size_t calls = 0;
+    size_t responses = 0;
     for (const auto& msg : messages) {
-        common_chat_msg cm;
-        cm.role = msg.role;
-        cm.content = msg.content;
-        out.push_back(std::move(cm));
+        out.push_back(to_common_chat_msg(msg));
+        calls += out.back().tool_calls.size();
+        responses += out.back().role == "tool" ? 1 : 0;
+    }
+    if (calls + responses > 0) {
+        logger->info("[chat] history: {} tool call(s), {} tool response(s) "
+                     "rendered as native turns", calls, responses);
     }
     return out;
 }
@@ -1558,6 +1632,45 @@ void LlamaCppBackend::set_active_tools(const std::string& tools_json) {
 }
 
 /**
+ * @brief The render's tool-call grammar, with the Gemma 4 REQUIRED root fixed.
+ *
+ * v2.14.6: at the pinned llama.cpp the Gemma 4 REQUIRED root
+ * (`start message* scan-to-toolcall tool-call`) accepts any text and only
+ * masks EOG until a valid call appears, so a call in the wrong string syntax
+ * runs to max_tokens. Upstream fixed it in f072b10371; this mirrors that fix
+ * (see gemma4_required_grammar.h). A root of any other shape is left alone
+ * and reported, since a newer pin may already carry the fix.
+ *
+ * @param rendered Render output (format + grammar).
+ * @param require_tool_call Tier's tool_choice=REQUIRED flag.
+ * @return The grammar to store as tool_grammar_.
+ * @req REQ-INFER-008
+ * @version 2.14.6
+ */
+static std::string tool_grammar_for(const common_chat_params& rendered,
+                                    bool require_tool_call) {
+    std::string grammar = rendered.grammar;
+    const bool gemma4_required = require_tool_call && !grammar.empty()
+        && rendered.format == COMMON_CHAT_FORMAT_PEG_GEMMA4;
+    if (gemma4_required) {
+        std::string patched = entropic::patch_gemma4_required_root(grammar);
+        if (patched != grammar) {
+            logger->info("Gemma 4 REQUIRED tool grammar: root rewritten to "
+                         "'{}' (mirrors llama.cpp f072b10371)",
+                         entropic::gemma4_required_root_fixed_shape());
+            grammar = std::move(patched);
+        } else {
+            logger->warn("Gemma 4 REQUIRED tool grammar: root is not the "
+                         "expected pre-f072b10371 shape, so it is left "
+                         "unpatched (a newer llama.cpp pin may already carry "
+                         "f072b10371). Root line found: '{}'",
+                         entropic::gbnf_root_line(grammar));
+        }
+    }
+    return grammar;
+}
+
+/**
  * @brief Render messages through common_chat WITH active tools (gh#87).
  *
  * Captures the rendered params (format/generation_prompt/parser) so
@@ -1571,12 +1684,15 @@ void LlamaCppBackend::set_active_tools(const std::string& tools_json) {
  * otherwise clobbered the parser arena and the main call extracted zero
  * tool calls.
  *
+ * v2.14.6: the stored tool grammar goes through tool_grammar_for, which
+ * fixes the Gemma 4 REQUIRED root.
+ *
  * @param messages Conversation history.
  * @param params Generation parameters.
  * @return Formatted prompt string; the low-level template render when
  *         common_chat could not be applied (no capture is written then).
  * @req REQ-INFER-009
- * @version 2.10.6
+ * @version 2.14.6
  */
 std::string LlamaCppBackend::render_with_tools(
     const std::vector<Message>& messages,
@@ -1602,7 +1718,7 @@ std::string LlamaCppBackend::render_with_tools(
         // gh#134 (v2.10.4): keep the tool-call grammar the render derived from
         // the staged schemas. Discarding it is why tools-staged tiers decode
         // unconstrained today.
-        tool_grammar_ = rendered->grammar;
+        tool_grammar_ = tool_grammar_for(*rendered, require_tool_call_);
         tool_grammar_lazy_ = rendered->grammar_lazy;
         prompt = rendered->prompt;
         logger->info("render_with_tools: format={}, {} tool(s), captured "
@@ -1877,16 +1993,38 @@ std::string LlamaCppBackend::apply_chat_template_lowlevel(
  * ACTIVE-only code paths, where do_activate has already
  * installed the production factory).
  *
+ * v2.14.6: gh#134 applied the render's tool-call grammar only on the
+ * common_sampler path (speculative / MTP). Plain decode built its chain
+ * from `params.grammar` alone, so `require_tool_call` tiers and the forced
+ * retry after a no-tool-call nudge decoded unconstrained, behind a
+ * "tool call FORCED" log line. The tool grammar now reaches the production
+ * factory here, by the same precedence rule (request grammar wins, a
+ * collision is an ERROR). A test-injected factory gets params only.
+ *
  * @param params Generation parameters.
- * @return Owned Sampler, or nullptr if no factory installed.
+ * @return Owned Sampler, or nullptr if no factory installed or the tool
+ *         grammar cannot be applied.
  * @utility
- * @version 2.3.10
+ * @version 2.14.6
  */
 std::unique_ptr<Sampler> LlamaCppBackend::create_sampler(
     const GenerationParams& params) const
 {
     if (!sampler_factory_) { return nullptr; }
-    return sampler_factory_->create(params);
+    const std::string tool_grammar = active_tool_grammar();
+    if (grammar_sources_collide(params.grammar, tool_grammar)) {
+        logger->error("Both a request grammar and a tool-call grammar are "
+                      "active; the request grammar is used and the staged "
+                      "tools are NOT structurally enforced this turn.");
+    }
+    auto* production =
+        dynamic_cast<LlamaCppSamplerFactory*>(sampler_factory_.get());
+    if (production == nullptr || tool_grammar.empty()) {
+        return sampler_factory_->create(params);
+    }
+    return production->create(
+        params, ToolCallGrammar{tool_grammar, tool_grammar_lazy_,
+                                parse_generation_prompt_});
 }
 
 // ── Decode loop ────────────────────────────────────────────
@@ -2036,7 +2174,7 @@ GenerationResult LlamaCppBackend::decode_loop(
  *         finish_reason "cancelled" and ENTROPIC_ERROR_CANCELLED when the
  *         flag was observed set, "stop"/"length"/"error" otherwise.
  * @req REQ-INFER-005
- * @version 2.10.4
+ * @version 2.14.6
  */
 GenerationResult LlamaCppBackend::generate_after_prefill(
     Sampler& sampler,
@@ -2069,9 +2207,7 @@ GenerationResult LlamaCppBackend::generate_after_prefill(
         }
     }
 
-    if (n_generated >= params.max_tokens && result.finish_reason.empty()) {
-        result.finish_reason = "length";
-    }
+    mark_length_finish(result, n_generated, params.max_tokens);  // v2.14.6
 
     // gh#136 (4th type_error.316 recurrence): sanitize at INGRESS, where model
     // bytes first become a std::string, rather than at each of the ~18 .dump()
@@ -3083,6 +3219,28 @@ std::vector<Message> substitute_image_markers(
     return out;
 }
 
+/**
+ * @brief Log how many media markers survived the chat-template render.
+ *
+ * v2.14.6 gate: mtmd_tokenize reported 0 markers for 1 bitmap. This line
+ * separates "the render dropped it" from "mtmd was not shown it".
+ *
+ * @param prompt Rendered prompt, logged in full.
+ * @param images Bitmaps the prompt must carry markers for.
+ * @utility
+ * @version 2.14.6
+ */
+void log_rendered_markers(const std::string& prompt, size_t images) {
+    const std::string marker = mtmd_default_marker();
+    size_t markers = 0;
+    for (auto pos = prompt.find(marker); pos != std::string::npos;
+         pos = prompt.find(marker, pos + marker.size())) {
+        ++markers;
+    }
+    logger->info("Multimodal render: {} marker(s) '{}' in the rendered prompt "
+                 "for {} image(s); prompt: {}", markers, marker, images, prompt);
+}
+
 } // anonymous namespace
 
 /**
@@ -3092,8 +3250,11 @@ std::vector<Message> substitute_image_markers(
  * first so prefill always starts at seq position 0. Bitmap ownership
  * stays with the caller (mtmd_tokenize borrows for the call).
  *
+ * v2.14.6: the input text is built with designated initializers — the
+ * positional form had silently become text_len=1 after a pin bump.
+ *
  * @utility
- * @version 2.13.0
+ * @version 2.14.6
  */
 entropic_error_t LlamaCppBackend::mtmd_prefill(
     const std::string& prompt,
@@ -3102,7 +3263,15 @@ entropic_error_t LlamaCppBackend::mtmd_prefill(
 {
     ++kv_full_clear_count_;  // gh#158: see kv_full_clear_count()
     llama_memory_clear(llama_get_memory(ctx_), true);
-    ::mtmd_input_text mt{prompt.c_str(), true, true};
+    // v2.14.6: designated, not positional. A pin bump inserted `text_len`
+    // second, so the old `{text, true, true}` compiled as text_len=1 /
+    // parse_special=false: mtmd tokenized ONE character, found no media
+    // marker, and every image generate failed (rc=2). Naming the fields
+    // turns the next layout change into a compile error.
+    ::mtmd_input_text mt{.text = prompt.c_str(),
+                         .text_len = prompt.size(),
+                         .add_special = true,
+                         .parse_special = true};
     auto* chunks = mtmd_input_chunks_init();
     std::vector<const ::mtmd_bitmap*> bm_cptrs(
         bitmaps.begin(), bitmaps.end());
@@ -3198,7 +3367,7 @@ GenerationResult LlamaCppBackend::run_sampling_loop(
  * @return GenerationResult; ENTROPIC_ERROR_IMAGE_LOAD_FAILED when a bitmap
  *         could not be built, or the prefill's own error code.
  * @req REQ-INFER-025
- * @version 2.12.0
+ * @version 2.14.6
  */
 GenerationResult LlamaCppBackend::generate_multimodal(
     const std::vector<Message>& messages,
@@ -3222,6 +3391,7 @@ GenerationResult LlamaCppBackend::generate_multimodal(
     auto prompt = render_prompt(marked, params);
     logger->info("Multimodal generate: {} images, prompt={} chars, max_tokens={}",
                  bitmaps.size(), prompt.size(), params.max_tokens);
+    log_rendered_markers(prompt, bitmaps.size());
     std::string prefill_err;
     auto rc = mtmd_prefill(prompt, bitmaps, prefill_err);
     for (auto* b : bitmaps) { mtmd_bitmap_free(b); }
@@ -4513,8 +4683,12 @@ static GenerationResult spec_run_from_tokens(
 
 /**
  * @brief Speculative generation against a draft model (gh#36).
+ *
+ * v2.14.6: reads the tool grammar through active_tool_grammar(), so a
+ * toolless call is not handed the sticky capture of an earlier tooled one.
+ *
  * @utility
- * @version 2.12.0
+ * @version 2.14.6
  */
 GenerationResult LlamaCppBackend::generate_speculative_with_draft(
     const std::vector<Message>& messages,
@@ -4549,7 +4723,8 @@ GenerationResult LlamaCppBackend::generate_speculative_with_draft(
             result = spec_run_from_tokens(
                 ctx_, draft.ctx_, model_, tokens, params, on_token,
                 cancel, n_draft_max, draft_path, t0,
-                tool_grammar_, tool_grammar_lazy_, parse_generation_prompt_);
+                active_tool_grammar(), tool_grammar_lazy_,   // v2.14.6
+                parse_generation_prompt_);
         }
     }
     return result;
@@ -4957,7 +5132,7 @@ int LlamaCppBackend::mtp_reuse_cut(
  *         this route owns the outcome and never degrades to plain decode.
  * @req REQ-INFER-015
  * @req REQ-INFER-005
- * @version 2.12.0-rc1
+ * @version 2.14.6
  */
 GenerationResult LlamaCppBackend::generate_mtp(
     const std::vector<Message>& messages,
@@ -4990,7 +5165,7 @@ GenerationResult LlamaCppBackend::generate_mtp(
         ctx_, mtp_draft_ctx_, model_, tokens, params,
         on_token, cancel, mtp_n_max_,
         effective_stop(params), t0,  // gh#108: honor stops
-        tool_grammar_, tool_grammar_lazy_,   // gh#134
+        active_tool_grammar(), tool_grammar_lazy_,   // gh#134; v2.14.6
         parse_generation_prompt_, reuse_cut);
     // gh#144 (v2.12.0): publish it so last_prefill_tokens() is meaningful
     // under speculative.mtp, exactly as it is on the plain decode path.

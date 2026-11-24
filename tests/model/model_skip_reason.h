@@ -63,7 +63,7 @@ enum class SkipCause {
  * @version 2.13.0
  */
 struct SkipFacts {
-    std::string key;               ///< Registry key, e.g. "qwen3_6_a3b".
+    std::string key;               ///< Registry key, e.g. "gemma4_a4b_iq2".
     std::string path;              ///< Resolved GGUF path.
     uint64_t file_bytes = 0;       ///< GGUF size on disk.
     uint64_t available_bytes = 0;  ///< MemAvailable at the decision.

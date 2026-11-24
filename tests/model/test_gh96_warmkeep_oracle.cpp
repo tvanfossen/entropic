@@ -17,7 +17,7 @@
  * comparison: append-growth, mid-history mutation (prune/compaction),
  * system-prompt swap (tier change), interleaved conversations, cancellation.
  *
- * Requires: GPU + gemma4_e2b GGUF. Run: ctest -L model -R gh96
+ * Requires: GPU + gemma4_e4b_qat GGUF. Run: ctest -L model -R gh96
  *
  * @version 2.7.5
  */
@@ -38,10 +38,10 @@ namespace {
 
 namespace fs = std::filesystem;
 
-fs::path gemma4_e2b() {
+fs::path gemma4_e4b_qat() {
     const char* home = std::getenv("HOME");
     return fs::path(home ? home : "") / ".entropic" / "models"
-           / "gemma-4-E2B-it-Q8_0.gguf";
+           / "gemma-4-E4B-it-qat-UD-Q4_K_XL.gguf";
 }
 
 entropic::ModelConfig base_cfg(const fs::path& gguf) {
@@ -152,8 +152,8 @@ void check_sound(const std::vector<TurnCmp>& recs) {
 
 SCENARIO("gh#96 probe: is greedy decode deterministic run-to-run?",
          "[model][gh96probe]") {
-    fs::path gguf = gemma4_e2b();
-    if (!fs::is_regular_file(gguf)) { SKIP("gemma4_e2b GGUF not present"); }
+    fs::path gguf = gemma4_e4b_qat();
+    if (!fs::is_regular_file(gguf)) { SKIP("gemma4_e4b_qat GGUF not present"); }
 
     GIVEN("the SAME prompt generated twice, cache OFF (identical cold path)") {
         entropic::LlamaCppBackend backend;
@@ -187,8 +187,8 @@ SCENARIO("gh#96 probe: is greedy decode deterministic run-to-run?",
 
 SCENARIO("gh#96 oracle: append-growth — warm output == cold + reuse + faster",
          "[model][gh96]") {
-    fs::path gguf = gemma4_e2b();
-    if (!fs::is_regular_file(gguf)) { SKIP("gemma4_e2b GGUF not present"); }
+    fs::path gguf = gemma4_e4b_qat();
+    if (!fs::is_regular_file(gguf)) { SKIP("gemma4_e4b_qat GGUF not present"); }
 
     GIVEN("a 5-turn conversation, warm vs cold each turn on one backend") {
         auto recs = run_cmp(gguf, 5, nullptr);
@@ -209,8 +209,8 @@ SCENARIO("gh#96 oracle: append-growth — warm output == cold + reuse + faster",
 
 SCENARIO("gh#96 oracle: mid-history mutation (prune/compaction) stays correct",
          "[model][gh96]") {
-    fs::path gguf = gemma4_e2b();
-    if (!fs::is_regular_file(gguf)) { SKIP("gemma4_e2b GGUF not present"); }
+    fs::path gguf = gemma4_e4b_qat();
+    if (!fs::is_regular_file(gguf)) { SKIP("gemma4_e4b_qat GGUF not present"); }
 
     GIVEN("an old message rewritten mid-stream (like prune_old_tool_results)") {
         Mutator prune = [](int t, std::vector<entropic::Message>& m) {
@@ -233,8 +233,8 @@ SCENARIO("gh#96 oracle: mid-history mutation (prune/compaction) stays correct",
 
 SCENARIO("gh#96 oracle: system-prompt swap (tier change) stays correct",
          "[model][gh96]") {
-    fs::path gguf = gemma4_e2b();
-    if (!fs::is_regular_file(gguf)) { SKIP("gemma4_e2b GGUF not present"); }
+    fs::path gguf = gemma4_e4b_qat();
+    if (!fs::is_regular_file(gguf)) { SKIP("gemma4_e4b_qat GGUF not present"); }
 
     GIVEN("the system prompt changing mid-stream") {
         Mutator swap = [](int t, std::vector<entropic::Message>& m) {
@@ -256,8 +256,8 @@ SCENARIO("gh#96 oracle: system-prompt swap (tier change) stays correct",
 
 SCENARIO("gh#96 oracle: two conversations interleaved on one backend",
          "[model][gh96]") {
-    fs::path gguf = gemma4_e2b();
-    if (!fs::is_regular_file(gguf)) { SKIP("gemma4_e2b GGUF not present"); }
+    fs::path gguf = gemma4_e4b_qat();
+    if (!fs::is_regular_file(gguf)) { SKIP("gemma4_e4b_qat GGUF not present"); }
 
     GIVEN("conversations A and B alternating on one warm-keep backend") {
         entropic::LlamaCppBackend backend;
@@ -309,8 +309,8 @@ SCENARIO("gh#96 oracle: two conversations interleaved on one backend",
 
 SCENARIO("gh#96 oracle: cancellation mid-generation leaves clean KV",
          "[model][gh96]") {
-    fs::path gguf = gemma4_e2b();
-    if (!fs::is_regular_file(gguf)) { SKIP("gemma4_e2b GGUF not present"); }
+    fs::path gguf = gemma4_e4b_qat();
+    if (!fs::is_regular_file(gguf)) { SKIP("gemma4_e4b_qat GGUF not present"); }
 
     GIVEN("a warm-keep run where a turn is cancelled, then continues") {
         entropic::LlamaCppBackend backend;

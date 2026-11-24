@@ -5372,15 +5372,18 @@ entropic_error_t entropic_set_residency_observer(
  *         ALREADY_RUNNING.
  * @req REQ-INFER-019
  * @req REQ-API-005
- * @version 2.13.0
+ * @version 2.14.6
  */
 entropic_error_t entropic_release_model(
     entropic_handle_t handle,
     const char* tier_name) {
     auto rc = check_orchestrator(handle);
     entropic::HandleTurnGuard turn(handle);
+    // gh#217 (v2.14.6): EXCLUSIVE. claim() covered only the default
+    // session, so a decode in any other session kept running while this
+    // unloaded its model — a CUDA error that killed `entropic serve`.
     if (rc != ENTROPIC_OK
-        || (handle->engine != nullptr && !turn.claim())) {
+        || (handle->engine != nullptr && !turn.claim_exclusive())) {
         return rc != ENTROPIC_OK ? rc : ENTROPIC_ERROR_ALREADY_RUNNING;
     }
     entropic::HandleApiLock lock(handle);

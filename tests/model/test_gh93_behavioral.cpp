@@ -14,7 +14,7 @@
  *   3. cancel-bridge — `entropic_interrupt` from another thread stops a long
  *      run early (the run returns far faster than a full generation).
  *
- * Requires: GPU + gemma4_e2b (+ Qwen3.5-0.8B for #2). Run: ctest -L model -R gh93
+ * Requires: GPU + gemma4_e4b_qat (+ Qwen3.5-0.8B for #2). Run: ctest -L model -R gh93
  *
  * @version 2.8.0
  */
@@ -53,11 +53,11 @@ SCENARIO("gh#94: enable_thinking:false suppresses think blocks (facade)",
          "[model][gh93][gh94]")
 {
     GIVEN("a gemma tier whose identity sets enable_thinking:false") {
-        fs::path gguf = model_gguf("gemma-4-E2B-it-Q8_0.gguf");
-        if (!fs::is_regular_file(gguf)) { SKIP("gemma4_e2b GGUF absent"); }
+        fs::path gguf = model_gguf("gemma-4-E4B-it-qat-UD-Q4_K_XL.gguf");
+        if (!fs::is_regular_file(gguf)) { SKIP("gemma4_e4b_qat GGUF absent"); }
 
         FacadeProject proj("gh94_thinking");
-        TierSpec t{"lead", "gemma4_e2b", "gemma4",
+        TierSpec t{"lead", "gemma4_e4b_qat", "gemma4",
                    "You are a terse assistant. Answer in one short sentence."};
         t.context_length = 16384;
         t.enable_thinking = false;
@@ -118,11 +118,11 @@ SCENARIO("gh#93: entropic_interrupt stops a long run early (cancel-bridge)",
          "[model][gh93][cancel]")
 {
     GIVEN("a gemma tier and a long generation request") {
-        fs::path gguf = model_gguf("gemma-4-E2B-it-Q8_0.gguf");
-        if (!fs::is_regular_file(gguf)) { SKIP("gemma4_e2b GGUF absent"); }
+        fs::path gguf = model_gguf("gemma-4-E4B-it-qat-UD-Q4_K_XL.gguf");
+        if (!fs::is_regular_file(gguf)) { SKIP("gemma4_e4b_qat GGUF absent"); }
 
         FacadeProject proj("gh93_cancel");
-        TierSpec t{"lead", "gemma4_e2b", "gemma4",
+        TierSpec t{"lead", "gemma4_e4b_qat", "gemma4",
                    "You are a verbose storyteller."};
         t.context_length = 16384;
         entropic_handle_t h = proj.setup({t});

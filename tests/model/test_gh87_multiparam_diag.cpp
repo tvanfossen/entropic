@@ -21,7 +21,7 @@
 // for the common_chat path (LOCAL model, no HDD dependency).
 TEST_CASE("gh#87 diag: multi-parameter tool call — gemma4 (dedicated PEG)",
           "[gh87][model][diag]") {
-    auto path = gh87verify::model_path("gemma-4-E4B-it-Q8_0.gguf");
+    auto path = gh87verify::model_path("gemma-4-E4B-it-qat-UD-Q4_K_XL.gguf");
     if (!std::filesystem::is_regular_file(path)) {
         SKIP("gemma4-e4b GGUF not present at " + path.string());
     }

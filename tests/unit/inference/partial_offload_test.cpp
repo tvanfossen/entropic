@@ -356,3 +356,17 @@ SCENARIO("an expert split does not inherit the fully-offloaded mlock exemption",
         }
     }
 }
+
+SCENARIO("v2.14.6: the WARM-load gate's 'needed' is the number it decides on",
+         "[partial_offload][2.14.6]") {
+    // The harness skip text quoted needed = file + 2 GiB — the first cut this
+    // gate REJECTED (above) — while the decision used 1.5x file + 1 GiB. So
+    // a run reported "only 16327 MiB was available (needs ~14647 MiB)" and
+    // skipped anyway. One function now supplies both.
+    const uint64_t file = 12599ull * 1024 * 1024;
+    const uint64_t needed = entropic::warm_load_needed_bytes(file);
+    THEN("exactly `needed` is admitted and one byte less is not") {
+        CHECK(entropic::host_can_hold_warm_load(file, needed));
+        CHECK_FALSE(entropic::host_can_hold_warm_load(file, needed - 1));
+    }
+}

@@ -66,7 +66,7 @@ inline uint64_t host_available_bytes() {
  * `ctx.skip_reason`; the SCENARIOs read that instead of assuming the second.
  *
  * @param ctx Test context to update (including `skip_reason` on failure).
- * @param key Registry key (e.g. "qwen3_6_a3b").
+ * @param key Registry key (e.g. "qwen3_5_0_8b").
  * @return true on success, false if the GGUF isn't present or the
  *         orchestrator failed to load it.
  * @utility
@@ -104,6 +104,11 @@ inline bool init_orchestrator_for_v219_family(ModelTestContext& ctx,
     auto& tier = ctx.config.models.tiers[ctx.config.models.default_tier];
     tier.path = path;
     tier.adapter = entry->adapter;
+    // v2.14.6: the default tier's projector belongs to the model it USED to
+    // name (gemma4_e4b_mmproj in the dev config, n_embd 2560). Left on the
+    // A4B (2816), Nemotron (3136) or Qwen3.5-0.8B (1024) it fails mmproj init
+    // at activation — the same defect use_small_default_model guards against.
+    repoint_mmproj(ctx, tier, *entry, ctx.config.models.default_tier);
     // v2.1.9 family tests are smoke + single-shot tool-call fixtures —
     // prompts are tens of tokens and max_tokens is 256. Override the
     // tier's default context_length (typically 32K) down to a small
@@ -137,11 +142,15 @@ inline bool init_orchestrator_for_v219_family(ModelTestContext& ctx,
     // for the model — production configs override `gpu_layers`
     // explicitly via YAML.
     //
-    // Threshold rationale: ~10 GB matches gemma4_a4b (13.6 GB) and
-    // qwen3_6_a3b (13.2 GB) on the upper side; the e4b (4.5 GB),
-    // e4b_q4 (4.8 GB), e2b (2.5 GB), nemotron3 (3.1 GB) all stay
-    // well below and continue full GPU offload (the prior behavior).
+    // v2.14.6: placement is no longer decided by file size. gemma4_a4b_iq2
+    // (9.33 GiB) sat just under the 10 GiB threshold, loaded all 31 layers
+    // (9.5 GB) and then OOM'd the 535 MB compute buffer on the 11 GB card —
+    // weights fitting is not the model fitting. Every family load now uses
+    // `gpu_layers: auto` (set below), so the engine's own placement decides
+    // against free VRAM; a model that fits still gets every layer. The size
+    // threshold only gates mlock now (pageable CPU-side weights).
     constexpr uintmax_t LARGE_GGUF_BYTES = 10ULL * 1024 * 1024 * 1024;
+    tier.gpu_layers_auto = true;
     // v2.7.0: 20 → 15. At 20 the 13GB A3B/A4B GGUFs need ~8.8GB VRAM +
     // a ~0.5GB compute buffer; with the desktop GPU at ~1.8GB the 11GB
     // 1080 Ti OOM'd the compute-buffer alloc (model-results run7). 15
@@ -157,6 +166,10 @@ inline bool init_orchestrator_for_v219_family(ModelTestContext& ctx,
     // host usage is the whole file, and on a 31 GB box already holding ~15 GB
     // that is a coin flip rather than a clean failure.
     //
+    // v2.14.6: no on-disk model reaches this gate any more (the only
+    // qwen36-adapter model, the 13 GB Qwen3.6-35B-A3B, left the set); it
+    // stays as the rule for anyone who loads one.
+    //
     // Scoped to the hybrid/recurrent Qwen family deliberately: the dense
     // gemma4 26B-A4B is LARGER (13.6 GB vs 12.3 GB) and passes, so this is
     // not a size rule. Gating on size would skip a test that works.
@@ -167,19 +180,26 @@ inline bool init_orchestrator_for_v219_family(ModelTestContext& ctx,
     if (!size_ec && file_size > LARGE_GGUF_BYTES
         && entry->adapter == "qwen36") {
         facts.available_bytes = host_available_bytes();
-        facts.needed_bytes = file_size + (2ULL * 1024 * 1024 * 1024);
+        facts.needed_bytes = entropic::warm_load_needed_bytes(file_size);  // v2.14.6: the deciding number
         // gh#149: these are TWO rules, and until v2.13.0 both logged the RAM
         // text — so an explicit operator allowance was recorded as a host
         // that had run out of memory. An allowance is a decision someone
         // made; a shortfall is a measurement. They read differently now.
+        //
+        // v2.14.6: the host-RAM shortfall no longer SKIPS. The load below is
+        // auto-sized to this machine (gpu_layers: auto against free VRAM, mlock
+        // off so the CPU-side weights stay pageable), so a test that can run
+        // here must run here; the RAM estimate is logged as a measurement.
+        // Only an operator's explicit waiver still skips.
         const bool waived = entropic::large_model_tests_waived(file_size);
-        const bool fits = entropic::host_can_hold_warm_load(
-            file_size, facts.available_bytes);
-        if (waived || !fits) {
+        spdlog::info("v2.1.9 family: '{}' host MemAvailable {} MiB vs a "
+                     "conservative WARM estimate of {} MiB — loading "
+                     "auto-sized (not gated)", key,
+                     facts.available_bytes / (1024ULL * 1024),
+                     facts.needed_bytes / (1024ULL * 1024));
+        if (waived) {
             ctx.skip_reason = entropic::test::skip_reason_text(
-                waived ? entropic::test::SkipCause::kLargeModelWaived
-                       : entropic::test::SkipCause::kHostRamInsufficient,
-                facts);
+                entropic::test::SkipCause::kLargeModelWaived, facts);
             // One string, logged and reported — they cannot drift apart.
             spdlog::warn("v2.1.9 family: SKIPPING — {}", ctx.skip_reason);
             return false;
@@ -202,7 +222,7 @@ inline bool init_orchestrator_for_v219_family(ModelTestContext& ctx,
         // against free VRAM) — it now lives behind `gpu_layers: auto`, so the
         // harness and a consumer's config get the identical derivation
         // rather than the harness being the only place that knows it.
-        tier.gpu_layers_auto = true;
+        // (v2.14.6: gpu_layers_auto is now set for every family load above.)
         // v2.12.0: and UNPIN it. Clamping gpu_layers puts ~6.6 GB of a 13 GB
         // GGUF on the CPU side, but use_mlock defaults to true, so llama.cpp
         // tries to lock that portion into unevictable RAM — locking up to

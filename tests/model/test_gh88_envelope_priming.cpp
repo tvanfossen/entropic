@@ -40,7 +40,7 @@
 
 #include <entropic/inference/interface_factory.h>  // gh#88: production iface
 
-namespace { constexpr char K_GEMMA4_E4B[] = "gemma4_e4b"; }
+namespace { constexpr char K_GEMMA4_E4B[] = "gemma4_e4b_qat"; }
 CATCH_REGISTER_LISTENER(V219FamilyListener<K_GEMMA4_E4B>)
 
 namespace {
@@ -112,7 +112,7 @@ SCENARIO("gh#88: a gemma multi-turn session never accumulates a parrotable "
          "[model][gh88][gemma4][emergent]")
 {
     if (!g_ctx.initialized) {
-        SKIP(skip_reason_or_default("gemma4_e4b"));
+        SKIP(skip_reason_or_default("gemma4_e4b_qat"));
     }
     GIVEN("a gemma engine loop whose tool results are meta {action} envelopes") {
         start_test_log("gh88_envelope_priming");
@@ -189,7 +189,7 @@ SCENARIO("gh#88: a parroted {action:...} emission dispatches via the gemma "
          "[model][gh88][gemma4][recovery]")
 {
     if (!g_ctx.initialized) {
-        SKIP(skip_reason_or_default("gemma4_e4b"));
+        SKIP(skip_reason_or_default("gemma4_e4b_qat"));
     }
     GIVEN("the gemma backend warmed onto its common_chat-reliable parse path") {
         start_test_log("gh88_recovery");

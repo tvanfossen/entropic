@@ -39,7 +39,7 @@ std::filesystem::path gemma4_a4b_path() {
     const char* home = std::getenv("HOME");
     if (home == nullptr || home[0] == '\0') { return {}; }
     return std::filesystem::path(home) / ".entropic" / "models"
-         / "gemma-4-26B-A4B-it-UD-IQ4_XS.gguf";
+         / "gemma-4-26B-A4B-it-UD-IQ2_M.gguf";
 }
 
 entropic::ModelConfig make_a4b_config(const std::filesystem::path& gguf) {
@@ -47,7 +47,10 @@ entropic::ModelConfig make_a4b_config(const std::filesystem::path& gguf) {
     cfg.path = gguf;
     cfg.adapter = "gemma4";
     cfg.context_length = 4096;
-    cfg.gpu_layers = 15;     // 26B partial CPU offload on an 11GB GPU (v2.7.4: 20->15, OOM headroom)
+    // 26B partial offload (v2.7.4: 20->15, OOM headroom). v2.14.6: the
+    // UD-IQ2_M fits the 11GB card whole, but 15 stays as the VRAM-safe
+    // split — this is a correctness-only test.
+    cfg.gpu_layers = 15;
     cfg.keep_warm = false;
     cfg.use_mlock = false;
     cfg.flash_attn = false;

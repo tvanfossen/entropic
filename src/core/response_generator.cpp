@@ -396,7 +396,7 @@ static std::string resolve_stream_finish_reason(int rc,
  * @param mode Label for the log line ("stream"/"batch").
  * @return {messages_json, params_json}.
  * @req REQ-LOOP-007
- * @version 2.12.0
+ * @version 2.14.6 [reviewed]
  */
 std::pair<std::string, std::string> ResponseGenerator::prepare_prompts(
     LoopContext& ctx, const char* mode) {
@@ -408,8 +408,16 @@ std::pair<std::string, std::string> ResponseGenerator::prepare_prompts(
     logger->info("Generate ({}): tier={}, {} messages",
                  mode, ctx.locked_tier, messages.size());
     log_prompt(messages, ctx.locked_tier);
+    // v2.14.6: "1" forces any tool call; "complete" (the nudged turn already
+    // answered in prose) forces the call AND offers entropic.complete only.
+    auto force = ctx.metadata.find("force_tool_call");
+    const std::string mode_value =
+        force != ctx.metadata.end() ? force->second : "";
     return {serialize_messages(messages),
-            build_params_json(ctx.locked_tier, ctx.session_key)};
+            build_params_json(ctx.locked_tier, ctx.session_key,
+                              !mode_value.empty(),
+                              mode_value == "complete" ? "entropic.complete"
+                                                       : "")};
 }
 
 /**
@@ -793,6 +801,34 @@ static void serialize_content_parts(
 }
 
 /**
+ * @brief Append a message's tool-use fields to its prompt JSON (v2.14.6).
+ *
+ * The model never saw its own tool calls: only role + content travelled, so
+ * the history read "question, empty reply, result" and the model learned to
+ * write result-shaped prose instead of calling (test-outside-root-approval).
+ * These fields let the backend render the template's native tool turns.
+ *
+ * @param m Message.
+ * @param json Output being built (one object, before its closing brace).
+ * @utility
+ * @version 2.14.6
+ */
+static void append_tool_fields(const Message& m, std::string& json) {
+    const auto& md = m.metadata;
+    const auto calls = md.find(tool_meta::kCalls);
+    if (calls != md.end()) {
+        json += ",\"" + std::string(tool_meta::kCalls) + "\":" + calls->second;
+    }
+    for (const char* key : {tool_meta::kCallText, tool_meta::kCallId, tool_meta::kName}) {
+        const auto it = md.find(key);
+        if (it == md.end()) { continue; }
+        json += ",\"" + std::string(key) + "\":\"";
+        json_escape_into(it->second, json);
+        json += '"';
+    }
+}
+
+/**
  * @brief Serialize a message list to the engine-canonical JSON wire shape.
  *
  * Hand-rolled — core has no nlohmann/json dependency (design rule
@@ -804,7 +840,7 @@ static void serialize_content_parts(
  * @param messages Message vector to serialize.
  * @return JSON array string ready for entropic_inference_generate.
  * @utility
- * @version 2.1.8
+ * @version 2.14.6
  */
 std::string ResponseGenerator::serialize_messages(
     const std::vector<Message>& messages) {
@@ -819,10 +855,60 @@ std::string ResponseGenerator::serialize_messages(
         } else {
             serialize_content_parts(messages[i].content_parts, json);
         }
+        append_tool_fields(messages[i], json);  // v2.14.6
         json += '}';
     }
     json += ']';
     return json;
+}
+
+/**
+ * @brief Narrow a tier's tool defs to the one named tool (v2.14.6).
+ *
+ * The forced retry after a prose answer may only conclude, so it is offered
+ * entropic.complete alone and the forced grammar has nothing else to pick.
+ * When the tier was never offered that tool the defs are returned unchanged,
+ * the miss is logged as an ERROR, and @p offered is cleared so the caller
+ * does not force the retry: forcing "any tool" on a tier that cannot conclude
+ * only manufactures calls, and keeps the model from narrating into the
+ * iteration cap or the thinking-budget cut, its only exits (v2.14.6 gate,
+ * gh#181). configure refusing such a tier is gh#213. [reviewed]: added
+ * `offered` so the caller can leave an unconcludable retry unforced.
+ *
+ * @param tools_json Tier tool defs (MCP JSON array string).
+ * @param only_tool Tool name to keep.
+ * @param tier Tier name (for the log line).
+ * @param offered Set to whether the tier is offered @p only_tool.
+ * @return Array holding only @p only_tool, or @p tools_json unchanged.
+ * @req REQ-LOOP-004
+ * @version 2.14.6 [reviewed]
+ */
+static std::string restrict_tools(const std::string& tools_json,
+                                  const std::string& only_tool,
+                                  const std::string& tier,
+                                  bool& offered) {
+    auto all = nlohmann::json::parse(tools_json, nullptr, false);
+    auto kept = nlohmann::json::array();
+    if (all.is_array()) {
+        for (const auto& t : all) {
+            if (t.is_object() && t.value("name", "") == only_tool) {
+                kept.push_back(t);
+            }
+        }
+    }
+    std::string out = tools_json;
+    offered = !kept.empty();
+    if (!offered) {
+        logger->error("[tools] tier '{}': forced retry may only call '{}', "
+                      "but the tier is not offered it; keeping its tools {} "
+                      "and NOT forcing the retry",
+                      tier, only_tool, tools_json);
+    } else {
+        logger->info("[tools] tier '{}': forced retry offers only '{}'",
+                     tier, only_tool);
+        out = kept.dump();
+    }
+    return out;
 }
 
 /**
@@ -835,29 +921,43 @@ std::string ResponseGenerator::serialize_messages(
  * string injection.
  *
  * @param tier Locked tier name.
- * @return JSON string {tier, tools?}.
+ * @param session_key Session key ("" omitted).
+ * @param force_tool_call v2.14.6: force this generation's tool call.
+ * @param only_tool v2.14.6: when non-empty, offer only this tool; a tier not
+ *        offered it gets its own tools and an UNforced generation.
+ * @return JSON string {tier, session?, force_tool_call?, tools?}.
  * @req REQ-IDEN-001
- * @version 2.7.0
+ * @version 2.14.6 [reviewed 2]
  */
 std::string ResponseGenerator::build_params_json(
-    const std::string& tier, const std::string& session_key) {
+    const std::string& tier, const std::string& session_key,
+    bool force_tool_call, const std::string& only_tool) {
     nlohmann::json j = nlohmann::json::object();
     if (!tier.empty()) { j["tier"] = tier; }
     // gh#144 (v2.12.0): only emitted when non-empty, so a handle that never
     // names a session sends a byte-identical params payload.
     if (!session_key.empty()) { j["session"] = session_key; }
 
+    bool offered = true;
     if (inference_.get_tool_prompt != nullptr) {
         char* tools = nullptr;
         int rc = inference_.get_tool_prompt(
             tier.c_str(), &tools, inference_.tool_prompt_data);
         if (rc == 0 && tools != nullptr) {
-            j["tools"] = std::string(tools);
+            j["tools"] = only_tool.empty()
+                ? std::string(tools)
+                : restrict_tools(tools, only_tool, tier, offered);
             if (inference_.free_fn) { inference_.free_fn(tools); }
         }
     }
+    // v2.14.6: forced only when the retry can actually conclude.
+    if (force_tool_call && offered) { j["force_tool_call"] = true; }
     return j.dump();
 }
+
+/// v2.14.6: the iteration counter is sent only in the final this-many
+/// iterations of the budget (REQ-LOOP-007).
+static constexpr int kReminderWindow = 3;
 
 /**
  * @brief Append "[engine] iteration N/MAX, tool calls so far K." as a
@@ -875,10 +975,15 @@ std::string ResponseGenerator::build_params_json(
  * most-recent context the model sees before generating — and is not
  * persisted into ctx.messages. (#16)
  *
+ * v2.14.6: only when it matters — the iteration counter in the final
+ * kReminderWindow iterations, and the one-shot validation / anti-spiral
+ * lines whenever they are set. An ordinary turn carries no note.
+ *
  * @return A copy of the message list with the reminder appended as a
- *         trailing user message; the caller's ctx.messages is unchanged.
+ *         trailing user message when there is one to send; the caller's
+ *         ctx.messages is unchanged.
  * @req REQ-LOOP-007
- * @version 2.1.4
+ * @version 2.14.6
  */
 std::vector<Message> ResponseGenerator::inject_engine_state_reminder(
     const std::vector<Message>& messages,
@@ -886,18 +991,26 @@ std::vector<Message> ResponseGenerator::inject_engine_state_reminder(
     int max_iter = ctx.effective_max_iterations >= 0
         ? ctx.effective_max_iterations
         : loop_config_.max_iterations;
-    std::string reminder = "[engine] iteration "
-        + std::to_string(ctx.metrics.iterations)
-        + "/" + std::to_string(max_iter)
-        + ", tool calls so far: "
-        + std::to_string(ctx.metrics.tool_calls) + ".";
+    // v2.14.6: the counter shows only near the budget. Sent every turn, the
+    // model read it as the user's request ("I see you've provided a status
+    // update", test-v2141) — after a native tool response it is the only
+    // plain user text left. Where the budget is close it is worth saying.
+    std::string reminder;
+    if (max_iter - ctx.metrics.iterations < kReminderWindow) {
+        reminder = "[engine] iteration "
+            + std::to_string(ctx.metrics.iterations)
+            + "/" + std::to_string(max_iter)
+            + ", tool calls so far: "
+            + std::to_string(ctx.metrics.tool_calls) + ".";
+    }
 
     // Demo ask #2 (v2.1.0): if the previous turn was validator-rejected,
     // surface the reason so the model knows WHY it's being asked again.
     // Engine clears pending_validation_feedback after this turn — the
     // line is one-shot.
     if (!ctx.pending_validation_feedback.empty()) {
-        reminder += "\n[engine] previous turn rejected: "
+        reminder += (reminder.empty() ? "" : "\n")
+                  + std::string("[engine] previous turn rejected: ")
                   + ctx.pending_validation_feedback;
     }
     // Demo ask #5 (v2.1.0): anti-spiral primitive. ToolExecutor
@@ -905,15 +1018,18 @@ std::vector<Message> ResponseGenerator::inject_engine_state_reminder(
     // max_consecutive_same_tool. Same one-shot lifecycle as the
     // validation feedback above; engine clears after this turn.
     if (!ctx.pending_anti_spiral_warning.empty()) {
-        reminder += "\n[engine] anti-spiral: "
+        reminder += (reminder.empty() ? "" : "\n")
+                  + std::string("[engine] anti-spiral: ")
                   + ctx.pending_anti_spiral_warning;
     }
 
     auto result = messages;
-    Message reminder_msg;
-    reminder_msg.role = "user";
-    reminder_msg.content = std::move(reminder);
-    result.push_back(std::move(reminder_msg));
+    if (!reminder.empty()) {
+        Message reminder_msg;
+        reminder_msg.role = "user";
+        reminder_msg.content = std::move(reminder);
+        result.push_back(std::move(reminder_msg));
+    }
     return result;
 }
 

@@ -3,7 +3,7 @@
  * @file test_gh106_mtp.cpp
  * @brief gh#106 (v2.9.0): target-owned MTP speculative decode.
  *
- * The MTP head (mtp-gemma-4-E2B-it.gguf, a trunk-sharing "gemma4-assistant"
+ * The MTP head (mtp-gemma-4-E4B-it.gguf, a trunk-sharing "gemma4-assistant"
  * GGUF) drafts tokens the target verifies against its OWN greedy logits, so
  * the path is lossless BY CONSTRUCTION: at temp=0, sample_and_accept_n only
  * accepts a draft token when it equals the target's argmax.
@@ -60,8 +60,8 @@ std::vector<entropic::Message> continuation_prompt() {
 
 TEST_CASE("gh#106 MTP kernel: engaged + lossless-coherent",
           "[model][gh106][mtp][speculative]") {
-    auto target = gh87verify::model_path("gemma-4-E2B-it-Q8_0.gguf");
-    auto head = gh87verify::model_path("mtp-gemma-4-E2B-it.gguf");
+    auto target = gh87verify::model_path("gemma-4-E4B-it-qat-UD-Q4_K_XL.gguf");
+    auto head = gh87verify::model_path("mtp-gemma-4-E4B-it.gguf");
     if (!std::filesystem::is_regular_file(target)) {
         SKIP("MTP target GGUF not present: " + target.string());
     }

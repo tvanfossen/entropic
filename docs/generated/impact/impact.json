@@ -2,192 +2,231 @@
   "schema_version": 1,
   "entries": [
     {
-      "req_id": "REQ-INFER-002",
-      "req_name": "Teardown releases every model, context and adapter handle",
+      "req_id": "REQ-LOOP-009",
+      "req_name": "Per-session-key run concurrency, on by default, with one lock on the generation path",
       "functions": [
         {
-          "name": "do_load_active",
-          "file": "src/inference/llama_cpp_backend.cpp",
-          "version": "2.13.0 [reviewed]"
+          "name": "execute_tool",
+          "file": "src/mcp/tool_executor.cpp",
+          "version": "2.14.6 [reviewed]"
+        }
+      ]
+    },
+    {
+      "req_id": "REQ-MCP-001",
+      "req_name": "MCPServerBase holds the shared logic; concrete servers override only deltas",
+      "functions": [
+        {
+          "name": "set_working_dir",
+          "file": "src/mcp/server_base.cpp",
+          "version": "1.8.5"
+        }
+      ]
+    },
+    {
+      "req_id": "REQ-MCP-002",
+      "req_name": "Tool results always cross boundaries as a ServerResponse JSON envelope",
+      "functions": [
+        {
+          "name": "disconnected_error",
+          "file": "src/mcp/server_manager.cpp",
+          "version": "1.8.7"
         },
         {
-          "name": "teardown_mtp_draft",
-          "file": "src/inference/llama_cpp_backend.cpp",
-          "version": "2.9.1"
+          "name": "parse_tool_result_text",
+          "file": "src/mcp/tool_executor.cpp",
+          "version": "2.3.7"
         },
         {
-          "name": "~LlamaCppBackend",
-          "file": "src/inference/llama_cpp_backend.cpp",
-          "version": "2.2.8"
+          "name": "execute_tool",
+          "file": "src/mcp/tool_executor.cpp",
+          "version": "2.14.6 [reviewed]"
+        }
+      ]
+    },
+    {
+      "req_id": "REQ-MCP-007",
+      "req_name": "Tool calls route by server prefix uniformly across all three server kinds",
+      "functions": [
+        {
+          "name": "connect_external_server",
+          "file": "src/mcp/server_manager.cpp",
+          "version": "2.14.0"
+        }
+      ]
+    },
+    {
+      "req_id": "REQ-MCP-009",
+      "req_name": "Operator permission gate with deny precedence and server-derived patterns",
+      "functions": [
+        {
+          "name": "args_to_pattern",
+          "file": "src/mcp/server_manager.cpp",
+          "version": "1.8.5"
         },
         {
-          "name": "do_unload",
-          "file": "src/inference/llama_cpp_backend.cpp",
+          "name": "check_approval",
+          "file": "src/mcp/tool_executor.cpp",
+          "version": "2.14.6"
+        }
+      ]
+    },
+    {
+      "req_id": "REQ-MCP-010",
+      "req_name": "Per-identity MCP key authorization is opt-in but default-deny once enabled",
+      "functions": [
+        {
+          "name": "check_mcp_authorization",
+          "file": "src/mcp/tool_executor.cpp",
+          "version": "2.14.6"
+        }
+      ]
+    },
+    {
+      "req_id": "REQ-MCP-011",
+      "req_name": "Every tool declares its required access level, defaulting to WRITE",
+      "functions": [
+        {
+          "name": "check_mcp_authorization",
+          "file": "src/mcp/tool_executor.cpp",
+          "version": "2.14.6"
+        }
+      ]
+    },
+    {
+      "req_id": "REQ-MCP-012",
+      "req_name": "Tool calls pass an ordered precondition pipeline with typed rejection kinds",
+      "functions": [
+        {
+          "name": "requires_approval",
+          "file": "src/mcp/server_base.cpp",
+          "version": "2.14.6"
+        },
+        {
+          "name": "requires_approval",
+          "file": "src/mcp/server_manager.cpp",
+          "version": "2.14.6"
+        },
+        {
+          "name": "requires_approval",
+          "file": "src/mcp/servers/entropic_server.cpp",
+          "version": "2.14.6"
+        },
+        {
+          "name": "check_approval",
+          "file": "src/mcp/tool_executor.cpp",
+          "version": "2.14.6"
+        },
+        {
+          "name": "check_mcp_authorization",
+          "file": "src/mcp/tool_executor.cpp",
+          "version": "2.14.6"
+        }
+      ]
+    },
+    {
+      "req_id": "REQ-MCP-013",
+      "req_name": "Tool arguments are validated against the declared JSON schema before dispatch",
+      "functions": [
+        {
+          "name": "normalize_args",
+          "file": "src/mcp/server_base.cpp",
           "version": "2.12.0"
         }
       ]
     },
     {
-      "req_id": "REQ-INFER-005",
-      "req_name": "Every decode path honours cooperative cancellation within one token",
+      "req_id": "REQ-MCP-015",
+      "req_name": "Duplicates, errors, and denials return corrective guidance, not bare failure",
       "functions": [
         {
-          "name": "generate_after_prefill",
-          "file": "src/inference/llama_cpp_backend.cpp",
+          "name": "create_denied_message",
+          "file": "src/mcp/tool_executor.cpp",
           "version": "2.14.6"
         },
         {
-          "name": "do_generate_text_only",
-          "file": "src/inference/llama_cpp_backend.cpp",
-          "version": "2.13.2"
+          "name": "create_error_message",
+          "file": "src/mcp/tool_executor.cpp",
+          "version": "2.14.6"
         },
         {
-          "name": "do_generate_streaming_text_only",
-          "file": "src/inference/llama_cpp_backend.cpp",
-          "version": "2.13.2"
-        },
-        {
-          "name": "generate_mtp",
-          "file": "src/inference/llama_cpp_backend.cpp",
+          "name": "create_duplicate_message",
+          "file": "src/mcp/tool_executor.cpp",
           "version": "2.14.6"
         }
       ]
     },
     {
-      "req_id": "REQ-INFER-006",
-      "req_name": "Sampler chain construction has a fixed order and default-preserving gating",
+      "req_id": "REQ-MCP-020",
+      "req_name": "A bounded, thread-safe ring buffer retains recent tool calls for introspection",
       "functions": [
         {
-          "name": "to_common_sampling",
-          "file": "src/inference/llama_cpp_backend.cpp",
-          "version": "2.10.4"
+          "name": "execute_tool",
+          "file": "src/mcp/tool_executor.cpp",
+          "version": "2.14.6 [reviewed]"
         }
       ]
     },
     {
-      "req_id": "REQ-INFER-008",
-      "req_name": "Every declared grammar source reaches the sampler and exactly one wins",
+      "req_id": "REQ-MCP-024",
+      "req_name": "Engine-level entropic.* tools validate their arguments and emit typed directives",
       "functions": [
         {
-          "name": "patch_gemma4_required_root",
-          "file": "src/inference/gemma4_required_grammar.h",
-          "version": "2.14.6"
-        },
-        {
-          "name": "tool_grammar_for",
-          "file": "src/inference/llama_cpp_backend.cpp",
-          "version": "2.14.6"
-        },
-        {
-          "name": "to_common_sampling",
-          "file": "src/inference/llama_cpp_backend.cpp",
-          "version": "2.10.4"
+          "name": "followup_results",
+          "file": "src/mcp/servers/entropic_server.cpp",
+          "version": "2.14.0"
         }
       ]
     },
     {
-      "req_id": "REQ-INFER-009",
-      "req_name": "Tool staging drives a native render whose parse context is captured",
+      "req_id": "REQ-MCP-025",
+      "req_name": "External servers are discovered safely, directive-stripped, and health-monitored",
       "functions": [
         {
-          "name": "to_common_chat",
-          "file": "src/inference/llama_cpp_backend.cpp",
-          "version": "2.14.6"
+          "name": "connect_declared_servers",
+          "file": "include/entropic/mcp/server_manager.h",
+          "version": "2.14.0"
         },
         {
-          "name": "render_with_tools",
-          "file": "src/inference/llama_cpp_backend.cpp",
-          "version": "2.14.6"
+          "name": "connect_discovered_servers",
+          "file": "include/entropic/mcp/server_manager.h",
+          "version": "2.14.0"
         },
         {
-          "name": "parse_response",
-          "file": "src/inference/llama_cpp_backend.cpp",
-          "version": "2.9.0"
+          "name": "initialize_external_servers",
+          "file": "src/mcp/server_manager.cpp",
+          "version": "2.14.0"
+        },
+        {
+          "name": "connect_declared_servers",
+          "file": "src/mcp/server_manager.cpp",
+          "version": "2.14.0"
+        },
+        {
+          "name": "connect_discovered_servers",
+          "file": "src/mcp/server_manager.cpp",
+          "version": "2.14.0"
+        },
+        {
+          "name": "connect_external_server",
+          "file": "src/mcp/server_manager.cpp",
+          "version": "2.14.0"
+        },
+        {
+          "name": "disconnected_error",
+          "file": "src/mcp/server_manager.cpp",
+          "version": "1.8.7"
         }
       ]
     },
     {
-      "req_id": "REQ-INFER-015",
-      "req_name": "MTP speculative decode fails loud and never silently falls back",
+      "req_id": "REQ-MCP-027",
+      "req_name": "Named workspaces bind a session to its own tool root and servers",
       "functions": [
         {
-          "name": "effective_n_draft",
-          "file": "src/inference/llama_cpp_backend.cpp",
-          "version": "2.11.0"
-        },
-        {
-          "name": "mtp_guard",
-          "file": "src/inference/llama_cpp_backend.cpp",
-          "version": "2.11.0"
-        },
-        {
-          "name": "generate_mtp",
-          "file": "src/inference/llama_cpp_backend.cpp",
-          "version": "2.14.6"
-        }
-      ]
-    },
-    {
-      "req_id": "REQ-INFER-025",
-      "req_name": "Multimodal input is bounded, tier-gated and degrades gracefully",
-      "functions": [
-        {
-          "name": "generate_multimodal",
-          "file": "src/inference/llama_cpp_backend.cpp",
-          "version": "2.12.0"
-        }
-      ]
-    },
-    {
-      "req_id": "REQ-INFER-026",
-      "req_name": "A prompt that cannot fit the tier context is refused, never decoded",
-      "functions": [
-        {
-          "name": "refuse_over_context",
-          "file": "src/inference/llama_cpp_backend.cpp",
-          "version": "2.13.0"
-        }
-      ]
-    },
-    {
-      "req_id": "REQ-INFER-027",
-      "req_name": "Expert-tensor offload places routed experts on the host while attention and KV stay resident (EXPERIMENTAL)",
-      "functions": [
-        {
-          "name": "build_load_mparams",
-          "file": "src/inference/llama_cpp_backend.cpp",
-          "version": "2.13.0"
-        },
-        {
-          "name": "model_expert_count",
-          "file": "src/inference/llama_cpp_backend.cpp",
-          "version": "2.13.0"
-        },
-        {
-          "name": "do_load_active",
-          "file": "src/inference/llama_cpp_backend.cpp",
-          "version": "2.13.0 [reviewed]"
-        },
-        {
-          "name": "expert_offload_admits",
-          "file": "src/inference/llama_cpp_backend.cpp",
-          "version": "2.13.0"
-        },
-        {
-          "name": "load_gpu_model",
-          "file": "src/inference/llama_cpp_backend.cpp",
-          "version": "2.13.0 [reviewed]"
-        }
-      ]
-    },
-    {
-      "req_id": "REQ-TYPE-004",
-      "req_name": "Sentinel count members bound enum validity and force exhaustive wiring",
-      "functions": [
-        {
-          "name": "do_supports",
-          "file": "src/inference/llama_cpp_backend.cpp",
-          "version": "1.9.13"
+          "name": "execute_tool",
+          "file": "src/mcp/tool_executor.cpp",
+          "version": "2.14.6 [reviewed]"
         }
       ]
     }

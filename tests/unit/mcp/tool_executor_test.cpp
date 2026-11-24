@@ -8,6 +8,7 @@
 #include <entropic/core/hook_registry.h>
 #include <entropic/mcp/server_base.h>
 #include <entropic/mcp/server_manager.h>
+#include <entropic/mcp/servers/entropic_server.h>
 #include <entropic/mcp/tool_base.h>
 #include <entropic/mcp/tool_executor.h>
 #include <catch2/catch_test_macros.hpp>
@@ -18,6 +19,9 @@
 using namespace entropic;
 
 // ── Test tools and server ────────────────────────────────
+// v2.14.6: internal linkage — tool_calling_loop_test.cpp in the same binary
+// defines a different FailTool/FailServer (ODR violation, heap corruption).
+namespace {
 
 /**
  * @brief Test tool that returns "ok".
@@ -240,6 +244,8 @@ private:
     FailTool tool_; ///< The always-failing tool
 };
 
+} // namespace
+
 // ── Helper ───────────────────────────────────────────────
 
 /**
@@ -377,6 +383,52 @@ TEST_CASE("Headless mode denies without callback", "[tool_executor]") {
         ctx, {make_call("ok.do_thing")});
     REQUIRE(results.size() == 1);
     REQUIRE(results[0].content.find("denied") != std::string::npos);
+}
+
+// v2.14.6: an engine directive is the engine talking to itself, not an
+// action on the user's system. A headless host (no approval callback, no
+// auto-approve) denied entropic.complete, so a forced completion retry could
+// never conclude the turn (test-gh144-bridge-queue: empty replies).
+SCENARIO("v2.14.6: a headless host still dispatches engine directives",
+         "[tool_executor][approval]") {
+    GIVEN("a manager with the built-in entropic server and a gated tool, "
+          "no approval callback and auto-approve off") {
+        PermissionsConfig perms;
+        ServerManager mgr(perms, "/tmp/test");
+        mgr.register_server(std::make_unique<OkServer>());
+        mgr.register_server(std::make_unique<EntropicServer>(
+            std::vector<std::string>{"lead", "eng"}, TEST_DATA_DIR));
+        mgr.initialize();
+        LoopConfig lc;
+        lc.auto_approve_tools = false;
+        EngineCallbacks cb;
+        ToolExecutor executor(mgr, lc, cb);
+
+        WHEN("the model calls entropic.complete") {
+            LoopContext ctx;
+            ToolCall call = make_call("entropic.complete");
+            call.arguments["summary"] = "done";
+            auto results = executor.process_tool_calls(ctx, {call});
+            THEN("it is dispatched, not denied") {
+                REQUIRE(results.size() == 1);
+                INFO("result: " << results[0].content);
+                CHECK(results[0].content.find("denied") == std::string::npos);
+                // The directive envelope (the engine later defangs it to
+                // "(engine: complete directive accepted)").
+                CHECK(results[0].content.find("\"action\":\"complete\"")
+                      != std::string::npos);
+            }
+        }
+        WHEN("the model calls a non-directive tool") {
+            LoopContext ctx;
+            auto results = executor.process_tool_calls(
+                ctx, {make_call("ok.do_thing")});
+            THEN("the approval gate still denies it") {
+                REQUIRE(results.size() == 1);
+                CHECK(results[0].content.find("denied") != std::string::npos);
+            }
+        }
+    }
 }
 
 TEST_CASE("Auto approve skips callback", "[tool_executor]") {

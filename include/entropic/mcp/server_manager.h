@@ -357,6 +357,15 @@ public:
     bool skip_duplicate_check(const std::string& tool_name) const;
 
     /**
+     * @brief Whether a tool call needs the host's approval.
+     * @param tool_name Fully-qualified tool name.
+     * @return The owning IN-PROCESS server's answer; true for a plugin,
+     *         external or unknown prefix, which can never exempt itself.
+     * @version 2.14.6
+     */
+    bool requires_approval(const std::string& tool_name) const;
+
+    /**
      * @brief Get the required access level for a tool.
      * @param tool_name Fully-qualified tool name (e.g., "filesystem.read_file").
      * @return MCPAccessLevel required, or WRITE if tool not found.

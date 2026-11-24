@@ -2,15 +2,19 @@
 
 | REQ | Name | Functions Changed |
 |-----|------|-------------------|
-| REQ-INFER-002 | Teardown releases every model, context and adapter handle | do_load_active, teardown_mtp_draft, ~LlamaCppBackend, do_unload |
-| REQ-INFER-005 | Every decode path honours cooperative cancellation within one token | generate_after_prefill, do_generate_text_only, do_generate_streaming_text_only, generate_mtp |
-| REQ-INFER-006 | Sampler chain construction has a fixed order and default-preserving gating | to_common_sampling |
-| REQ-INFER-008 | Every declared grammar source reaches the sampler and exactly one wins | patch_gemma4_required_root, tool_grammar_for, to_common_sampling |
-| REQ-INFER-009 | Tool staging drives a native render whose parse context is captured | to_common_chat, render_with_tools, parse_response |
-| REQ-INFER-015 | MTP speculative decode fails loud and never silently falls back | effective_n_draft, mtp_guard, generate_mtp |
-| REQ-INFER-025 | Multimodal input is bounded, tier-gated and degrades gracefully | generate_multimodal |
-| REQ-INFER-026 | A prompt that cannot fit the tier context is refused, never decoded | refuse_over_context |
-| REQ-INFER-027 | Expert-tensor offload places routed experts on the host while attention and KV stay resident (EXPERIMENTAL) | build_load_mparams, model_expert_count, do_load_active, expert_offload_admits, load_gpu_model |
-| REQ-TYPE-004 | Sentinel count members bound enum validity and force exhaustive wiring | do_supports |
+| REQ-LOOP-009 | Per-session-key run concurrency, on by default, with one lock on the generation path | execute_tool |
+| REQ-MCP-001 | MCPServerBase holds the shared logic; concrete servers override only deltas | set_working_dir |
+| REQ-MCP-002 | Tool results always cross boundaries as a ServerResponse JSON envelope | disconnected_error, parse_tool_result_text, execute_tool |
+| REQ-MCP-007 | Tool calls route by server prefix uniformly across all three server kinds | connect_external_server |
+| REQ-MCP-009 | Operator permission gate with deny precedence and server-derived patterns | args_to_pattern, check_approval |
+| REQ-MCP-010 | Per-identity MCP key authorization is opt-in but default-deny once enabled | check_mcp_authorization |
+| REQ-MCP-011 | Every tool declares its required access level, defaulting to WRITE | check_mcp_authorization |
+| REQ-MCP-012 | Tool calls pass an ordered precondition pipeline with typed rejection kinds | requires_approval, requires_approval, requires_approval, check_approval, check_mcp_authorization |
+| REQ-MCP-013 | Tool arguments are validated against the declared JSON schema before dispatch | normalize_args |
+| REQ-MCP-015 | Duplicates, errors, and denials return corrective guidance, not bare failure | create_denied_message, create_error_message, create_duplicate_message |
+| REQ-MCP-020 | A bounded, thread-safe ring buffer retains recent tool calls for introspection | execute_tool |
+| REQ-MCP-024 | Engine-level entropic.* tools validate their arguments and emit typed directives | followup_results |
+| REQ-MCP-025 | External servers are discovered safely, directive-stripped, and health-monitored | connect_declared_servers, connect_discovered_servers, initialize_external_servers, connect_declared_servers, connect_discovered_servers, connect_external_server, disconnected_error |
+| REQ-MCP-027 | Named workspaces bind a session to its own tool root and servers | execute_tool |
 
-**Total: 10 requirement(s) affected, 26 function(s) changed**
+**Total: 14 requirement(s) affected, 29 function(s) changed**

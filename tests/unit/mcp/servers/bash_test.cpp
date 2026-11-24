@@ -46,6 +46,10 @@ static std::string parse_result(const std::string& envelope) {
     return j["result"].get<std::string>();
 }
 
+// v2.14.6: internal linkage — filesystem_test.cpp in the same binary defines a
+// different TempDir; two global classes of one name are an ODR violation.
+namespace {
+
 /**
  * @brief RAII temp directory that cleans up on destruction.
  * @internal
@@ -76,6 +80,8 @@ struct TempDir {
         std::filesystem::remove_all(path);
     }
 };
+
+} // namespace
 
 // ── Tests ───────────────────────────────────────────────
 

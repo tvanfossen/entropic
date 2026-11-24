@@ -835,6 +835,26 @@ bool ServerManager::skip_duplicate_check(
 }
 
 /**
+ * @brief Whether a tool call needs the host's approval (v2.14.6).
+ *
+ * Mirrors skip_duplicate_check: only an in-process server is asked. Routing
+ * prefers in-process servers too, so a prefix answered here is the server
+ * the call will actually reach.
+ *
+ * @param tool_name Fully-qualified tool name.
+ * @return The owning in-process server's requires_approval answer for the
+ *         local name; true when the prefix is not an in-process server.
+ * @req REQ-MCP-012
+ * @version 2.14.6
+ */
+bool ServerManager::requires_approval(
+    const std::string& tool_name) const {
+    auto it = servers_.find(extract_prefix(tool_name));
+    return it == servers_.end()
+        || it->second->requires_approval(extract_local_name(tool_name));
+}
+
+/**
  * @brief Get the required access level for a tool.
  *
  * Falling back to WRITE means an unknown tool name cannot be used to

@@ -211,22 +211,24 @@ Message ToolExecutor::handle_duplicate(
 /**
  * @brief Check tool approval.
  *
- * The last precondition gate. Auto-approval or an operator allow-list
- * match short-circuits; otherwise the engine's approval callback is
- * consulted. Fires the informational ON_PERMISSION_CHECK hook either
- * way.
+ * The last precondition gate. Auto-approval, an operator allow-list
+ * match, or a tool its in-process server exempts (the engine's own
+ * directives, v2.14.6) short-circuits; otherwise the engine's approval
+ * callback is consulted. Fires the informational ON_PERMISSION_CHECK hook
+ * either way.
  *
  * @param call Tool call.
  * @return true when the call may be dispatched — auto-approved,
- *         explicitly allowed, or approved via the callback; false only
- *         when no approval callback is wired, which is logged.
+ *         explicitly allowed, exempt, or approved via the callback; false
+ *         only when no approval callback is wired, which is logged.
  * @req REQ-MCP-012
  * @req REQ-MCP-009
- * @version 1.9.1
+ * @version 2.14.6
  */
 bool ToolExecutor::check_approval(const ToolCall& call) {
     auto args_json = serialize_args(call);
     bool auto_ok = loop_config_.auto_approve_tools
+                || !server_manager_.requires_approval(call.name)
                 || server_manager_.is_explicitly_allowed(
                        call.name, args_json);
 

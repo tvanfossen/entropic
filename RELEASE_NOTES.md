@@ -54,11 +54,53 @@ Three ways one turn could take down a served host (gh#214, gh#216, gh#217).
   gh#218.
 - gh#214: see above.
 
+## Tool-call fixes
+
+- **An empty turn is retried**, never accepted as complete.
+- **A forced tool call is actually forced.** The tool-call grammar now
+  reaches plain decode. Gemma 4's REQUIRED grammar mirrors llama.cpp
+  f072b10371.
+- **After a nudge, a tier that owes a tool call is forced to make one.**
+  When the model answers in prose, the forced retry may only call
+  `entropic.complete`. A tier that is not offered `entropic.complete` is
+  nudged but not forced, and an ERROR says so.
+- **Engine directives (`entropic.*`) skip the host's approval gate.** A
+  headless host whose policy denied unknown tools could never end a turn.
+- **An unreadable Gemma 4 tool call is no longer dropped silently.** At the
+  pinned llama.cpp, a `<|tool_call>` span that common_chat cannot parse was
+  erased, which left an empty turn. The span is now kept as content and
+  logged at ERROR with the full raw emission, so the loop nudges and
+  retries. Calls are verified with thinking on, with thinking off and under
+  the REQUIRED grammar.
+- The per-turn engine note is sent only when it matters (REQ-LOOP-007).
+
+## Other fixes
+
+- **Image input works again.** Every image generate had failed since a
+  llama.cpp pin bump with "number of media markers in text (0) does not
+  match number of bitmaps (1)". The bump added a `text_len` field to
+  `mtmd_input_text`. Our positional initializer still compiled, but set
+  `text_len` to 1, so mtmd read one character of the prompt. It is now
+  built by field name.
+
+## Docs
+
+- The public docs site is now the clew wiki (gh#229) and replaces the
+  doxygen site. It deploys on each release:
+  https://tvanfossen.github.io/entropic/
+
 ## Distribution
 
 - CPU tarball: `entropic-2.14.6-linux-x86_64-cpu.tar.gz` (sha256 in companion file)
 - CUDA tarball: `entropic-2.14.6-linux-x86_64-cuda.tar.gz` (sha256 in companion file)
 - Python wrapper: `pip install entropic-engine==2.14.6` then `entropic install-engine`
+
+## Known limitations
+
+- An agent-loop turn that hits `max_tokens` is reported as "stop", so the
+  engine's length-continue path is unreachable (proposal gh#245, v2.14.7).
+- A model that fails to load can abort at process exit (gh#244, v2.14.7).
+- Lazy tool-call grammars never activate (gh#241, v2.14.8).
 
 # entropic v2.14.5
 

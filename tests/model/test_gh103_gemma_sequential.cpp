@@ -35,7 +35,7 @@
 #include <string>
 #include <vector>
 
-namespace { constexpr char K_GEMMA4_E4B[] = "gemma4_e4b"; }
+namespace { constexpr char K_GEMMA4_E4B[] = "gemma4_e4b_qat"; }
 CATCH_REGISTER_LISTENER(V219FamilyListener<K_GEMMA4_E4B>)
 
 namespace {
@@ -72,7 +72,7 @@ SCENARIO("gh#103 gemma severe case: sequential mode stops at <tool_call|> AND "
          "[model][gh103][gemma]")
 {
     if (!g_ctx.initialized) {
-        SKIP(skip_reason_or_default("gemma4_e4b"));
+        SKIP(skip_reason_or_default("gemma4_e4b_qat"));
     }
     GIVEN("gemma4_e4b, read_file staged, a tool-demanding prompt") {
         start_test_log("gh103_gemma_sequential");

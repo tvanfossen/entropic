@@ -15,6 +15,11 @@
 using namespace entropic;
 
 // ── Test fixtures ────────────────────────────────────────
+// v2.14.6: internal linkage. tool_executor_test.cpp, linked into the same
+// binary, defines its own FailTool/FailServer; two global classes of one name
+// are an ODR violation, and the merged inline members ran that file's throwing
+// execute() over this layout and corrupted the heap (munmap_chunk abort).
+namespace {
 
 /**
  * @brief Simple tool that returns fixed content.
@@ -103,6 +108,8 @@ public:
 private:
     FailTool tool_; ///< The failing tool
 };
+
+} // namespace
 
 // ── Tests ────────────────────────────────────────────────
 

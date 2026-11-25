@@ -28,7 +28,7 @@ concurrency:
 
 jobs:
   pre-commit:
-    name: Pre-commit (knots, flake8, doxygen-guard, build, tests)
+    name: Pre-commit (knots, flake8, clew-guard, build, tests)
     runs-on: ubuntu-24.04
     timeout-minutes: 60
     steps:

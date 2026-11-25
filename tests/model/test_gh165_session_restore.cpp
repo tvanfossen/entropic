@@ -30,14 +30,14 @@
  * @par Sizing (v2.13.0 fixture fix)
  * Both scenarios carried the defect a66aa11 fixed in the gh#158 arms and
  * e1df323 fixed in gh#166: the skip guard looked for the E4B **QAT** file
- * while the tier loaded `gguf_key = "gemma4_e4b"` —
- * `gemma-4-E4B-it-Q8_0.gguf`, 7.6 GiB of weights. The v2.13.0 gate log
+ * while the tier loaded `gguf_key = "gemma4_e4b_qat"` —
+ * `gemma-4-E4B-it-qat-UD-Q4_K_XL.gguf`, 7.6 GiB of weights. The v2.13.0 gate log
  * (build/test-reports/model/logs/test-gh165-restore.log) shows exactly
  * that file loading. Present-and-unchecked is not the same file
  * as absent, so the guard could not skip what the tier then failed to fit:
  * on the floor hardware (a 1080 Ti, 11 GB) the VRAM admission gate refuses
  * it and not one line of gh#165 runs. Guard and tier now name ONE model,
- * the registry's explicitly floor-safe entry (`gemma4_e2b_qat`, 2.44 GiB).
+ * the registry's explicitly floor-safe entry (`gemma4_e4b_qat`, 2.44 GiB).
  *
  * They also asked for `context_length: 2048` with the DEFAULT tool menu —
  * a configured handle stages every registered tool, 27 of them, 18,594
@@ -83,7 +83,7 @@
  * assertions while every turn decoded 0 characters. The only assertion
  * carrying signal was the negative one.
  *
- * Requires: GPU + gemma-4-E2B QAT GGUF. Run: ctest -L model -R gh165
+ * Requires: GPU + gemma-4-E4B QAT GGUF. Run: ctest -L model -R gh165
  *
  * @version 2.13.0
  */
@@ -189,15 +189,15 @@ SCENARIO("gh#165: a dropped session restored from JSON keeps answering",
 {
     GIVEN("a configured handle and one seeded session") {
         auto gguf = entropic::test::facade::model_gguf(
-            "gemma-4-E2B-it-qat-UD-Q4_K_XL.gguf");
+            "gemma-4-E4B-it-qat-UD-Q4_K_XL.gguf");
         if (gguf.empty() || !fs::is_regular_file(gguf)) {
-            SKIP("gemma-4-E2B QAT GGUF not present at " + gguf.string());
+            SKIP("gemma-4-E4B QAT GGUF not present at " + gguf.string());
         }
 
         entropic::test::facade::FacadeProject project("gh165_restore");
         entropic::test::facade::TierSpec lead;
         lead.name = "lead";
-        lead.gguf_key = "gemma4_e2b_qat";
+        lead.gguf_key = "gemma4_e4b_qat";
         lead.adapter = "gemma4";
         lead.identity_body =
             "You are a terse assistant. Answer in one short sentence.";
@@ -306,15 +306,15 @@ SCENARIO("gh#165 + gh#164: release the weights, keep the conversation",
 {
     GIVEN("a handle with a seeded session") {
         auto gguf = entropic::test::facade::model_gguf(
-            "gemma-4-E2B-it-qat-UD-Q4_K_XL.gguf");
+            "gemma-4-E4B-it-qat-UD-Q4_K_XL.gguf");
         if (gguf.empty() || !fs::is_regular_file(gguf)) {
-            SKIP("gemma-4-E2B QAT GGUF not present at " + gguf.string());
+            SKIP("gemma-4-E4B QAT GGUF not present at " + gguf.string());
         }
 
         entropic::test::facade::FacadeProject project("gh165_release");
         entropic::test::facade::TierSpec lead;
         lead.name = "lead";
-        lead.gguf_key = "gemma4_e2b_qat";
+        lead.gguf_key = "gemma4_e4b_qat";
         lead.adapter = "gemma4";
         lead.context_length = 4096;
         // See the first scenario: one tool so the prompt fits, and no

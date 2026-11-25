@@ -14,7 +14,7 @@
  * Deterministic: the grammar is `root ::= "HELLO"`, so a correctly-applied
  * constraint forces the literal output `HELLO` regardless of model quality.
  *
- * Requires: GPU + gemma4_e2b GGUF. Run: ctest -L model -R gh95
+ * Requires: GPU + gemma4_e4b_qat GGUF. Run: ctest -L model -R gh95
  *
  * @version 2.7.4
  */
@@ -53,9 +53,9 @@ SCENARIO("gh#95: identity grammar: field constrains that tier's output",
         const char* home = std::getenv("HOME");
         REQUIRE(home != nullptr);
         fs::path gguf = fs::path(home) / ".entropic" / "models"
-                        / "gemma-4-E2B-it-Q8_0.gguf";
+                        / "gemma-4-E4B-it-qat-UD-Q4_K_XL.gguf";
         if (!fs::is_regular_file(gguf)) {
-            SKIP("gemma4_e2b GGUF not present at " + gguf.string());
+            SKIP("gemma4_e4b_qat GGUF not present at " + gguf.string());
         }
 
         fs::path dir = fs::temp_directory_path() / "entropic_gh95_identity_grammar";
@@ -71,12 +71,12 @@ SCENARIO("gh#95: identity grammar: field constrains that tier's output",
                    "enable_thinking: false\ngrammar: forcehello\n---\n"
                    "You are a terse assistant.\n");
         // Project config: REPLACE semantics — only this tier exists, so only
-        // gemma4_e2b loads (no global/default tier bleed). Constitutional
+        // gemma4_e4b_qat loads (no global/default tier bleed). Constitutional
         // validation off so its critique generation doesn't add noise.
         write_file(dir / "config.local.yaml",
                    "models:\n"
                    "  lead:\n"
-                   "    path: gemma4_e2b\n"
+                   "    path: gemma4_e4b_qat\n"
                    "    adapter: gemma4\n"
                    "    context_length: 16384\n"  // fits the ~4900-token tool prompt
                    "    gpu_layers: 99\n"
@@ -133,9 +133,9 @@ SCENARIO("gh#95 isolation: GBNF grammar constrains backend output with NO tools"
         const char* home = std::getenv("HOME");
         REQUIRE(home != nullptr);
         std::filesystem::path gguf = std::filesystem::path(home) / ".entropic"
-            / "models" / "gemma-4-E2B-it-Q8_0.gguf";
+            / "models" / "gemma-4-E4B-it-qat-UD-Q4_K_XL.gguf";
         if (!std::filesystem::is_regular_file(gguf)) {
-            SKIP("gemma4_e2b GGUF not present");
+            SKIP("gemma4_e4b_qat GGUF not present");
         }
 
         entropic::LlamaCppBackend backend;

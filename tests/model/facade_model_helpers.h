@@ -56,7 +56,7 @@ inline fs::path model_gguf(const std::string& filename) {
  */
 struct TierSpec {
     std::string name;                 ///< Tier name (e.g. "npc")
-    std::string gguf_key;             ///< bundled_models key (e.g. "gemma4_e2b")
+    std::string gguf_key;             ///< bundled_models key (e.g. "gemma4_e4b_qat")
     std::string adapter;              ///< Adapter (e.g. "gemma4")
     std::string identity_body =       ///< Identity prose (system prompt)
         "You are a helpful assistant.";

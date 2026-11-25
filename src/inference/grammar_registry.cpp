@@ -42,14 +42,14 @@ std::string read_file_contents(const std::filesystem::path& path) {
  * @brief Load all bundled grammars from a directory.
  * @param grammar_dir Path to data/grammars/ directory.
  * @return Number of grammars loaded.
- * @dg_internal
+ * @utility
  * @version 1.9.3
  */
 /**
  * @brief Build a bundled GrammarEntry from a .gbnf file.
  * @param path Grammar file path.
  * @return Entry, or nullopt if the file is empty/unreadable.
- * @utility
+ * @req REQ-INFER-007
  * @version 2.3.7
  */
 static std::optional<GrammarEntry> build_grammar_entry(
@@ -172,7 +172,7 @@ bool GrammarRegistry::register_from_file(
  * @brief Remove a grammar from the registry.
  * @param key Grammar name to remove.
  * @return true if removed. false if key not found.
- * @dg_internal
+ * @utility
  * @version 1.9.3
  */
 bool GrammarRegistry::deregister(const std::string& key) {
@@ -190,7 +190,7 @@ bool GrammarRegistry::deregister(const std::string& key) {
  * @brief Get GBNF content string for a grammar key.
  * @param key Grammar name.
  * @return GBNF content string, or empty string if not found.
- * @dg_internal
+ * @utility
  * @version 1.9.3
  */
 std::string GrammarRegistry::get(const std::string& key) const {
@@ -206,7 +206,7 @@ std::string GrammarRegistry::get(const std::string& key) const {
  * @brief Check if a grammar key exists in the registry.
  * @param key Grammar name.
  * @return true if registered.
- * @dg_internal
+ * @utility
  * @version 1.9.3
  */
 bool GrammarRegistry::has(const std::string& key) const {
@@ -218,7 +218,7 @@ bool GrammarRegistry::has(const std::string& key) const {
  * @brief Get full entry metadata for a grammar key.
  * @param key Grammar name.
  * @return GrammarEntry, or entry with empty key if not found.
- * @dg_internal
+ * @utility
  * @version 1.9.3
  */
 GrammarEntry GrammarRegistry::entry(const std::string& key) const {
@@ -233,7 +233,7 @@ GrammarEntry GrammarRegistry::entry(const std::string& key) const {
 /**
  * @brief List all registered grammar keys.
  * @return Vector of GrammarEntry metadata (content omitted).
- * @dg_internal
+ * @utility
  * @version 1.9.3
  */
 std::vector<GrammarEntry> GrammarRegistry::list() const {
@@ -282,7 +282,7 @@ std::string GrammarRegistry::validate(const std::string& gbnf_content) {
 /**
  * @brief Number of registered grammars.
  * @return Count of registered grammars.
- * @dg_internal
+ * @utility
  * @version 1.9.3
  */
 size_t GrammarRegistry::size() const {
@@ -292,7 +292,7 @@ size_t GrammarRegistry::size() const {
 
 /**
  * @brief Remove all registered grammars.
- * @dg_internal
+ * @utility
  * @version 1.9.3
  */
 void GrammarRegistry::clear() {

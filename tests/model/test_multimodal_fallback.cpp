@@ -16,7 +16,43 @@
 #include "model_test_context.h"
 #include <entropic/types/content.h>
 
-CATCH_REGISTER_LISTENER(ModelTestListener)
+namespace {
+
+/**
+ * @brief Loads the shared model WITHOUT its vision projector.
+ *
+ * v2.14.6: the dev config pairs the E4B lead with its mmproj (gh#240), which
+ * made this "text-only" test take the vision path, where an unopenable image
+ * is correctly a loud IMAGE_LOAD_FAILED. The premise is a model with no
+ * projector, so it is stated here rather than inherited from the config.
+ * @version 2.14.6
+ */
+class TextOnlyListener : public ModelTestListener {
+public:
+    using ModelTestListener::ModelTestListener;
+
+protected:
+    /**
+     * @brief Clear every tier's mmproj so the model loads text-only.
+     * @param ctx Harness context.
+     * @utility
+     * @version 2.14.6
+     */
+    void adjust_config(ModelTestContext& ctx) override {
+        for (auto& [name, tier] : ctx.config.models.tiers) {
+            if (!tier.mmproj_path.empty()) {
+                spdlog::info("multimodal_fallback: tier '{}' mmproj '{}' "
+                             "cleared (text-only premise)",
+                             name, tier.mmproj_path.string());
+            }
+            tier.mmproj_path.clear();
+        }
+    }
+};
+
+} // namespace
+
+CATCH_REGISTER_LISTENER(TextOnlyListener)
 
 // ── Test: Multimodal fallback on text-only model ──────────
 

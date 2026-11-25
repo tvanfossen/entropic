@@ -42,8 +42,12 @@ std::filesystem::path gemma4_model_path() {
     // tool calls that would confound "does common_chat parse gemma's
     // native format". A 26B even at IQ4_XS formats reliably enough to
     // isolate the architecture from quant. CPU-offloaded on an 11GB GPU.
+    // v2.14.6: the 26B on disk is now the UD-IQ2_M (~2.5 bpw, not QAT) —
+    // the QAT Q4 left the pared model set. The registry notes structured
+    // output is what degrades first at this bit depth, so a failure here
+    // must be read against the quant before blaming common_chat.
     return std::filesystem::path(home) / ".entropic" / "models"
-         / "gemma-4-26B-A4B-it-UD-IQ4_XS.gguf";
+         / "gemma-4-26B-A4B-it-UD-IQ2_M.gguf";
 }
 
 std::vector<llama_token> tokenize(const llama_vocab* vocab,
@@ -118,7 +122,9 @@ TEST_CASE("gh#87 gate: common_chat render→generate→parse extracts a gemma4 t
 
     llama_backend_init();
     auto mparams = llama_model_default_params();
-    mparams.n_gpu_layers = 15;  // a4b 26B: partial CPU offload on 11GB GPU (v2.7.4: 20->15, OOM headroom)
+    // a4b 26B partial offload (v2.7.4: 20->15, OOM headroom); kept for the
+    // UD-IQ2_M as the VRAM-safe split (v2.14.6).
+    mparams.n_gpu_layers = 15;
     llama_model* model = llama_model_load_from_file(path.c_str(), mparams);
     REQUIRE(model != nullptr);
     const llama_vocab* vocab = llama_model_get_vocab(model);

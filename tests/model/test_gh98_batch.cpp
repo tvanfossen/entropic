@@ -20,7 +20,8 @@
  * Grammar `root ::= "GO" "GO" "GO"` forces a deterministic multi-token output,
  * so correctness is robust to GPU non-determinism and the gen loop runs >1 step.
  *
- * Requires: GPU + gemma4_e2b (+ Qwen3.6-35B-A3B for the hybrid case).
+ * Requires: GPU + gemma4_e4b_qat (+ Nemotron-3-Nano-4B for the hybrid case).
+ * v2.14.6: were gemma4_e2b and Qwen3.6-35B-A3B, which left the pared model set.
  * Run: ctest -L model -R gh98
  *
  * @version 2.8.0
@@ -80,10 +81,10 @@ entropic::GenerationParams forced_grammar(const char* gbnf) {
 SCENARIO("gh#98: multi-seq batch decodes N sequences together",
          "[model][gh98]")
 {
-    GIVEN("a plain-KV model (gemma4_e2b) with n_parallel >= the batch size") {
-        fs::path gguf = model_path("gemma-4-E2B-it-Q8_0.gguf");
+    GIVEN("a plain-KV model (gemma4_e4b_qat) with n_parallel >= the batch size") {
+        fs::path gguf = model_path("gemma-4-E4B-it-qat-UD-Q4_K_XL.gguf");
         if (!fs::is_regular_file(gguf)) {
-            SKIP("gemma4_e2b GGUF not present at " + gguf.string());
+            SKIP("gemma4_e4b_qat GGUF not present at " + gguf.string());
         }
 
         constexpr int kN = 8;
@@ -142,19 +143,19 @@ SCENARIO("gh#98: multi-seq batch decodes N sequences together",
 SCENARIO("gh#98: hybrid arch falls back to serial (no seq-op corruption)",
          "[model][gh98]")
 {
-    GIVEN("a hybrid model (Qwen3.6-35B-A3B, qwen35moe)") {
-        fs::path gguf = model_path("Qwen3.6-35B-A3B-UD-IQ3_XXS.gguf");
+    GIVEN("a hybrid model (Nemotron-3-Nano-4B, nemotron_h)") {
+        fs::path gguf = model_path("NVIDIA-Nemotron-3-Nano-4B-UD-Q4_K_XL.gguf");
         if (!fs::is_regular_file(gguf)) {
-            SKIP("Qwen3.6-35B-A3B GGUF not present at " + gguf.string());
+            SKIP("Nemotron-3-Nano-4B GGUF not present at " + gguf.string());
         }
 
         constexpr int kN = 4;
         entropic::LlamaCppBackend backend;
         entropic::ModelConfig cfg;
         cfg.path = gguf;
-        cfg.adapter = "qwen36";
+        cfg.adapter = "nemotron3";
         cfg.context_length = 8192;
-        cfg.gpu_layers = 15;  // partial CPU offload — OOM-safe on 11GB
+        cfg.gpu_layers = 99;  // 3.1 GB fits the 11GB card whole (the 13GB Qwen3.6 needed 15)
         cfg.flash_attn = false;
         cfg.n_parallel = kN;
         REQUIRE(backend.load(cfg));

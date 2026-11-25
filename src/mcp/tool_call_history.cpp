@@ -139,7 +139,7 @@ static nlohmann::json record_to_json(const ToolCallRecord& rec) {
  *         for count 0, newest-first otherwise; "[]" when nothing is
  *         stored.
  * @req REQ-MCP-020
- * @version 1.9.12
+ * @version 2.14.6
  */
 std::string ToolCallHistory::to_json(size_t count) const {
     auto entries = (count == 0) ? all() : recent(count);
@@ -147,7 +147,10 @@ std::string ToolCallHistory::to_json(size_t count) const {
     for (const auto& rec : entries) {
         arr.push_back(record_to_json(rec));
     }
-    return arr.dump();
+    // gh#216: never throw on bad bytes. The history is handle-wide and
+    // re-serialized every run, so one record that cannot be dumped failed
+    // every later turn on the host. Invalid UTF-8 becomes U+FFFD.
+    return arr.dump(-1, ' ', false, nlohmann::json::error_handler_t::replace);
 }
 
 /**
@@ -194,19 +197,30 @@ std::string summarize_params(const std::string& args_json) {
 
 /**
  * @brief Truncate text with "..." suffix if too long.
+ *
+ * gh#216 (v2.14.6): the cut backs up to a UTF-8 character boundary. A byte
+ * cut split a multi-byte character (clew's U+2014), the result was invalid
+ * UTF-8, and the handle-wide history then failed to serialize on every
+ * later run. Same rule as the facade's utf8_safe_substr.
+ *
  * @param text Input text.
- * @param max_len Maximum length before truncation (200 for the history
- *                result summary).
- * @return The input unchanged when it is within `max_len`; otherwise
- *         its first `max_len` characters with "..." appended.
+ * @param max_len Maximum length in BYTES before truncation (200 for the
+ *                history result summary).
+ * @return The input unchanged when it is within `max_len`; otherwise its
+ *         longest prefix of at most `max_len` bytes that ends on a character
+ *         boundary, with "..." appended.
  * @req REQ-MCP-020
- * @version 1.9.12
+ * @version 2.14.6
  */
 std::string truncate_result(const std::string& text, size_t max_len) {
     if (text.size() <= max_len) {
         return text;
     }
-    return text.substr(0, max_len) + "...";
+    size_t cut = max_len;
+    while (cut > 0 && (static_cast<unsigned char>(text[cut]) & 0xC0) == 0x80) {
+        --cut;
+    }
+    return text.substr(0, cut) + "...";
 }
 
 } // namespace entropic

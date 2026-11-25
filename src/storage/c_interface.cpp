@@ -27,14 +27,14 @@ auto logger = entropic::log::get("storage.c_api");
 
 // ── Handle mapping ────────────────────────────────────────
 
-/// @dg_internal The opaque handle points directly to a SqliteStorageBackend.
+/// @utility The opaque handle points directly to a SqliteStorageBackend.
 struct entropic_storage_backend {
     SqliteStorageBackend impl;
 
     /**
      * @brief Construct with database path.
      * @param path Database file path.
-     * @dg_internal
+     * @utility
      * @version 1.8.8
      */
     explicit entropic_storage_backend(const char* path)
@@ -47,7 +47,7 @@ struct entropic_storage_backend {
  * @brief Duplicate a std::string to a malloc'd C string.
  * @param s Source string.
  * @return Heap-allocated copy (caller must free with entropic_free).
- * @dg_internal
+ * @utility
  * @version 1.8.8
  */
 static char* dup_string(const std::string& s) {
@@ -60,7 +60,7 @@ static char* dup_string(const std::string& s) {
  * @brief Convert optional C string to std::optional<std::string>.
  * @param s C string or NULL.
  * @return Optional string.
- * @dg_internal
+ * @utility
  * @version 1.8.8
  */
 static std::optional<std::string> opt_str(const char* s) {

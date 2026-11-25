@@ -117,7 +117,7 @@ std::string parse_flag(int argc, char* argv[], const char* flag)
  * @brief Connect to a unix domain socket.
  * @param path Socket path.
  * @return Connected fd, or -1 on failure (errno set).
- * @utility
+ * @req REQ-PROD-002
  * @version 2.1.7
  */
 int connect_unix_socket(const std::string& path)
@@ -204,7 +204,7 @@ bool pump_once(int src_fd, int dst_fd)
 
 /**
  * @brief Service a single ready pollfd revent set.
- * @utility
+ * @req REQ-PROD-002
  * @version 2.1.7
  */
 void service_revents(struct pollfd* fds, int sock_fd,

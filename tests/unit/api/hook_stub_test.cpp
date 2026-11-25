@@ -39,12 +39,17 @@ static int dummy_callback(
  * @internal
  * @version 2.0.0
  */
+// v2.14.6: internal linkage — identity_api_test.cpp in the same binary defines
+// its own HandleGuard (identical today, but a duplicate global is an ODR
+// violation waiting to diverge).
+namespace {
 struct HandleGuard {
     entropic_handle_t h = nullptr;
     HandleGuard() { entropic_create(&h); }
     ~HandleGuard() { entropic_destroy(h); }
     operator entropic_handle_t() const { return h; }
 };
+} // namespace
 
 SCENARIO("Hook registration with null handle", "[api][hooks]") {
     GIVEN("a null handle") {

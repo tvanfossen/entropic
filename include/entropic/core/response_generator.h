@@ -131,7 +131,7 @@ private:
      * @param cancel_int Backend cancel int; borrowed, set to 1 on stop.
      * @param done Retirement flag; borrowed.
      * @return The poller thread, non-joinable when nothing to watch.
-     * @dg_internal
+     * @utility
      * @version 2.13.0
      */
     std::thread spawn_cancel_poller(int& cancel_int,
@@ -176,12 +176,18 @@ private:
     /**
      * @brief Build generation params JSON with tier routing.
      * @param tier Locked tier name (embedded in params for orchestrator).
-     * @return JSON string {tier, tools?}.
+     * @param session_key Session key ("" omitted).
+     * @param force_tool_call v2.14.6: force this generation's tool call.
+     * @param only_tool v2.14.6: when non-empty, offer only this tool (the
+     *        forced retry after a prose answer may only conclude).
+     * @return JSON string {tier, session?, force_tool_call?, tools?}.
      * @req REQ-IDEN-001
-     * @version 2.7.0
+     * @version 2.14.6 [reviewed]
      */
     std::string build_params_json(const std::string& tier,
-                                  const std::string& session_key = "");
+                                  const std::string& session_key = "",
+                                  bool force_tool_call = false,
+                                  const std::string& only_tool = "");
 
     /**
      * @brief Append an "[engine] iteration N/MAX..." reminder to the

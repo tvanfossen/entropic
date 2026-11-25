@@ -61,14 +61,14 @@ private:
     /**
      * @brief Construct the eight git tool instances (ctor step 1).
      * @param tools_dir Directory holding the tool JSON definitions.
-     * @dg_internal
+     * @utility
      * @version 2.3.7
      */
     void create_git_tools(const std::string& tools_dir);
 
     /**
      * @brief Register the eight git tools with the base server (step 2).
-     * @dg_internal
+     * @utility
      * @version 2.3.7
      */
     void register_git_tools();

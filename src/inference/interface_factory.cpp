@@ -36,7 +36,7 @@ namespace entropic {
  * Pre-v2.2.6 a single process-global `s_ctx` was reassigned on
  * every configure, which broke as soon as two handles existed.
  *
- * @dg_internal
+ * @utility
  * @version 2.2.6
  */
 struct InterfaceContext {
@@ -47,11 +47,31 @@ struct InterfaceContext {
 // ── JSON helpers ───────────────────────────────────────────
 
 /**
+ * @brief Carry a prompt message's tool-use fields into its metadata (v2.14.6).
+ * @param obj One message object from the prompt JSON.
+ * @param m Message being built.
+ * @utility
+ * @version 2.14.6
+ */
+static void read_tool_fields(const nlohmann::json& obj, Message& m) {
+    const auto calls = obj.find(tool_meta::kCalls);
+    if (calls != obj.end() && calls->is_array()) {
+        m.metadata[tool_meta::kCalls] = calls->dump();
+    }
+    for (const char* key : {tool_meta::kCallText, tool_meta::kCallId, tool_meta::kName}) {
+        const auto it = obj.find(key);
+        if (it != obj.end() && it->is_string()) {
+            m.metadata[key] = it->get<std::string>();
+        }
+    }
+}
+
+/**
  * @brief Parse JSON message array into Message vector.
  * @param json_str JSON array of {role, content} objects.
  * @return Parsed messages.
  * @utility
- * @version 2.0.1
+ * @version 2.14.6
  */
 static std::vector<Message> parse_msgs(const char* json_str) {
     std::vector<Message> msgs;
@@ -62,6 +82,7 @@ static std::vector<Message> parse_msgs(const char* json_str) {
         Message m;
         m.role = obj.value("role", "");
         m.content = obj.value("content", "");
+        read_tool_fields(obj, m);  // v2.14.6
         msgs.push_back(std::move(m));
     }
     return msgs;
@@ -110,7 +131,7 @@ static void parse_logit_bias_into(
  * @param json_str JSON params (may be null).
  * @return GenerationParams with parsed overrides.
  * @utility
- * @version 2.12.0
+ * @version 2.14.6
  */
 static GenerationParams parse_params(const char* json_str) {
     GenerationParams p;
@@ -118,6 +139,7 @@ static GenerationParams parse_params(const char* json_str) {
     auto j = nlohmann::json::parse(json_str, nullptr, false);
     if (!j.is_object()) { return p; }
     assign_if_present(j, "max_tokens",       p.max_tokens);
+    assign_if_present(j, "force_tool_call",  p.force_tool_call);  // v2.14.6
     assign_if_present(j, "temperature",      p.temperature);
     assign_if_present(j, "grammar_key",      p.grammar_key);
     // gh#144 (v2.12.0): caller-scoped session; absent means the default.
@@ -168,8 +190,14 @@ static char* dup(const std::string& s) {
 
 /**
  * @brief Generate via orchestrator.
+ *
+ * gh#214 (v2.14.6): returns the result's error_code. All three generate
+ * wrappers returned 0 unconditionally, so a typed failure (a prompt that
+ * does not fit, a failed MTP decode, a residency refusal) reached the loop
+ * as an empty successful turn.
+ *
  * @callback
- * @version 2.0.1
+ * @version 2.14.6
  */
 static int iface_generate(const char* msgs_json,
                           const char* params_json,
@@ -184,7 +212,7 @@ static int iface_generate(const char* msgs_json,
     auto& out = result.raw_content.empty()
         ? result.content : result.raw_content;
     *result_json = dup(out);
-    return 0;
+    return static_cast<int>(result.error_code);  // gh#214
 }
 
 /**
@@ -200,7 +228,7 @@ static int iface_generate(const char* msgs_json,
  * the atomic but the atomic stayed false.
  *
  * @callback
- * @version 2.4.2
+ * @version 2.14.6
  */
 static int iface_generate_stream(
     const char* msgs_json, const char* params_json,
@@ -218,9 +246,9 @@ static int iface_generate_stream(
         }
     };
     auto tier = extract_tier(params_json, ctx->default_tier);
-    ctx->orchestrator->generate_streaming(
+    auto result = ctx->orchestrator->generate_streaming(
         messages, params, cb, cancel_flag, tier);
-    return 0;
+    return static_cast<int>(result.error_code);  // gh#214
 }
 
 /**
@@ -232,7 +260,7 @@ static int iface_generate_stream(
  * small poller thread (no per-token hook in the batch contract).
  *
  * @callback
- * @version 2.4.2
+ * @version 2.14.6
  */
 static int iface_generate_with_cancel(
     const char* msgs_json, const char* params_json,
@@ -267,7 +295,7 @@ static int iface_generate_with_cancel(
     auto& out = result.raw_content.empty()
         ? result.content : result.raw_content;
     *result_json = dup(out);
-    return 0;
+    return static_cast<int>(result.error_code);  // gh#214
 }
 
 /**
@@ -470,7 +498,7 @@ static std::vector<ToolCall> try_fenced_args_object_call(
  * @param raw   Raw model output.
  * @param llama Active LlamaCppBackend (may be nullptr → gh#127 skipped).
  * @param calls [in/out] Tool call accumulator (no-op unless currently empty).
- * @utility
+ * @req REQ-INFER-010
  * @version 2.10.0
  */
 static void apply_fenced_fallbacks(const std::string& raw,
@@ -586,7 +614,7 @@ static int iface_is_complete(const char* /*content*/,
  * @param orchestrator Orchestrator to wire.
  * @param default_tier Default tier name.
  * @return Wired interface.
- * @dg_internal
+ * @utility
  * @version 2.4.2
  */
 InferenceInterface build_orchestrator_interface(
@@ -613,7 +641,7 @@ InferenceInterface build_orchestrator_interface(
 
 /**
  * @brief Free a context returned by build_orchestrator_interface().
- * @dg_internal
+ * @utility
  * @version 2.2.6
  */
 void destroy_orchestrator_interface(InterfaceContext* context) {

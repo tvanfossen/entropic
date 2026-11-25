@@ -32,7 +32,7 @@ using entropic::log::elapsed_ms;
  * @param ctx llama_context.
  * @param adapter llama_adapter_lora handle.
  * @param scale LoRA scaling factor.
- * @utility
+ * @req REQ-INFER-023
  * @version 1.9.2
  */
 void apply_adapter(llama_context* ctx,
@@ -128,7 +128,7 @@ bool AdapterManager::load(
  *
  * @param name Adapter identifier.
  * @param ctx Context to clear from (if HOT). May be nullptr.
- * @dg_internal
+ * @utility
  * @version 1.9.2
  */
 void AdapterManager::unload(const std::string& name, llama_context* ctx) {
@@ -299,7 +299,7 @@ bool AdapterManager::swap(const std::string& name, llama_context* ctx) {
  *
  * @param model The base model being unloaded.
  * @param ctx Context to clear from. May be nullptr.
- * @dg_internal
+ * @utility
  * @version 1.9.2
  */
 void AdapterManager::unload_all_for_model(
@@ -418,7 +418,7 @@ void AdapterManager::unload_all() {
  * @brief Get adapter state.
  * @param name Adapter identifier.
  * @return AdapterState. COLD if not found.
- * @dg_internal
+ * @utility
  * @version 1.9.2
  */
 AdapterState AdapterManager::state(const std::string& name) const {
@@ -434,7 +434,7 @@ AdapterState AdapterManager::state(const std::string& name) const {
  * @brief Get metadata for an adapter.
  * @param name Adapter identifier.
  * @return AdapterInfo. COLD with empty name if not found.
- * @dg_internal
+ * @utility
  * @version 1.9.2
  */
 AdapterInfo AdapterManager::info(const std::string& name) const {
@@ -449,7 +449,7 @@ AdapterInfo AdapterManager::info(const std::string& name) const {
 /**
  * @brief List all known adapters.
  * @return Vector of AdapterInfo snapshots.
- * @dg_internal
+ * @utility
  * @version 1.9.2
  */
 std::vector<AdapterInfo> AdapterManager::list_adapters() const {
@@ -477,7 +477,7 @@ std::string AdapterManager::active_adapter() const {
 /**
  * @brief Set hook dispatch interface.
  * @param hooks Hook interface from facade.
- * @dg_internal
+ * @utility
  * @version 1.9.2
  */
 void AdapterManager::set_hook_interface(const HookInterface& hooks) {
@@ -490,7 +490,7 @@ void AdapterManager::set_hook_interface(const HookInterface& hooks) {
  * @brief Build AdapterInfo from internal entry.
  * @param entry Internal adapter entry.
  * @return AdapterInfo snapshot.
- * @dg_internal
+ * @utility
  * @version 1.9.2
  */
 AdapterInfo AdapterManager::make_info(const AdapterEntry& entry) {

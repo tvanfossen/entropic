@@ -307,7 +307,8 @@ class FunctionDecl:
 
 
 ## @brief Parse a single typedef enum block out of header text.
-## @utility
+## @return EnumDecl with sequential auto-numbering applied.
+## @req REQ-API-014
 ## @version 2.2.1
 def parse_enum(text: str, c_typedef: str) -> EnumDecl:
     """Return an EnumDecl with sequential auto-numbering applied."""
@@ -336,7 +337,8 @@ def parse_enum(text: str, c_typedef: str) -> EnumDecl:
 
 
 ## @brief Parse a typedef struct block out of header text.
-## @utility
+## @return StructDecl with a resolved ctypes type for each field.
+## @req REQ-API-014
 ## @version 2.2.1
 def parse_struct(text: str, c_typedef: str, py_name: str) -> StructDecl:
     """Return a StructDecl with resolved ctypes for each field.
@@ -559,7 +561,8 @@ def synth_callback(func_name: str, arg_idx: int, arg: str) -> CallbackDecl:
 
 
 ## @brief Parse every ENTROPIC_EXPORT function declaration in text.
-## @utility
+## @return One FunctionDecl per ENTROPIC_EXPORT declaration, in header order.
+## @req REQ-API-014
 ## @version 2.2.1
 def parse_functions(text: str) -> list[FunctionDecl]:
     """Return one FunctionDecl per ENTROPIC_EXPORT declaration.
@@ -810,7 +813,7 @@ def generate() -> GeneratedSources:
 
 
 ## @brief Concatenate prologue + emitted sections into the bindings source.
-## @utility
+## @req REQ-API-014
 ## @version 2.2.1
 def render_bindings(
     enums: list[EnumDecl],
@@ -836,7 +839,7 @@ def render_bindings(
 
 
 ## @brief Build the manifest module text.
-## @utility
+## @req REQ-API-014
 ## @version 2.2.2
 def render_manifest(
     enums: list[EnumDecl],

@@ -357,6 +357,15 @@ public:
     bool skip_duplicate_check(const std::string& tool_name) const;
 
     /**
+     * @brief Whether a tool call needs the host's approval.
+     * @param tool_name Fully-qualified tool name.
+     * @return The owning IN-PROCESS server's answer; true for a plugin,
+     *         external or unknown prefix, which can never exempt itself.
+     * @version 2.14.6
+     */
+    bool requires_approval(const std::string& tool_name) const;
+
+    /**
      * @brief Get the required access level for a tool.
      * @param tool_name Fully-qualified tool name (e.g., "filesystem.read_file").
      * @return MCPAccessLevel required, or WRITE if tool not found.
@@ -592,7 +601,7 @@ private:
     /**
      * @brief Snapshot the external clients under a shared lock (gh#171).
      * @return (name, client) pairs; callers use them with no lock held.
-     * @dg_internal
+     * @utility
      * @version 2.14.0
      */
     std::vector<std::pair<std::string, std::shared_ptr<ExternalMCPClient>>>
@@ -602,7 +611,7 @@ private:
      * @brief Look up one external client under a shared lock (gh#171).
      * @param name Server name.
      * @return The client, or null when not registered.
-     * @dg_internal
+     * @utility
      * @version 2.14.0
      */
     std::shared_ptr<ExternalMCPClient> find_external(const std::string& name) const;
@@ -619,14 +628,14 @@ private:
 
     /**
      * @brief Connect every server the operator declared in config (v2.14.0).
-     * @dg_internal
+     * @req REQ-MCP-025
      * @version 2.14.0
      */
     void connect_declared_servers();
 
     /**
      * @brief Discover `.mcp.json` servers and connect the enabled ones.
-     * @dg_internal
+     * @req REQ-MCP-025
      * @version 2.14.0
      */
     void connect_discovered_servers();
@@ -635,7 +644,7 @@ private:
      * @brief Whether a discovered server may be launched (gh#199/#200).
      * @param cfg Discovered server config.
      * @return true to connect.
-     * @dg_internal
+     * @utility
      * @version 2.14.0
      */
     bool admit_discovered(const ExternalServerConfig& cfg) const;

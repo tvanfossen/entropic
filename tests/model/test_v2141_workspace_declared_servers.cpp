@@ -18,7 +18,7 @@
  * Multi-turn: the codename is asked for again after an unrelated turn, so
  * it comes from the conversation and a fresh call, not the last message.
  *
- * Requires: GPU, gemma-4-E2B QAT GGUF on disk, mock-mcp-server binary.
+ * Requires: GPU, gemma-4-E4B QAT GGUF on disk, mock-mcp-server binary.
  * Run: inv test --model --model-only --filter v2141
  *
  * @version 2.14.2
@@ -104,9 +104,9 @@ SCENARIO("v2.14.1: a declared server serves each workspace from its own reposito
          "[model][v2141][workspace][external_servers]") {
     GIVEN("one resident model, one declared server, two repositories") {
         auto gguf = entropic::test::facade::model_gguf(
-            "gemma-4-E2B-it-qat-UD-Q4_K_XL.gguf");
+            "gemma-4-E4B-it-qat-UD-Q4_K_XL.gguf");
         if (gguf.empty() || !fs::is_regular_file(gguf)) {
-            SKIP("gemma-4-E2B QAT GGUF not present at " + gguf.string());
+            SKIP("gemma-4-E4B QAT GGUF not present at " + gguf.string());
         }
         const auto repo_a = make_repo("a", "Marigold");
         const auto repo_b = make_repo("b", "Saffron");
@@ -119,7 +119,7 @@ SCENARIO("v2.14.1: a declared server serves each workspace from its own reposito
             "      args: [\"--tools\", \"read_project\"]\n";
         entropic::test::facade::TierSpec lead;
         lead.name = "lead";
-        lead.gguf_key = "gemma4_e2b_qat";
+        lead.gguf_key = "gemma4_e4b_qat";
         lead.adapter = "gemma4";
         lead.identity_body = "You are a terse assistant. Use the tools you are "
                              "given before answering about the project.";

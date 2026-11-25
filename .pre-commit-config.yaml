@@ -73,15 +73,24 @@ repos:
           - --return-threshold=3
         exclude: ^(extern/|tests/|build/|\.build/|\.old/|\.venv/)
 
-  - repo: https://github.com/tvanfossen/doxygen-guard
-    # Pinned, not `main`: a mutable ref meant CI and local installed different
-    # builds hours apart, disagreeing 3 violations vs 578 on identical code.
-    # Upgrades are now a deliberate, reviewed act.
-    rev: v1.4.2
+  # clew guard (gh#229): the doxygen gate plus requirements traceability.
+  # Config is the `guard:` section of .clew.yaml. In pre-commit mode it also
+  # runs the coverage gate over the repo: a dead @req (declarations included),
+  # a catalog entry nothing implements, a missing catalog, or an @req share
+  # below guard.coverage.min_req_ratio fails the commit.
+  # Pinned, never a branch: a mutable ref once meant CI and local disagreed
+  # 3 violations vs 578 on identical code.
+  - repo: https://github.com/tvanfossen/clew
+    rev: v2.0.1
     hooks:
-      - id: doxygen-guard
+      - id: clew-guard
         files: \.(h|hpp|c|cpp|cc|cxx|py)$
         exclude: ^(extern/|tests/|build/|\.build/|\.old/|\.venv/)
+      # Static check of the `wiki:` section (every key known, everything it
+      # points at present). Refreshes the index first; --before-tests defers
+      # the test-report inputs the test run writes. The site itself is built
+      # by .github/workflows/docs.yml on release.
+      - id: clew-wiki-check
 
   # ── Bindings drift (gh#55) ──────────────────────────
   - repo: local
@@ -96,30 +105,6 @@ repos:
         entry: .venv/bin/inv gen-bindings --check
         language: system
         files: '^(include/entropic/.*\.h|python/src/entropic/_bindings(_manifest)?\.py|scripts/gen_bindings\.py)$'
-        pass_filenames: false
-
-  # ── Requirements traceability ───────────────────────
-  - repo: local
-    hooks:
-      - id: check-requirements
-        name: Requirements traceability (docs/requirements.yaml)
-        # Three checks the other gates cannot make:
-        #   - a @req naming a requirement that no longer exists. The
-        #     doxygen-guard hook above checks this too, but SKIPS bodiless
-        #     header declarations — that is how a dead REQ-INFER-003 lived
-        #     in i_inference_backend.h unseen by any gate.
-        #   - a catalog entry nothing implements.
-        #   - exemption creep. doxygen-guard never collects a function whose
-        #     only tag is @internal/@utility/@callback, so a slide back
-        #     toward blanket exemption is invisible to it. The repo sat at
-        #     0.9% @req with every gate green.
-        # A missing catalog fails CLOSED — docs/requirements.yaml was
-        # deleted as collateral in 2edfb4e and nothing noticed for 15
-        # months because all three of its consumers fail open.
-        # Fix: run ``inv check-requirements`` for the specific violations.
-        entry: .venv/bin/inv check-requirements
-        language: system
-        always_run: true
         pass_filenames: false
 
   # ── Build & Test Gates ──────────────────────────────

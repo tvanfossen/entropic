@@ -271,7 +271,7 @@ public:
 private:
     /**
      * @brief Fire the cache invalidator callback if set.
-     * @utility
+     * @req REQ-IDEN-002
      * @version 2.0.6-rc16
      */
     void fire_cache_invalidator();

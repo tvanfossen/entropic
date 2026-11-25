@@ -139,7 +139,7 @@ private:
      * @brief Check if a hook point value is valid.
      * @param point Hook point to validate.
      * @return true if within range.
-     * @utility
+     * @req REQ-HOOK-001
      * @version 1.9.1
      */
     static bool is_valid_point(entropic_hook_point_t point);
@@ -148,7 +148,7 @@ private:
      * @brief Take a priority-sorted snapshot of entries for a point.
      * @param point Hook point.
      * @return Copy of entry vector.
-     * @dg_internal
+     * @utility
      * @version 1.9.1
      */
     std::vector<HookEntry> snapshot(entropic_hook_point_t point) const;

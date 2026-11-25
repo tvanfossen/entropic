@@ -347,7 +347,7 @@ std::string run_blocking(entropic_handle_t handle, const std::string& prompt) {
  * Carries an HTTP status code so route handlers can map vision-tier
  * failures to 400 and other failures to 500 from one catch site.
  *
- * @dg_internal
+ * @utility
  * @version 2.1.8
  */
 struct HttpStatusError : public std::runtime_error {
@@ -425,7 +425,7 @@ std::string make_sse_chunk(const std::string& model, const std::string& delta) {
 
 /**
  * @brief Streaming context closed over by the on_token callback.
- * @dg_internal
+ * @utility
  * @version 2.1.0
  */
 struct StreamContext {

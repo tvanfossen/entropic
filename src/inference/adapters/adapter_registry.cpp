@@ -42,7 +42,7 @@ using AdapterFactory = std::function<std::unique_ptr<ChatAdapter>(
 
 /**
  * @brief Lookup-table entry: lowercase key → owning factory.
- * @dg_internal
+ * @utility
  * @version 2.1.9
  */
 struct AdapterEntry {
@@ -88,7 +88,7 @@ const std::array<AdapterEntry, 4>& adapter_table() {
  * @brief Lowercase a name for case-insensitive lookup.
  * @param name Adapter name as provided by config.
  * @return Lowercased copy.
- * @dg_internal
+ * @utility
  * @version 2.1.9
  */
 std::string to_lower(const std::string& name) {

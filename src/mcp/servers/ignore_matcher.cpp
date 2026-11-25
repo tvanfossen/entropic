@@ -191,7 +191,7 @@ namespace {
  *
  * Flat dispatch — keeps the caller's nesting depth shallow.
  *
- * @utility
+ * @req REQ-MCP-022
  * @version 2.1.4
  */
 void emit_one(const std::string& pattern, size_t& i,
@@ -250,7 +250,7 @@ std::string IgnoreMatcher::pattern_to_regex(const std::string& pattern) {
  * anchored at the base; otherwise the pattern matches against any
  * path component.
  *
- * @dg_internal
+ * @utility
  * @version 2.1.4
  */
 namespace {
@@ -258,7 +258,7 @@ namespace {
 /**
  * @brief Strip leading `!` (negation) and trailing `/` (dir_only) from
  *        a pattern body, recording flags on the rule.
- * @utility
+ * @req REQ-MCP-022
  * @version 2.1.4
  */
 void strip_flags(std::string& body, IgnoreMatcher::Rule& rule) {
@@ -282,7 +282,7 @@ void strip_flags(std::string& body, IgnoreMatcher::Rule& rule) {
  *
  * @param base Raw base, relative to the workspace root.
  * @return Normalised base.
- * @utility
+ * @req REQ-MCP-022
  * @version 2.13.0
  */
 std::string normalize_base(const std::string& base) {
@@ -299,7 +299,8 @@ std::string normalize_base(const std::string& base) {
  * Escapes regex metacharacters in the base path (paths shouldn't
  * contain them but defensive). Returns empty when base is empty.
  *
- * @utility
+ * @return Regex-escaped base followed by `/`, or empty for an empty base.
+ * @req REQ-MCP-022
  * @version 2.1.4
  */
 std::string make_base_prefix(const std::string& base) {
@@ -585,7 +586,7 @@ constexpr std::size_t kNoRule = static_cast<std::size_t>(-1);
 
 /**
  * @brief One anchor base's rule indices, consumed newest-first.
- * @dg_internal
+ * @utility
  * @version 2.13.0
  */
 struct BucketCursor {
@@ -605,7 +606,7 @@ struct BucketCursor {
  * @param index Base → rule indices.
  * @param rel_path Forward-slash path relative to the workspace root.
  * @param[out] out Cursors for the applicable buckets.
- * @utility
+ * @req REQ-MCP-022
  * @version 2.13.0
  */
 void collect_buckets(const BaseIndex& index, const std::string& rel_path,
@@ -632,7 +633,7 @@ void collect_buckets(const BaseIndex& index, const std::string& rel_path,
  *
  * @param cursors Bucket cursors, mutated in place.
  * @return The next rule index, or kNoRule when every bucket is spent.
- * @utility
+ * @req REQ-MCP-022
  * @version 2.13.0
  */
 std::size_t pop_highest(std::vector<BucketCursor>& cursors) {
@@ -663,7 +664,7 @@ std::size_t pop_highest(std::vector<BucketCursor>& cursors) {
  * @param is_dir Whether the path names a directory.
  * @param[in,out] evals Instrumentation counter (gh#161).
  * @return true when the rule matches the path.
- * @utility
+ * @req REQ-MCP-022
  * @version 2.13.0
  */
 bool rule_matches(const IgnoreMatcher::Rule& rule,

@@ -115,7 +115,7 @@ inline bool is_completion_imitation(const std::string& content,
  * @param arr Serialized conversation array.
  * @param turn_prompt The prompt that started this turn; nullptr = unbounded.
  * @return First index belonging to the turn.
- * @utility
+ * @req REQ-API-012
  * @version 2.14.5
  */
 inline size_t turn_start(const nlohmann::json& arr, const char* turn_prompt) {
@@ -137,7 +137,7 @@ inline size_t turn_start(const nlohmann::json& arr, const char* turn_prompt) {
  * @param tool_names Registered tool names, or nullptr.
  * @return Content of a non-empty assistant message that is not a tool
  *         call written as text.
- * @utility
+ * @req REQ-API-012
  * @version 2.14.5
  */
 inline std::string substantive_assistant_text(const nlohmann::json& msg,

@@ -2,17 +2,16 @@
 
 | REQ | Name | Functions Changed |
 |-----|------|-------------------|
-| REQ-ABI-001 | Pure C at every .so boundary — opaque handles and explicit ownership | entropic_seconds_since_last_activity, entropic_alloc, entropic_free |
-| REQ-ABI-002 | C++ exceptions never cross any .so boundary | entropic_run, entropic_run_batch, entropic_run_streaming, entropic_run_messages |
-| REQ-API-002 | Handle lifecycle — create, configure, destroy, NULL-safe teardown | entropic_run |
-| REQ-API-005 | Uniform precondition guard on every exported entry point | entropic_seconds_since_last_activity, entropic_run, entropic_run_batch, entropic_run_streaming, entropic_run_messages, entropic_context_get |
-| REQ-API-008 | Single cross-boundary allocator pair and explicit ownership transfer | entropic_alloc, entropic_free, entropic_run, entropic_run_batch, entropic_run_messages, entropic_context_get |
-| REQ-API-009 | Run entry-point family, result contract, and cross-thread interruptibility | entropic_run, entropic_run_batch, entropic_run_streaming, entropic_run_messages, entropic_run_session |
-| REQ-API-010 | Observer and callback slots survive configure and fire uniformly | entropic_run, entropic_run_streaming |
-| REQ-IDEN-001 | Tier resolution contract and per-tier loop overrides | derive_explicit_completion |
-| REQ-INFER-018 | Same-prefix batch generation is gated, per-request-constrained and seq-safe | entropic_run_batch |
-| REQ-INFER-025 | Multimodal input is bounded, tier-gated and degrades gracefully | entropic_run_messages |
-| REQ-LOOP-001 | Agent state machine with observable, dual-channel transitions | entropic_run_session |
-| REQ-SAFE-001 | Untrusted bytes are sanitized at ingress, never at egress | entropic_context_get |
+| REQ-INFER-002 | Teardown releases every model, context and adapter handle | teardown_mtp_draft |
+| REQ-INFER-005 | Every decode path honours cooperative cancellation within one token | generate_after_prefill, run_sampling_loop, do_generate_text_only, do_generate_streaming_text_only, generate_mtp |
+| REQ-INFER-006 | Sampler chain construction has a fixed order and default-preserving gating | to_common_sampling |
+| REQ-INFER-008 | Every declared grammar source reaches the sampler and exactly one wins | tool_grammar_for, to_common_sampling |
+| REQ-INFER-009 | Tool staging drives a native render whose parse context is captured | to_common_chat, mcp_tools_to_common_chat, render_with_tools, parse_response |
+| REQ-INFER-015 | MTP speculative decode fails loud and never silently falls back | effective_n_draft, mtp_guard, generate_mtp |
+| REQ-INFER-025 | Multimodal input is bounded, tier-gated and degrades gracefully | generate_multimodal |
+| REQ-INFER-026 | A prompt that cannot fit the tier context is refused, never decoded | prefill_error |
+| REQ-INFER-027 | Expert-tensor offload places routed experts on the host while attention and KV stay resident (EXPERIMENTAL) | build_load_mparams, model_expert_count, expert_offload_admits, load_gpu_model |
+| REQ-LOOP-010 | Session conversations are readable, writable, and losslessly round-trippable | forget_session_kv |
+| REQ-TYPE-004 | Sentinel count members bound enum validity and force exhaustive wiring | do_supports |
 
-**Total: 12 requirement(s) affected, 32 function(s) changed**
+**Total: 11 requirement(s) affected, 24 function(s) changed**

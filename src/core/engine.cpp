@@ -32,7 +32,7 @@ namespace entropic {
  * @param hooks Hook interface.
  * @param point Hook point.
  * @param json Context JSON.
- * @dg_internal
+ * @req REQ-HOOK-002
  * @version 1.9.1
  */
 static void fire_hook_info(const HookInterface& hooks,
@@ -114,7 +114,7 @@ static void remove_anchor_messages(LoopContext& ctx,
 /**
  * @brief Get current time as seconds since epoch.
  * @return Time in seconds (double).
- * @dg_internal
+ * @utility
  * @version 1.8.4
  */
 static double now_seconds() {
@@ -130,7 +130,7 @@ static double now_seconds() {
  * @param inference Inference interface.
  * @param loop_config Loop configuration.
  * @param compaction_config Compaction configuration.
- * @dg_internal
+ * @utility
  * @version 2.12.0
  */
 AgentEngine::AgentEngine(
@@ -161,7 +161,7 @@ AgentEngine::AgentEngine(
 /**
  * @brief Set callback functions for loop events.
  * @param callbacks Callback configuration.
- * @dg_internal
+ * @utility
  * @version 1.8.4
  */
 void AgentEngine::set_callbacks(const EngineCallbacks& callbacks) {
@@ -171,7 +171,7 @@ void AgentEngine::set_callbacks(const EngineCallbacks& callbacks) {
 /**
  * @brief Set the tool execution interface.
  * @param tool_exec Tool execution interface.
- * @dg_internal
+ * @utility
  * @version 1.8.5
  */
 void AgentEngine::set_tool_executor(
@@ -193,7 +193,7 @@ void AgentEngine::set_tier_resolution(
 /**
  * @brief Set the storage interface for persistence.
  * @param storage Storage callbacks (nullable).
- * @dg_internal
+ * @utility
  * @version 1.8.8
  */
 void AgentEngine::set_storage(const StorageInterface& storage) {
@@ -222,7 +222,7 @@ void AgentEngine::set_hooks(const HookInterface& hooks) {
  *
  * @param observer Token callback (nullable).
  * @param user_data Forwarded to observer.
- * @dg_internal
+ * @utility
  * @version 2.0.6-rc16
  */
 void AgentEngine::set_stream_observer(
@@ -442,7 +442,7 @@ void AgentEngine::run_loop(LoopContext& ctx, bool inherit_interrupt) {
  * `pause_flag_.store(false)`. With another run already in flight, the pause
  * belongs to that run and a starting turn leaves it alone.
  *
- * @dg_internal
+ * @utility
  * @version 2.13.0
  */
 void AgentEngine::clear_pause_for_fresh_turn() {
@@ -538,16 +538,42 @@ void AgentEngine::init_session_conversation(LoopContext& ctx) {
 }
 
 /**
+ * @brief The sentence a caller can act on, for each known failure reason.
+ * @param reason failure_reason recorded by the loop.
+ * @return The explanation, or "" for a reason with none (reported by name).
+ * @utility
+ * @version 2.14.6
+ */
+static std::string failure_explanation(const std::string& reason) {
+    static const std::unordered_map<std::string, std::string> kWhy = {
+        {"zero_tool_calls_with_explicit_completion",
+         ": the tier must end every turn with a tool call "
+         "(explicit_completion), and it answered without one through every "
+         "retry"},
+        {"context_overflow",
+         ": the prompt does not fit the tier's context window"},
+        {"generation_failed",
+         ": generation failed on every retry — see the inference log for "
+         "the backend error"},
+        {"empty_response",
+         ": the model replied with nothing — no answer and no tool call — "
+         "through every retry"},
+    };
+    const auto it = kWhy.find(reason);
+    return it == kWhy.end() ? std::string{} : it->second;
+}
+
+/**
  * @brief Describe a failed top-level turn for its caller (gh#209/#212).
  *
- * Reads the reason the loop recorded when it entered ERROR. The two reasons
- * that end a turn in ERROR today get a sentence a caller can act on; any
- * other is reported by name.
+ * Reads the reason the loop recorded when it entered ERROR; known reasons
+ * get a sentence a caller can act on (failure_explanation), any other is
+ * reported by name.
  *
  * @param ctx Finished loop context.
  * @return "" unless the run ended in ERROR.
  * @utility
- * @version 2.14.5
+ * @version 2.14.6
  */
 static std::string describe_turn_failure(const LoopContext& ctx) {
     std::string why;
@@ -558,14 +584,8 @@ static std::string describe_turn_failure(const LoopContext& ctx) {
         };
         const auto reason = meta("failure_reason");
         why = (reason.empty() ? std::string("unknown") : reason)
-            + " (tier '" + meta("failure_tier") + "')";
-        if (reason == "zero_tool_calls_with_explicit_completion") {
-            why += ": the tier must end every turn with a tool call "
-                   "(explicit_completion), and it answered without one "
-                   "through every retry";
-        } else if (reason == "context_overflow") {
-            why += ": the prompt does not fit the tier's context window";
-        }
+            + " (tier '" + meta("failure_tier") + "')"
+            + failure_explanation(reason);
     }
     return why;
 }
@@ -578,7 +598,7 @@ static std::string describe_turn_failure(const LoopContext& ctx) {
  * run's session, for last_turn_failure().
  *
  * @param ctx Loop context (with completed metrics).
- * @dg_internal
+ * @utility
  * @version 2.14.5
  */
 void AgentEngine::accumulate_run_metrics(LoopContext& ctx) {
@@ -628,7 +648,7 @@ std::vector<Message> AgentEngine::last_failed_turn() const {
  * @param turn_begin Session size before the turn's user message(s).
  * @param sent_len Session size after them.
  * @return true when kept.
- * @dg_internal
+ * @utility
  * @version 2.14.5
  */
 bool AgentEngine::settle_turn(ConversationState& convo,
@@ -656,7 +676,7 @@ bool AgentEngine::settle_turn(ConversationState& convo,
 /**
  * @brief Fold one run's metrics into the per-tier totals (gh#158).
  * @param ctx Loop context (with completed metrics).
- * @dg_internal
+ * @utility
  * @version 2.13.0
  */
 void AgentEngine::accumulate_per_tier(const LoopContext& ctx) {
@@ -703,7 +723,7 @@ AgentEngine::per_tier_metrics() const {
  *
  * @param ctx Loop context.
  * @return The content, or "" when the run produced none.
- * @dg_internal
+ * @utility
  * @version 2.13.0
  */
 static std::string last_substantive_assistant(const LoopContext& ctx) {
@@ -741,7 +761,7 @@ static std::string last_substantive_assistant(const LoopContext& ctx) {
  * @param stop_noun What stopped the run ("cap" / "cut"), used only in
  *                  the nothing-was-produced wording.
  * @return The content for the synthetic completion message.
- * @dg_internal
+ * @utility
  * @version 2.13.0
  */
 static std::string annotate_hard_stop(const std::string& carried,
@@ -892,11 +912,27 @@ void AgentEngine::execute_iteration(LoopContext& ctx) {
 }
 
 /**
+ * @brief A turn's parsed tool calls as the JSON the prompt carries (v2.14.6).
+ * @param calls Parsed calls.
+ * @return JSON array text: [{id, name, arguments}], arguments as JSON text.
+ * @utility
+ * @version 2.14.6
+ */
+static std::string tool_calls_to_json(const std::vector<ToolCall>& calls) {
+    auto arr = nlohmann::json::array();
+    for (const auto& c : calls) {
+        arr.push_back({{"id", c.id}, {"name", c.name},
+                       {"arguments", c.arguments_json.empty() ? "{}" : c.arguments_json}});
+    }
+    return arr.dump(-1, ' ', false, nlohmann::json::error_handler_t::replace);
+}
+
+/**
  * @brief Turn a generation result into the next loop state.
  * @param ctx Loop context.
  * @param result Generation result.
  * @req REQ-LOOP-003
- * @version 2.9.19
+ * @version 2.14.6 [reviewed]
  */
 void AgentEngine::process_generation_result(LoopContext& ctx,
                                             GenerateResult& result) {
@@ -905,6 +941,16 @@ void AgentEngine::process_generation_result(LoopContext& ctx,
                  result.finish_reason, tool_calls.size(),
                  cleaned.size());
     Message assistant_msg{"assistant", cleaned};
+    // v2.14.6: keep the model's own call for the prompt it is shown next.
+    // Only the cleaned text was stored, so the history read "question, empty
+    // reply, result" — results with no call — and the model began writing
+    // result-shaped prose ("Error: not_found") instead of calling the tool.
+    // `content` stays clean for consumers, storage and answer selection;
+    // ResponseGenerator::serialize_messages renders this instead.
+    if (!tool_calls.empty()) {
+        assistant_msg.metadata[tool_meta::kCallText] = result.content;
+        assistant_msg.metadata[tool_meta::kCalls] = tool_calls_to_json(tool_calls);
+    }
     ctx.messages.push_back(std::move(assistant_msg));
 
     bool made_tool_call =
@@ -919,6 +965,7 @@ void AgentEngine::process_generation_result(LoopContext& ctx,
         // consecutive-empty-turn debt.
         if (made_progress) {
             ctx.metadata["zero_tool_call_retries"] = "0";
+            ctx.metadata.erase("force_tool_call");  // v2.14.6: complied
         }
     } else {
         evaluate_no_tool_decision(ctx, cleaned, result.finish_reason);
@@ -1087,7 +1134,7 @@ void AgentEngine::dispatch_pending_or_halt(LoopContext& ctx) {
  * @param content Response content.
  * @param finish_reason Finish reason from generation.
  * @req REQ-LOOP-004
- * @version 2.0.6-rc16
+ * @version 2.14.6
  */
 void AgentEngine::evaluate_no_tool_decision(
     LoopContext& ctx,
@@ -1098,7 +1145,9 @@ void AgentEngine::evaluate_no_tool_decision(
         logger->info("[DECISION] auto-chain triggered");
         return;
     }
-    if (record_explicit_completion_failure(ctx, finish_reason)) { return; }
+    if (record_explicit_completion_failure(ctx, finish_reason, content)) {
+        return;
+    }
     if (response_generator_.is_response_complete(content, "[]")) {
         logger->info("[DECISION] response complete");
         set_state(ctx, AgentState::COMPLETE);
@@ -1150,45 +1199,36 @@ bool AgentEngine::handle_terminal_finish_reasons(
 }
 
 /**
- * @brief Record a structured failure when a tier requires explicit
- *        completion but returned zero tool calls. (P1-6, 2.0.6-rc16)
- *
- * @param ctx Loop context (metadata is mutated).
- * @param finish_reason Generation finish reason (for logging).
- * @return true if the failure was recorded and state transitioned.
- * @req REQ-LOOP-004
- * @version 2.14.5
+ * @brief How many empty or tool-less turns a tier may take before failing.
+ * @param tier Tier name.
+ * @return max_consecutive_empty_turns for the tier, default 3 (gh#123).
+ * @utility
+ * @version 2.14.6
  */
-bool AgentEngine::record_explicit_completion_failure(
-    LoopContext& ctx, const std::string& finish_reason) {
-    if (!tier_requires_explicit_completion(ctx.locked_tier)) {
-        return false;
-    }
-    auto& retries = ctx.metadata["zero_tool_call_retries"];
-    int n = retries.empty() ? 0 : std::atoi(retries.c_str());
-    // gh#123: default 3; per-tier override via max_consecutive_empty_turns
+int AgentEngine::empty_turn_ceiling(const std::string& tier) const {
     int ceiling = 3;
     if (tier_res_.get_tier_param != nullptr) {
         auto cv = tier_res_.get_tier_param(
-            ctx.locked_tier, "max_consecutive_empty_turns",
-            tier_res_.user_data);
+            tier, "max_consecutive_empty_turns", tier_res_.user_data);
         if (!cv.empty()) { ceiling = std::atoi(cv.c_str()); }
     }
-    if (n >= ceiling) {
-        // Allowance exhausted — this is a genuine failure.
-        ctx.metadata["failure_reason"] =
-            "zero_tool_calls_with_explicit_completion";
-        ctx.metadata["failure_tier"] = ctx.locked_tier;
-        logger->error("[DECISION] empty-turn allowance exhausted "
-                      "(tier={}, n={}/{}), failing turn",
-                      ctx.locked_tier, n, ceiling);
-        set_state(ctx, AgentState::ERROR);
-        return true;
-    }
-    // Reasoning turn — nudge toward action, not a failure yet.
-    logger->info("[DECISION] tier '{}' empty turn {}/{} "
-                 "(finish_reason={}), nudging toward action",
-                 ctx.locked_tier, n + 1, ceiling, finish_reason);
+    return ceiling;
+}
+
+/**
+ * @brief The correction appended after an empty or tool-less turn (v2.14.6).
+ *
+ * A tier that owes a completion call is told to make one, naming the tools
+ * it can call; a tier that owes only an answer is told its reply was empty.
+ *
+ * @param ctx Loop context.
+ * @param owes_call true when the tier requires explicit completion.
+ * @return The [SYSTEM] correction text.
+ * @utility
+ * @version 2.14.6
+ */
+std::string AgentEngine::empty_turn_nudge(const LoopContext& ctx,
+                                          bool owes_call) const {
     std::string tools_hint =
         "(entropic.complete, entropic.delegate, or entropic.inspect)";
     if (tier_res_.get_tier_param != nullptr) {
@@ -1196,13 +1236,71 @@ bool AgentEngine::record_explicit_completion_failure(
             ctx.locked_tier, "allowed_tools", tier_res_.user_data);
         if (!allowed.empty()) { tools_hint = "(" + allowed + ")"; }
     }
+    return owes_call
+        ? "[SYSTEM] Your previous response contained no tool call. "
+          "You must end every turn with exactly one tool call "
+          + tools_hint + ". Make it an actual tool call, not as text or "
+          "JSON in your reply. Retry."
+        : std::string("[SYSTEM] Your previous response was empty: it gave "
+          "no answer and made no tool call. Answer the user's last "
+          "request, or call a tool. Retry.");
+}
+
+/**
+ * @brief Retry, then fail, a turn that owes more than it delivered.
+ *
+ * P1-6 (2.0.6-rc16): a tier that requires explicit completion and made no
+ * tool call. v2.14.6: ALSO a turn that delivered nothing at all — no
+ * content, no tool call — whatever the tier's contract. test-e7 on E4B
+ * ended a turn inside an unterminated thinking block and the engine
+ * accepted the empty result as COMPLETE, so the lead never acted. Both
+ * share one bounded allowance (max_consecutive_empty_turns, default 3);
+ * when it runs out the turn FAILS with a reason naming which it was.
+ *
+ * @param ctx Loop context (metadata is mutated).
+ * @param finish_reason Generation finish reason (for logging).
+ * @param content The turn's visible content; non-empty means the forced
+ *        retry may only call entropic.complete.
+ * @return true if the turn was nudged or failed (caller returns).
+ * @req REQ-LOOP-004
+ * @version 2.14.6 [reviewed 2]
+ */
+bool AgentEngine::record_explicit_completion_failure(
+    LoopContext& ctx, const std::string& finish_reason,
+    const std::string& content) {
+    const bool owes_call = tier_requires_explicit_completion(ctx.locked_tier);
+    if (!owes_call && !content.empty()) {
+        return false;
+    }
+    auto& retries = ctx.metadata["zero_tool_call_retries"];
+    int n = retries.empty() ? 0 : std::atoi(retries.c_str());
+    const int ceiling = empty_turn_ceiling(ctx.locked_tier);
+    if (n >= ceiling) {
+        ctx.metadata["failure_reason"] = owes_call
+            ? "zero_tool_calls_with_explicit_completion"
+            : (finish_reason == "error" ? "generation_failed"
+                                        : "empty_response");
+        ctx.metadata["failure_tier"] = ctx.locked_tier;
+        logger->error("[DECISION] empty-turn allowance exhausted "
+                      "(tier={}, n={}/{}, {}), failing turn", ctx.locked_tier,
+                      n, ceiling, ctx.metadata["failure_reason"]);
+        set_state(ctx, AgentState::ERROR);
+        return true;
+    }
+    logger->info("[DECISION] tier '{}' {} turn {}/{} (finish_reason={}), "
+                 "nudging", ctx.locked_tier,
+                 owes_call ? "no-tool-call" : "empty", n + 1, ceiling,
+                 finish_reason);
+    // v2.14.6: the nudge only ASKED; a stalled model kept emitting
+    // thinking-only turns. The retry for a tier that owes a call is forced.
+    // A turn that already answered in prose may only conclude: its forced
+    // retry is offered entropic.complete alone (e7 re-delegated instead).
+    if (owes_call) {
+        ctx.metadata["force_tool_call"] = content.empty() ? "1" : "complete";
+    }
     Message correction;
     correction.role = "user";
-    correction.content =
-        "[SYSTEM] Your previous response contained no tool call. "
-        "You must end every turn with exactly one tool call "
-        + tools_hint + ". Make it an actual tool call, not as text or "
-        "JSON in your reply. Retry.";
+    correction.content = empty_turn_nudge(ctx, owes_call);
     ctx.messages.push_back(std::move(correction));
     retries = std::to_string(n + 1);
     set_state(ctx, AgentState::EXECUTING);
@@ -1422,7 +1520,7 @@ void AgentEngine::interrupt() {
  * correct only because a handle ran one turn at a time.
  *
  * @return true when the current run is interrupted.
- * @dg_internal
+ * @utility
  * @version 2.13.0
  */
 bool AgentEngine::run_interrupted() const {
@@ -1553,7 +1651,7 @@ void AgentEngine::reinject_context_anchors(LoopContext& ctx) {
 
 /**
  * @brief Register all 11 directive handlers.
- * @dg_internal
+ * @utility
  * @version 1.8.4
  */
 void AgentEngine::register_directive_handlers() {
@@ -1581,7 +1679,7 @@ void AgentEngine::register_directive_handlers() {
 
 /**
  * @brief Handle stop_processing directive.
- * @dg_internal
+ * @utility
  * @version 1.8.4
  */
 void AgentEngine::dir_stop(
@@ -1691,7 +1789,7 @@ void AgentEngine::dir_complete(
 
 /**
  * @brief Handle clear_self_todos directive (no-op).
- * @dg_internal
+ * @utility
  * @version 1.8.4
  */
 void AgentEngine::dir_clear_todos(
@@ -1701,7 +1799,7 @@ void AgentEngine::dir_clear_todos(
 
 /**
  * @brief Handle inject_context directive.
- * @dg_internal
+ * @utility
  * @version 1.8.4
  */
 void AgentEngine::dir_inject(
@@ -1768,7 +1866,7 @@ void AgentEngine::dir_anchor(
 
 /**
  * @brief Handle phase_change directive.
- * @dg_internal
+ * @utility
  * @version 1.8.4
  */
 void AgentEngine::dir_phase(
@@ -1780,7 +1878,7 @@ void AgentEngine::dir_phase(
 
 /**
  * @brief Handle notify_presenter directive.
- * @dg_internal
+ * @utility
  * @version 1.8.4
  */
 void AgentEngine::dir_notify(
@@ -1799,7 +1897,7 @@ void AgentEngine::dir_notify(
  * @brief Parse tool calls from raw model output.
  * @param raw_content Raw model output.
  * @return (cleaned content, parsed tool calls).
- * @dg_internal
+ * @utility
  * @version 1.8.5
  */
 /**
@@ -1807,7 +1905,7 @@ void AgentEngine::dir_notify(
  * @param obj JSON object with "name" and optional "arguments".
  * @param tc_str Original JSON string (used in id hash).
  * @return Populated ToolCall.
- * @dg_internal
+ * @utility
  * @version 2.0.2
  */
 static ToolCall build_tool_call_from_json(
@@ -1830,7 +1928,7 @@ static ToolCall build_tool_call_from_json(
  * @brief Decode a JSON tool-calls array string into ToolCall vector.
  * @param tc_str JSON array string ("[]" or "" yields empty result).
  * @return Parsed ToolCall vector (empty on parse failure or empty input).
- * @dg_internal
+ * @utility
  * @version 2.0.2
  */
 static std::vector<ToolCall> decode_tool_calls_json(
@@ -2066,7 +2164,7 @@ static std::string json_escape_engine(const std::string& s) {
  *
  * @param messages Conversation messages.
  * @return Manifest string, empty if no tool calls.
- * @utility
+ * @req REQ-HOOK-002
  * @version 2.1.3
  */
 static std::string build_tool_manifest(
@@ -2150,7 +2248,7 @@ static std::string format_tool_evidence_entry(const Message& msg,
  * @param max_results Most-recent N tool-result messages to include.
  * @param chars_per_result Per-result truncation budget.
  * @return Evidence block, empty if no tool results in messages.
- * @utility
+ * @req REQ-HOOK-002
  * @version 2.3.7
  */
 static std::string build_tool_evidence(
@@ -2288,7 +2386,7 @@ void AgentEngine::fire_post_generate_hook(
  * clears the field at the top of the iteration that consumes it.
  *
  * @param ctx Loop context (writes pending_validation_feedback).
- * @dg_internal
+ * @utility
  * @version 2.1.1-rc1
  */
 /**
@@ -2350,7 +2448,7 @@ void AgentEngine::capture_validation_feedback(LoopContext& ctx) {
  *
  * @param messages Conversation messages.
  * @return JSON array string.
- * @utility
+ * @req REQ-HOOK-002
  * @version 2.0.10
  */
 static std::string build_tool_results_json(
@@ -2475,7 +2573,7 @@ bool AgentEngine::fire_delegate_pre_hook(
  * but left this dump sink unguarded.
  *
  * @return Compact JSON string safe for hook dispatch.
- * @dg_internal
+ * @utility
  * @version 2.9.9
  */
 std::string entropic::detail::build_delegate_complete_json(
@@ -2527,7 +2625,7 @@ void AgentEngine::fire_delegate_complete_hook(
  * @brief Trampoline for DelegationManager to call engine loop.
  * @param ctx Child loop context.
  * @param user_data AgentEngine pointer.
- * @dg_internal
+ * @utility
  * @version 2.4.3
  */
 static void run_child_loop_trampoline(LoopContext& ctx, void* user_data) {
@@ -3182,7 +3280,7 @@ bool AgentEngine::try_auto_chain(
  * no writes to the user's directory.
  *
  * @return Project directory path.
- * @dg_internal
+ * @utility
  * @version 2.13.0
  */
 std::filesystem::path AgentEngine::get_repo_dir() {
@@ -3200,7 +3298,7 @@ std::filesystem::path AgentEngine::get_repo_dir() {
  * pair. A recursive mutex would also work and says less.
  *
  * @return Project directory path; empty when none resolves.
- * @dg_internal
+ * @utility
  * @version 2.13.0
  */
 std::filesystem::path AgentEngine::get_repo_dir_locked() {
@@ -3230,7 +3328,7 @@ std::filesystem::path AgentEngine::get_repo_dir_locked() {
  * previous lookup already settled on the CWD fallback.
  *
  * @param project_dir Project root (empty resets to CWD fallback).
- * @dg_internal
+ * @utility
  * @version 2.13.0
  */
 void AgentEngine::set_project_dir(const std::filesystem::path& project_dir) {
@@ -3247,7 +3345,7 @@ void AgentEngine::set_project_dir(const std::filesystem::path& project_dir) {
  * than per-delegation.
  *
  * @return Pointer to engine-owned manager, or nullptr if no repo_dir.
- * @dg_internal
+ * @utility
  * @version 2.1.6
  */
 /**
@@ -3470,7 +3568,7 @@ SandboxManager* AgentEngine::ensure_sandbox_manager(
 /**
  * @brief Install the facade's session-root seam (gh#160).
  * @param iface Resolver callbacks.
- * @dg_internal
+ * @utility
  * @version 2.13.0
  */
 void AgentEngine::set_session_root_interface(
@@ -3483,7 +3581,7 @@ void AgentEngine::set_session_root_interface(
  * @brief Install the tool-directory swap callback (gh#160).
  * @param swap_fn Swap callback (nullptr disables sandbox entry).
  * @param user_data Forwarded to the callback.
- * @dg_internal
+ * @utility
  * @version 2.13.0
  */
 void AgentEngine::set_dir_swap(ScopedSandbox::SwapDirFn swap_fn,
@@ -3502,7 +3600,7 @@ void AgentEngine::set_dir_swap(ScopedSandbox::SwapDirFn swap_fn,
  * wrong handle.
  *
  * @return The installed (callback, user_data) pair.
- * @dg_internal
+ * @utility
  * @version 2.13.0
  */
 std::pair<ScopedSandbox::SwapDirFn, void*>
@@ -3585,7 +3683,7 @@ std::vector<std::string> AgentEngine::isolation_unsafe_tools(
  * pair safe, and keyed runs add a second concurrent reader.
  *
  * @param prompt Assembled system prompt.
- * @dg_internal
+ * @utility
  * @version 2.13.0
  */
 void AgentEngine::set_system_prompt(const std::string& prompt) {
@@ -3600,7 +3698,7 @@ void AgentEngine::set_system_prompt(const std::string& prompt) {
  * that workspace's default prompt; every other session gets the handle's.
  *
  * @return A copy taken under `prompt_mutex_`; empty when none is set.
- * @dg_internal
+ * @utility
  * @version 2.14.0
  */
 std::string AgentEngine::system_prompt_copy() const {
@@ -3610,7 +3708,7 @@ std::string AgentEngine::system_prompt_copy() const {
 /**
  * @brief Set session logger for model transcript logging.
  * @param log Non-owning pointer (nullable).
- * @dg_internal
+ * @utility
  * @version 2.0.2
  */
 void AgentEngine::set_session_logger(SessionLogger* log) {
@@ -3626,7 +3724,7 @@ void AgentEngine::set_session_logger(SessionLogger* log) {
  * always valid.
  *
  * @return The active session's state.
- * @dg_internal
+ * @utility
  * @version 2.13.0 [reviewed]
  */
 ConversationState& AgentEngine::active_conversation() {
@@ -3669,7 +3767,7 @@ thread_local bool t_holds_claim = false;
  * string, not merely a stale answer.
  *
  * @return The session key in force on this thread.
- * @dg_internal
+ * @utility
  * @version 2.13.0 [reviewed]
  */
 std::string AgentEngine::active_session_key() const {
@@ -3690,7 +3788,7 @@ std::string AgentEngine::active_session_key() const {
  * belt to their braces rather than the only guard.
  *
  * @param key Session key for the turn about to run.
- * @dg_internal
+ * @utility
  * @version 2.13.0 [reviewed]
  */
 void AgentEngine::set_active_session(const std::string& key) {
@@ -3708,19 +3806,23 @@ void AgentEngine::set_active_session(const std::string& key) {
  * @brief Claim one turn for a named session — see header (gh#158).
  * @param key Session key to claim.
  * @return true when this caller now owns the turn.
- * @dg_internal
+ * @utility
  * @version 2.13.0
  */
-bool AgentEngine::try_begin_turn(const std::string& key) {
+bool AgentEngine::try_begin_turn(const std::string& key, bool exclusive) {
     {
         std::lock_guard<std::mutex> guard(runs_mutex_);
         // Same key twice is a genuine conflict whatever the configuration:
         // the two runs share one conversation. A DIFFERENT key is refused
         // only while per-session concurrency is off, which is the shipped
         // default and reproduces v2.12.0 exactly.
-        const bool blocked = active_runs_.count(key) > 0
-            || (!concurrent_sessions_ && !active_runs_.empty());
+        // gh#217 (v2.14.6): an EXCLUSIVE claim (model release) needs no run
+        // in flight on ANY key, and while held refuses every other claim —
+        // unloading frees the context a decode in another session is using.
+        const bool blocked = active_runs_.count(key) > 0 || exclusive_turn_
+            || ((exclusive || !concurrent_sessions_) && !active_runs_.empty());
         if (blocked) { return false; }
+        exclusive_turn_ = exclusive;
         auto claimed = std::make_shared<RunState>();
         claimed->key = key;
         active_runs_[key] = claimed;
@@ -3740,14 +3842,17 @@ bool AgentEngine::try_begin_turn(const std::string& key) {
 /**
  * @brief Release a turn claimed for a named session — see header.
  * @param key Session key that was claimed.
- * @dg_internal
- * @version 2.13.0
+ * @utility
+ * @version 2.14.6
  */
 void AgentEngine::end_turn(const std::string& key) {
     {
         std::lock_guard<std::mutex> guard(runs_mutex_);
         active_runs_.erase(key);
         running_flag_.store(!active_runs_.empty());
+        // gh#217: an exclusive claim admits no other run, so the engine is
+        // empty exactly when the exclusive holder releases.
+        if (active_runs_.empty()) { exclusive_turn_ = false; }
     }
     // Releasing the claim releases the binding with it — see try_begin_turn.
     // Guarded on the key so a nested release cannot unbind an outer run.
@@ -3760,7 +3865,7 @@ void AgentEngine::end_turn(const std::string& key) {
 
 /**
  * @brief Release the turn this thread claimed — see header (gh#158).
- * @dg_internal
+ * @utility
  * @version 2.13.0
  */
 void AgentEngine::end_turn() {
@@ -3773,7 +3878,7 @@ void AgentEngine::end_turn() {
 /**
  * @brief Runs currently in flight on this handle (gh#158).
  * @return Active run count.
- * @dg_internal
+ * @utility
  * @version 2.13.0
  */
 std::size_t AgentEngine::active_run_count() const {
@@ -3784,7 +3889,7 @@ std::size_t AgentEngine::active_run_count() const {
 /**
  * @brief Allow distinct session keys to run together — see header.
  * @param enabled true to allow concurrent distinct-key runs.
- * @dg_internal
+ * @utility
  * @version 2.13.0
  */
 void AgentEngine::set_concurrent_sessions(bool enabled) {
@@ -3797,7 +3902,7 @@ void AgentEngine::set_concurrent_sessions(bool enabled) {
 /**
  * @brief Whether per-session concurrency is enabled (gh#158).
  * @return true when distinct keys may run together.
- * @dg_internal
+ * @utility
  * @version 2.13.0
  */
 bool AgentEngine::concurrent_sessions() const {
@@ -3808,7 +3913,7 @@ bool AgentEngine::concurrent_sessions() const {
 /**
  * @brief The run this thread owns, if any (gh#158).
  * @return This thread's run state, or nullptr outside a claimed run.
- * @dg_internal
+ * @req REQ-LOOP-006
  * @version 2.13.0
  */
 std::shared_ptr<AgentEngine::RunState> AgentEngine::this_thread_run() const {
@@ -3822,7 +3927,7 @@ std::shared_ptr<AgentEngine::RunState> AgentEngine::this_thread_run() const {
  * @brief Interrupt exactly one session's run — see header (gh#158).
  * @param key Session whose run to interrupt.
  * @return true when a run was found and flagged.
- * @dg_internal
+ * @utility
  * @version 2.13.0
  */
 bool AgentEngine::interrupt_session(const std::string& key) {
@@ -3845,7 +3950,7 @@ bool AgentEngine::interrupt_session(const std::string& key) {
  * @brief Whether a session's in-flight run carries an interrupt (gh#158).
  * @param key Session key.
  * @return true when that run exists and is flagged.
- * @dg_internal
+ * @utility
  * @version 2.13.0
  */
 bool AgentEngine::session_interrupted(const std::string& key) const {
@@ -3858,7 +3963,7 @@ bool AgentEngine::session_interrupted(const std::string& key) const {
 /**
  * @brief The cancel flag of this thread's run — see header (gh#158).
  * @return Reference to this run's cancel flag.
- * @dg_internal
+ * @utility
  * @version 2.13.0
  */
 std::atomic<bool>& AgentEngine::run_cancel_flag() {
@@ -3981,7 +4086,7 @@ void AgentEngine::bind_session_workspace(const std::string& session,
  * @param session Session key.
  * @param tier Tier name; "" = untiered default.
  * @return The prompt, or nullopt when unbound or not provided.
- * @dg_internal
+ * @utility
  * @version 2.14.0
  */
 std::optional<std::string> AgentEngine::workspace_prompt_for(
@@ -4048,7 +4153,7 @@ void AgentEngine::seed_system_prompt_for_tier(const std::string& tier) {
  * @param pending First user turn for this call.
  * @param tier_override Tier to lock the run to ("" = route).
  * @return Result messages from the final turn.
- * @dg_internal
+ * @utility
  * @version 2.14.5
  */
 std::vector<Message> AgentEngine::run_drain_loop(
@@ -4089,13 +4194,13 @@ std::vector<Message> AgentEngine::run_drain_loop(
  *
  * @param new_messages Messages to add this turn.
  * @return Result messages from the loop.
- * @dg_internal
+ * @utility
  * @version 2.1.10
  */
 /**
  * @brief Prepend the configured system prompt if this turn needs it.
  * @param new_messages The messages the caller is adding this turn.
- * @dg_internal
+ * @utility
  * @version 2.13.0
  */
 void AgentEngine::seed_system_prompt(
@@ -4119,7 +4224,7 @@ void AgentEngine::seed_system_prompt(
  * @brief Pull the next queued user message into `pending` (gh#40).
  * @param pending Out: cleared and set to the next user turn.
  * @return true if a queued message was dequeued; false if empty.
- * @dg_internal
+ * @utility
  * @version 2.3.7
  */
 bool AgentEngine::prepare_next_turn(std::vector<Message>& pending) {
@@ -4257,7 +4362,7 @@ int AgentEngine::run_streaming(
  * @brief Concatenate user-role message text for session-log echo.
  * @param messages Incoming messages for the streaming turn.
  * @return Newline-joined user text (skips system/assistant turns).
- * @dg_internal
+ * @utility
  * @version 2.1.8
  */
 static std::string concat_user_echo(
@@ -4323,7 +4428,7 @@ int AgentEngine::run_streaming(
 
 /**
  * @brief Clear conversation history.
- * @dg_internal
+ * @utility
  * @version 2.12.0
  */
 void AgentEngine::clear_conversation() {
@@ -4343,7 +4448,7 @@ void AgentEngine::clear_conversation() {
  * publishing its key (see `set_active_session`).
  *
  * @return Number of messages, or 0 when the active session is unknown.
- * @dg_internal
+ * @utility
  * @version 2.13.0 [reviewed]
  */
 size_t AgentEngine::message_count() const {
@@ -4359,7 +4464,7 @@ size_t AgentEngine::message_count() const {
  * @brief Messages held by a named session — see header.
  * @param key Session key.
  * @return That session's messages; empty when the key is unknown.
- * @dg_internal
+ * @utility
  * @version 2.13.0
  */
 std::vector<Message> AgentEngine::messages_for(const std::string& key) const {
@@ -4373,7 +4478,7 @@ std::vector<Message> AgentEngine::messages_for(const std::string& key) const {
  * @brief Message count for a named session — see header.
  * @param key Session key.
  * @return Count, or 0 when the key is unknown.
- * @dg_internal
+ * @utility
  * @version 2.13.0
  */
 std::size_t AgentEngine::message_count_for(const std::string& key) const {
@@ -4385,7 +4490,7 @@ std::size_t AgentEngine::message_count_for(const std::string& key) const {
 /**
  * @brief Clear one session's history, keeping the session — see header.
  * @param key Session key.
- * @dg_internal
+ * @utility
  * @version 2.13.0
  */
 void AgentEngine::clear_conversation_for(const std::string& key) {
@@ -4398,7 +4503,7 @@ void AgentEngine::clear_conversation_for(const std::string& key) {
  * @brief Forget a session entirely — see header.
  * @param key Session key.
  * @return true when a session was dropped or cleared.
- * @dg_internal
+ * @utility
  * @version 2.13.0
  */
 bool AgentEngine::drop_session(const std::string& key) {
@@ -4413,7 +4518,7 @@ bool AgentEngine::drop_session(const std::string& key) {
 /**
  * @brief Keys of every session the engine holds — see header.
  * @return Session keys, unordered.
- * @dg_internal
+ * @utility
  * @version 2.13.0
  */
 std::vector<std::string> AgentEngine::session_keys() const {
@@ -4436,7 +4541,7 @@ std::vector<std::string> AgentEngine::session_keys() const {
  * @param messages Replacement conversation.
  * @return true when replaced; false when a run on that key is in flight.
  * @req REQ-LOOP-010
- * @dg_internal
+ * @utility
  * @version 2.13.0
  */
 bool AgentEngine::set_session_messages(const std::string& key,
@@ -4460,7 +4565,7 @@ bool AgentEngine::set_session_messages(const std::string& key,
 /**
  * @brief Get conversation messages.
  * @return Const reference to messages.
- * @dg_internal
+ * @utility
  * @version 2.13.0 [reviewed]
  */
 const std::vector<Message>& AgentEngine::get_messages() const {
@@ -4483,7 +4588,7 @@ const std::vector<Message>& AgentEngine::get_messages() const {
 
 /**
  * @brief Enqueue a user message subject to the configured cap.
- * @dg_internal
+ * @utility
  * @version 2.1.10
  */
 bool AgentEngine::queue_user_message(const std::string& message) {
@@ -4502,7 +4607,7 @@ bool AgentEngine::queue_user_message(const std::string& message) {
 
 /**
  * @brief Read queue depth under the queue mutex.
- * @dg_internal
+ * @utility
  * @version 2.1.10
  */
 size_t AgentEngine::user_message_queue_depth() const {
@@ -4512,7 +4617,7 @@ size_t AgentEngine::user_message_queue_depth() const {
 
 /**
  * @brief Drop all queued messages atomically.
- * @dg_internal
+ * @utility
  * @version 2.1.10
  */
 void AgentEngine::clear_user_message_queue() {
@@ -4526,7 +4631,7 @@ void AgentEngine::clear_user_message_queue() {
 
 /**
  * @brief Update the runtime cap (in-place on LoopConfig).
- * @dg_internal
+ * @utility
  * @version 2.1.10
  */
 void AgentEngine::set_message_queue_capacity(int cap) {
@@ -4536,7 +4641,7 @@ void AgentEngine::set_message_queue_capacity(int cap) {
 
 /**
  * @brief Pop the head of the queue if non-empty (FIFO).
- * @dg_internal
+ * @utility
  * @version 2.1.10
  */
 std::optional<std::string>
@@ -4552,7 +4657,7 @@ AgentEngine::pop_queued_user_message() {
 
 /**
  * @brief Notify the consumer that a queued message is being injected.
- * @dg_internal
+ * @utility
  * @version 2.1.10
  */
 void AgentEngine::fire_queue_consumed(const std::string& consumed,
@@ -4565,7 +4670,7 @@ void AgentEngine::fire_queue_consumed(const std::string& consumed,
 
 /**
  * @brief Persistent slot setter; survives set_callbacks() shuffles.
- * @dg_internal
+ * @utility
  * @version 2.1.10
  */
 void AgentEngine::set_queue_observer(
@@ -4599,7 +4704,7 @@ void AgentEngine::set_state_observer(
 /**
  * @brief Build ToolExecutorHooks wired to this engine's DirectiveProcessor.
  * @return Configured hooks.
- * @dg_internal
+ * @utility
  * @version 2.0.2
  */
 ToolExecutorHooks AgentEngine::build_directive_hooks() {

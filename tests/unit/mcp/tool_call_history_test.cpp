@@ -225,3 +225,40 @@ TEST_CASE("to_json includes error_detail when set",
     REQUIRE(j.size() == 1);
     REQUIRE(j[0]["error_detail"] == "OOM during read");
 }
+
+// ── gh#216 (v2.14.6): a multi-byte character at the cut never poisons the host ─
+
+SCENARIO("gh#216: truncating a tool result never splits a UTF-8 character",
+         "[tool_call_history][gh216][2.14.6]") {
+    // The consumer's trigger: clew's staleness note, full of U+2014 (3
+    // bytes). A byte-200 cut split it, the "." of "..." landed at index 200
+    // as an invalid continuation, and every later history dump threw
+    // type_error.316 — failing EVERY ask on the host until restart.
+    const std::string dash = "\xE2\x80\x94";  // U+2014 EM DASH
+    const std::string text = std::string(199, 'a') + dash + std::string(50, 'b');
+    auto cut = truncate_result(text, 200);
+    THEN("the summary is valid UTF-8 and ends with the marker") {
+        CHECK_NOTHROW(json(cut).dump());
+        CHECK(cut == std::string(199, 'a') + "...");
+    }
+}
+
+SCENARIO("gh#216: one bad record cannot make the history unserializable",
+         "[tool_call_history][gh216][2.14.6]") {
+    // The history is handle-wide and re-serialized on every run, so a
+    // record that cannot be dumped failed every later turn, in any session.
+    ToolCallHistory h(10);
+    auto bad = make_record(1);
+    bad.result_summary = std::string("ok \xE2\x80", 5);  // truncated sequence
+    bad.params_summary = "\xFF";
+    h.record(bad);
+    h.record(make_record(2));
+    std::string out;
+    REQUIRE_NOTHROW(out = h.to_json(0));
+    auto arr = json::parse(out);
+    THEN("both records survive, the bad bytes replaced") {
+        REQUIRE(arr.size() == 2);
+        CHECK(arr[0]["tool_name"] == "tool.1");
+        CHECK(arr[1]["result_summary"] == "result 2");
+    }
+}

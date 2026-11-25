@@ -17,7 +17,7 @@
  *   - Each Sampler returned by `create()` owns its `llama_sampler*`
  *     and frees it in the destructor.
  *
- * @dg_internal
+ * @utility
  * @version 2.3.10
  */
 
@@ -41,7 +41,7 @@ namespace entropic {
  * the backend guarantees the context outlives every Sampler it
  * vends.
  *
- * @dg_internal
+ * @utility
  * @version 2.3.10
  */
 class LlamaCppSampler : public Sampler {
@@ -82,7 +82,7 @@ public:
      *
      * @return Borrowed `llama_sampler*` (never null for the
      *         production Sampler; do not free).
-     * @dg_internal
+     * @utility
      * @version 2.3.10
      */
     llama_sampler* native_chain() const { return chain_; }
@@ -112,9 +112,26 @@ private:
  *   - dist:       always appended last; seed resolves via
  *                 `LLAMA_DEFAULT_SEED` when `params.seed < 0`. (P2-14)
  *
- * @dg_internal
+ * @utility
  * @version 2.3.10
  */
+/**
+ * @brief A render-derived tool-call grammar for one plain-decode generation.
+ *
+ * v2.14.6: gh#134 applied this grammar only on the common_sampler path
+ * (speculative / MTP); plain decode built its chain from `params.grammar`
+ * alone, so `require_tool_call` and the forced retry after a nudge decoded
+ * unconstrained. Carried beside GenerationParams, not inside it: it is
+ * backend state from the render, not a request knob.
+ *
+ * @version 2.14.6
+ */
+struct ToolCallGrammar {
+    std::string gbnf;               ///< GBNF from common_chat ("" = none)
+    bool lazy = false;              ///< Arms on a trigger (not applied here)
+    std::string generation_prompt;  ///< Render prefill fed to the grammar
+};
+
 class LlamaCppSamplerFactory : public SamplerFactory {
 public:
     /**
@@ -128,6 +145,25 @@ public:
 
     std::unique_ptr<Sampler> create(
         const GenerationParams& params) override;
+
+    /**
+     * @brief Build the chain with a tool-call grammar at its head (v2.14.6).
+     *
+     * A request grammar (`params.grammar`) still wins. A non-lazy tool
+     * grammar is attached first in the chain and fed the render's
+     * generation prompt, as llama.cpp's common_sampler does for
+     * COMMON_GRAMMAR_TYPE_TOOL_CALLS. A lazy one is not applied, because its
+     * trigger patterns are not captured, and that is logged.
+     *
+     * @param params Generation parameters.
+     * @param tool Tool-call grammar for this generation.
+     * @return Owned Sampler, or nullptr when the grammar cannot be built or
+     *         rejects its own prefill (the caller reports a typed error).
+     * @req REQ-INFER-008
+     * @version 2.14.6
+     */
+    std::unique_ptr<Sampler> create(const GenerationParams& params,
+                                    const ToolCallGrammar& tool);
 
 private:
     llama_context* ctx_      = nullptr;  ///< Borrowed context

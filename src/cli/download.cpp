@@ -80,7 +80,7 @@ int list_models(const entropic::config::BundledModels& registry)
  * @param url Source URL.
  * @param dest Destination file path.
  * @return 0 on success, non-zero on curl failure.
- * @dg_internal
+ * @utility
  * @version 1
  */
 int curl_download(const std::string& url, const std::filesystem::path& dest)
@@ -317,7 +317,7 @@ int fetch_mmproj_if_paired(
  * @param argv argv-like vector starting at subcommand name.
  * @return 0 on success, non-zero on usage/runtime error.
  *
- * @dg_internal
+ * @utility
  * @version 2.0.5
  */
 /**

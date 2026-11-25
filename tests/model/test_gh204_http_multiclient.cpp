@@ -23,7 +23,7 @@
  * Multi-turn: each client asks a second time in the same session, so the
  * workspace binding and the conversation carry across HTTP requests.
  *
- * Requires: GPU, gemma-4-E2B QAT GGUF on disk.
+ * Requires: GPU, gemma-4-E4B QAT GGUF on disk.
  * Run: inv test --model --filter gh204
  *
  * @version 2.14.0
@@ -151,9 +151,9 @@ SCENARIO("gh#204/gh#205: two HTTP clients, different session, workspace and "
          "tier, run concurrently on one engine", "[model][gh204][gh205][serve]") {
     GIVEN("one engine serving MCP over HTTP, two tiers, two repositories") {
         auto gguf = entropic::test::facade::model_gguf(
-            "gemma-4-E2B-it-qat-UD-Q4_K_XL.gguf");
+            "gemma-4-E4B-it-qat-UD-Q4_K_XL.gguf");
         if (gguf.empty() || !fs::is_regular_file(gguf)) {
-            SKIP("gemma-4-E2B QAT GGUF not present at " + gguf.string());
+            SKIP("gemma-4-E4B QAT GGUF not present at " + gguf.string());
         }
         const auto repo_a = make_repo("a", "Marigold");
         const auto repo_b = make_repo("b", "Saffron");
@@ -166,7 +166,7 @@ SCENARIO("gh#204/gh#205: two HTTP clients, different session, workspace and "
         auto tier = [](const std::string& name, const std::string& tag) {
             entropic::test::facade::TierSpec t;
             t.name = name;
-            t.gguf_key = "gemma4_e2b_qat";  // both tiers share one backend
+            t.gguf_key = "gemma4_e4b_qat";  // both tiers share one backend
             t.adapter = "gemma4";
             t.identity_body = "You are a terse assistant. Begin EVERY answer "
                               "with the word " + tag + ", then answer briefly.";

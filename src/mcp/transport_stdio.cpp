@@ -79,7 +79,7 @@ static std::string sanitize_display_name(const std::string& raw) {
  * @param args Command-line arguments.
  * @param env Environment variable overrides.
  * @param default_timeout_ms Default request timeout.
- * @dg_internal
+ * @utility
  * @version 2.1.5-hard
  */
 StdioTransport::StdioTransport(
@@ -105,7 +105,7 @@ StdioTransport::StdioTransport(
  * @param args Command-line arguments.
  * @param env Environment variable overrides.
  * @param default_timeout_ms Default request timeout.
- * @dg_internal
+ * @utility
  * @version 2.1.5-hard
  */
 StdioTransport::StdioTransport(
@@ -123,7 +123,7 @@ StdioTransport::StdioTransport(
 
 /**
  * @brief Destructor — ensures child is cleaned up.
- * @dg_internal
+ * @utility
  * @version 1.8.7
  */
 StdioTransport::~StdioTransport() {
@@ -151,7 +151,7 @@ bool StdioTransport::create_all_pipes(int (&fds)[6]) {
 /**
  * @brief Spawn child process and open pipes.
  * @return true on success.
- * @dg_internal
+ * @utility
  * @version 2.12.1
  */
 bool StdioTransport::open() {
@@ -213,7 +213,7 @@ bool StdioTransport::open_child_process() {
 
 /**
  * @brief Send SIGTERM, reap the child, join the stderr pump, close pipes.
- * @dg_internal
+ * @utility
  * @version 2.13.0
  */
 void StdioTransport::close() {
@@ -319,7 +319,7 @@ int StdioTransport::drain_orphaned_responses() {
 /**
  * @brief Check if child process is alive via kill(pid, 0).
  * @return true if connected.
- * @dg_internal
+ * @utility
  * @version 1.8.7
  */
 bool StdioTransport::is_connected() const {

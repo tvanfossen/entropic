@@ -18,7 +18,7 @@ namespace entropic {
  * @brief Extract optional parent_conversation_id from JSON.
  * @param j JSON object.
  * @return Conversation ID string, or empty if absent/null.
- * @dg_internal
+ * @req REQ-STOR-008
  * @version 1.9.5
  */
 static std::string extract_parent_id(const nlohmann::json& j) {
@@ -33,7 +33,7 @@ static std::string extract_parent_id(const nlohmann::json& j) {
  * @brief Parse the result sub-object from JSON into AuditEntry fields.
  * @param result JSON result object.
  * @param[out] entry Entry to populate.
- * @dg_internal
+ * @req REQ-STOR-008
  * @version 1.9.5
  */
 static void parse_result_fields(

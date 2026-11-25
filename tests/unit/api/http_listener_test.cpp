@@ -319,3 +319,29 @@ SCENARIO("gh#204: an unservable http_port fails configure loudly",
     }
     entropic_destroy(h);
 }
+
+SCENARIO("gh#220: a port another listener holds is refused, not shared",
+         "[http][gh220][security][2.14.6]") {
+    // cpp-httplib's default socket options set SO_REUSEPORT, so a second
+    // listener on a held port bound successfully, rewrote the token file, and
+    // the kernel split connections — bearer header included — between the
+    // two processes. A listener that carries a token must be exclusive.
+    ScratchHome home;
+    entropic::ExternalMCPConfig cfg;
+    entropic::ExternalBridge bridge(nullptr, cfg, home.dir() / "unused.sock");
+    HttpListener first(&bridge, 0);
+    std::string err;
+    REQUIRE(first.start(err));
+    const int port = first.port();
+    const std::string token = slurp(first.token_file());
+    HttpListener second(&bridge, port);
+    std::string why;
+    const bool started = second.start(why);
+    INFO("second start: " << why);
+    THEN("the second start fails and the first host's token is untouched") {
+        CHECK_FALSE(started);
+        CHECK(slurp(first.token_file()) == token);
+    }
+    if (started) { second.stop(); }
+    first.stop();
+}

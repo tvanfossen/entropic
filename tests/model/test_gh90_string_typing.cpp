@@ -24,14 +24,14 @@
 
 #include "v219_family_test_helpers.h"
 
-namespace { constexpr char K_GEMMA4_E4B[] = "gemma4_e4b"; }
+namespace { constexpr char K_GEMMA4_E4B[] = "gemma4_e4b_qat"; }
 CATCH_REGISTER_LISTENER(V219FamilyListener<K_GEMMA4_E4B>)
 
 SCENARIO("gh#90: gemma <|\"|> escape on a numeric value keeps string typing",
          "[model][gh90][gemma4]")
 {
     if (!g_ctx.initialized) {
-        SKIP(skip_reason_or_default("gemma4_e4b"));
+        SKIP(skip_reason_or_default("gemma4_e4b_qat"));
     }
     GIVEN("the gemma backend warmed with a string-typed param via tools") {
         start_test_log("gh90_string_typing");

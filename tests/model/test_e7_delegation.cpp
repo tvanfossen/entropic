@@ -101,8 +101,8 @@ namespace fs = std::filesystem;
 /// @version 2.13.0
 struct PatchCapture {
     int fired = 0;        ///< Times the complete callback ran
-    size_t files = 0;     ///< files_touched_len of the last call
-    std::string patch;    ///< Patch text of the last call
+    size_t files = 0;     ///< files_touched_len summed over every call (v2.14.6)
+    std::string patch;    ///< Patch text of every call, appended (v2.14.6)
 };
 
 /**
@@ -149,29 +149,6 @@ struct TierToolsets {
     std::string eng;   ///< Child's menu: the writer lives here only
 };
 
-/**
- * @brief Pick named tools out of a `ServerManager::list_tools()` array.
- * @param all_json list_tools() output.
- * @param names Fully-qualified tool names to keep, in the order wanted.
- * @return A JSON ARRAY string holding exactly the named tools.
- * @utility
- * @version 2.13.0
- */
-inline std::string tools_named(const std::string& all_json,
-                               const std::vector<std::string>& names) {
-    auto all = nlohmann::json::parse(all_json, nullptr, false);
-    auto picked = nlohmann::json::array();
-    if (!all.is_array()) { return picked.dump(); }
-    for (const auto& want : names) {
-        for (const auto& tool : all) {
-            if (tool.value("name", std::string{}) == want) {
-                picked.push_back(tool);
-                break;
-            }
-        }
-    }
-    return picked.dump();
-}
 
 /**
  * @brief Per-tier tool staging — the seam `facade_get_tool_prompt` fills
@@ -263,14 +240,19 @@ SCENARIO("gh#160: an isolated delegation never writes the project, and "
         // then never entered and the containment CHECK fails on a write
         // that had nothing to do with isolation.
         const std::string registry = servers.list_tools();
+        // v2.14.6: the lead is also STAGED entropic.complete, as the
+        // production lead is (its allowlist below already held it). Without
+        // it a lead that owes a completion call could never make one, and the
+        // forced retry after a prose answer had nothing to conclude with.
         TierToolsets toolsets{
             tools_named(registry,
-                        {"entropic.delegate", "filesystem.read_file"}),
+                        {"entropic.delegate", "filesystem.read_file",
+                         "entropic.complete"}),
             tools_named(registry,
                         {"filesystem.read_file", "filesystem.write_file"})};
         // Fixture self-check: a renamed tool would otherwise silently stage
         // an empty menu and look like a model that declined to delegate.
-        REQUIRE(nlohmann::json::parse(toolsets.lead).size() == 2);
+        REQUIRE(nlohmann::json::parse(toolsets.lead).size() == 3);
         REQUIRE(nlohmann::json::parse(toolsets.eng).size() == 2);
 
         auto iface = make_real_interface();
@@ -293,6 +275,18 @@ SCENARIO("gh#160: an isolated delegation never writes the project, and "
         TierResolutionInterface tri;
         tri.resolve_tier = eng_resolve_tier;
         tri.tier_exists = mock_tier_exists;
+        // v2.14.6: the lead's PRODUCTION contract. The bundled lead identity
+        // sets explicit_completion: true and the facade enforces it; this
+        // engine is built directly, so without this hook the lead ran with
+        // no contract and a prose answer ("I'll have eng do that") was
+        // accepted as complete — the scenario then never delegated (about a
+        // third of E4B runs). With it, a turn that delegates nothing is
+        // nudged toward a tool call, as it is for a real consumer.
+        tri.get_tier_param = [](const std::string& tier, const std::string& param,
+                                void* /*ud*/) -> std::string {
+            return (tier == g_ctx.default_tier && param == "explicit_completion")
+                ? "true" : "";
+        };
         engine.set_tier_resolution(tri);
 
         entropic::SessionRootInterface sri;
@@ -314,8 +308,12 @@ SCENARIO("gh#160: an isolated delegation never writes the project, and "
         // routed default tier, whose name comes from the dev box config.
         const std::unordered_map<std::string, std::vector<std::string>>
             tier_allowed{
+                // entropic.complete: the production lead's own (identity_lead
+                // allowed_tools) — a lead that owes a completion call must be
+                // able to make one (gh#213).
                 {g_ctx.default_tier,
-                 {"entropic.delegate", "filesystem.read_file"}},
+                 {"entropic.delegate", "filesystem.read_file",
+                  "entropic.complete"}},
                 {"eng", {"filesystem.read_file", "filesystem.write_file"}}};
 
         entropic::ToolExecutor executor(
@@ -338,8 +336,11 @@ SCENARIO("gh#160: an isolated delegation never writes the project, and "
             [](const ent_delegation_result_t* r, void* ud) {
                 auto* c = static_cast<PatchCapture*>(ud);
                 c->fired++;
-                c->files = r->files_touched_len;
-                c->patch.assign(r->patch, r->patch_len);
+                // v2.14.6: ACCUMULATE. This kept only the LAST delegation's
+                // patch, so a later no-op delegation (the lead acknowledging
+                // on turn 2) erased the evidence of the edit that did run.
+                c->files += r->files_touched_len;
+                c->patch.append(r->patch, r->patch_len);
                 return ENT_DECISION_ACCEPT;
             }, &cap);
 
@@ -422,6 +423,141 @@ SCENARIO("gh#160: an isolated delegation never writes the project, and "
                       != std::string::npos);
                 CHECK(evidence.find("REWRITTEN BY ENG")
                       == std::string::npos);
+                end_test_log();
+            }
+        }
+
+        fs::remove_all(project);
+    }
+}
+
+// ── v2.14.6: a prose answer's forced retry may only conclude ────────────
+
+namespace complete_only_model {
+
+
+} // namespace complete_only_model
+
+SCENARIO("v2.14.6: a lead that answers in prose is nudged, and its forced "
+         "retry concludes with entropic.complete instead of delegating",
+         "[model][engine][delegation][explicit_completion][2.14.6]")
+{
+    using namespace complete_only_model;
+    namespace fs = std::filesystem;
+
+    GIVEN("the production lead contract: explicit_completion, delegate + complete") {
+        REQUIRE(g_ctx.initialized);
+        const std::string log_name = "v2146_complete_only";
+        start_test_log(log_name);
+
+        auto project = fs::temp_directory_path() /
+                       ("entropic_v2146_model_" + std::to_string(::getpid()));
+        fs::remove_all(project);
+        fs::create_directories(project);
+
+        entropic::PermissionsConfig perms;
+        perms.allow = {"*"};
+        entropic::ServerManager servers(perms, project);
+        entropic::MCPConfig mcp_cfg;
+        servers.init_builtins(mcp_cfg, {"eng"},
+                              (fs::path(MODEL_PATH) / "data").string());
+        servers.initialize();
+        std::string menu = tools_named(servers.list_tools(),
+                                       {"entropic.delegate", "entropic.complete"});
+        REQUIRE(nlohmann::json::parse(menu).size() == 2);  // fixture self-check
+
+        auto iface = make_real_interface();
+        iface.get_tool_prompt = lead_tool_prompt;
+        iface.tool_prompt_data = &menu;
+        LoopConfig lc;
+        lc.max_iterations = 8;
+        lc.stream_output = false;
+        lc.auto_approve_tools = true;
+        CompactionConfig cc;
+        AgentEngine engine(iface, lc, cc);
+        engine.set_project_dir(project);
+
+        CallbackState state;
+        EngineCallbacks cbs{};
+        wire_callbacks(cbs, state);
+        engine.set_callbacks(cbs);
+
+        TierResolutionInterface tri;
+        tri.resolve_tier = mock_resolve_tier;
+        tri.tier_exists = mock_tier_exists;
+        tri.get_tier_param = [](const std::string& tier, const std::string& param,
+                                void* /*ud*/) -> std::string {
+            return (tier == g_ctx.default_tier && param == "explicit_completion")
+                ? "true" : "";
+        };
+        engine.set_tier_resolution(tri);
+
+        const std::unordered_map<std::string, std::vector<std::string>>
+            tier_allowed{{g_ctx.default_tier,
+                          {"entropic.delegate", "entropic.complete"}}};
+        entropic::ToolExecutor executor(
+            servers, engine.loop_config(), engine.callbacks(),
+            engine.build_directive_hooks());
+        executor.set_tier_allowed_tools(&tier_allowed);
+        ToolExecutionInterface tei;
+        tei.process_tool_calls = [](LoopContext& ctx,
+                                    const std::vector<ToolCall>& calls,
+                                    void* ud) {
+            return static_cast<entropic::ToolExecutor*>(ud)
+                ->process_tool_calls(ctx, calls);
+        };
+        tei.user_data = &executor;
+        engine.set_tool_executor(tei);
+
+        int delegations = 0;
+        engine.set_delegation_callbacks(
+            nullptr,
+            [](const ent_delegation_result_t*, void* ud) {
+                ++*static_cast<int*>(ud);
+                return ENT_DECISION_ACCEPT;
+            }, &delegations);
+
+        WHEN("the lead is asked something it answers directly, twice") {
+            // A greeting invites prose, which the explicit_completion contract
+            // nudges; the forced retry is then offered entropic.complete only.
+            auto messages = make_messages(
+                "You are a friendly lead engineer.",
+                "Say hello to me in one short sentence.");
+            auto after_turn1 = engine.run(std::move(messages));
+            const bool engaged_turn1 = test_log_contains(
+                log_name, "forced retry offers only 'entropic.complete'");
+            // The restriction is only real if the grammar reached the
+            // sampler; plain decode dropped it before v2.14.6.
+            const bool grammar_turn1 = test_log_contains(
+                log_name, "Tool-call grammar applied");
+
+            after_turn1.push_back([] {
+                Message m;
+                m.role = "user";
+                m.content = "Thanks. Now say goodbye in one short sentence.";
+                return m;
+            }());
+            auto after_turn2 = engine.run(std::move(after_turn1));
+
+            THEN("the narrowed retry engaged, and both turns concluded") {
+                INFO("delegations=" << delegations
+                     << " turn-2 answer: " << after_turn2.back().content);
+                // Engagement first: a run where the model called complete on
+                // its first try never reached the code under test.
+                REQUIRE(engaged_turn1);
+                REQUIRE(grammar_turn1);
+                CHECK_FALSE(test_log_contains(log_name, "turn failed"));
+                CHECK_FALSE(test_log_contains(log_name,
+                                              "but the tier is not offered it"));
+                // One completion per turn, each a real tool execution.
+                CHECK(count_log_lines(log_name, "[EXECUTE] entropic.complete")
+                      == 2);
+                CHECK(delegations == 0);
+                // The turn's ending shape is not asserted: a forced-retry
+                // completion ends on the directive result, a first-try one
+                // on the completion summary (v2.14.6 gate). Both concluded;
+                // the execution count above is what proves it.
+                CHECK_FALSE(after_turn2.back().content.empty());
                 end_test_log();
             }
         }

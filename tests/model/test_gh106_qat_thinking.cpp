@@ -19,7 +19,7 @@
 
 TEST_CASE("gh#106 observe: QAT thinking-model tool-call structure",
           "[model][gh106][qat][thinking]") {
-    auto path = gh87verify::model_path("gemma-4-E2B-it-qat-UD-Q4_K_XL.gguf");
+    auto path = gh87verify::model_path("gemma-4-E4B-it-qat-UD-Q4_K_XL.gguf");
     if (!std::filesystem::is_regular_file(path)) {
         SKIP("standard-QAT-Q4 GGUF not present: " + path.string());
     }

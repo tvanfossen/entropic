@@ -74,6 +74,14 @@ public:
     bool skip_duplicate_check(const std::string& tool_name) const override;
 
     /**
+     * @brief Engine directives never need the host's approval (v2.14.6).
+     * @param tool_name Tool name.
+     * @return false for every entropic tool.
+     * @version 2.14.6
+     */
+    bool requires_approval(const std::string& tool_name) const override;
+
+    /**
      * @brief Set the engine state provider for introspection tools.
      * @param provider Callback struct with engine state accessors.
      * @version 2.0.6-rc16
@@ -110,18 +118,18 @@ private:
     entropic_state_provider_t state_provider_{};  ///< Stored copy for lifetime
 
     /** @brief Register core tools (todo, complete, phase_change, prune).
-     * @dg_internal @version 1.9.12 */
+     * @utility @version 1.9.12 */
     int register_core_tools(const std::string& tools_dir);
 
     /** @brief Register delegation tools if multi-tier.
-     * @dg_internal @version 1.9.12 */
+     * @utility @version 1.9.12 */
     int register_delegation_tools(
         const std::string& tools_dir,
         const std::vector<std::string>& tier_names,
         const std::vector<std::string>& require_context_tiers = {});
 
     /** @brief Register introspection tools (diagnose, inspect, context_inspect).
-     * @dg_internal @version 2.0.6-rc16 */
+     * @utility @version 2.0.6-rc16 */
     int register_introspection_tools(const std::string& tools_dir);
 };
 

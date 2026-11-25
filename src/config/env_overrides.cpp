@@ -17,7 +17,7 @@ namespace entropic::config {
  * @brief Get environment variable value or empty string.
  * @param name Variable name.
  * @return Value string, or empty if not set.
- * @dg_internal
+ * @utility
  * @version 1.8.1
  */
 static std::string get_env(const char* name)
@@ -48,7 +48,7 @@ static bool parse_bool(const std::string& val)
  *
  * @param key Environment variable name.
  * @param setter Invoked with the value when present.
- * @utility
+ * @req REQ-CFG-001
  * @version 2.3.7
  */
 template <typename Setter>
@@ -62,14 +62,15 @@ static void apply_env(const char* key, Setter setter) {
 /**
  * @brief The `mcp.external` overrides `entropic serve` sets (gh#204).
  *
- * `ENTROPIC_MCP__EXTERNAL__ENABLED` and `ENTROPIC_MCP__EXTERNAL__HTTP_PORT`.
- * A port that does not parse becomes -1, which the HTTP listener then
- * refuses loudly at configure — never an exception out of the loader.
+ * `ENTROPIC_MCP__EXTERNAL__ENABLED`, `ENTROPIC_MCP__EXTERNAL__HTTP_PORT` and
+ * (v2.14.6) `ENTROPIC_MCP__EXTERNAL__ALLOW_SHUTDOWN`. A port that does not
+ * parse becomes -1, which the HTTP listener then refuses loudly at
+ * configure — never an exception out of the loader.
  *
  * @param config Config to override.
- * @dg_internal
+ * @utility
  * @req REQ-CFG-001
- * @version 2.14.0
+ * @version 2.14.6
  */
 static void apply_mcp_external_env(ParsedConfig& config)
 {
@@ -84,6 +85,10 @@ static void apply_mcp_external_env(ParsedConfig& config)
                   config.mcp.external.http_port =
                       (end != v.c_str() && *end == '\0') ? static_cast<int>(port)
                                                           : -1;
+              });
+    apply_env("ENTROPIC_MCP__EXTERNAL__ALLOW_SHUTDOWN",
+              [&](const std::string& v) {
+                  config.mcp.external.allow_shutdown = parse_bool(v);
               });
 }
 

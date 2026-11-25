@@ -96,7 +96,7 @@ extern "C" const char* entropic_error_name(entropic_error_t code) {
  * @param user_data Opaque pointer forwarded to callback.
  * @return ENTROPIC_OK on success, ENTROPIC_ERROR_INVALID_ARGUMENT if handle is NULL.
  * @version 2.11.0
- * @dg_internal
+ * @utility
  */
 extern "C" entropic_error_t entropic_set_error_callback(
     entropic_handle_t handle,

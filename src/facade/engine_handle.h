@@ -495,6 +495,24 @@ public:
     }
 
     /**
+     * @brief Claim the WHOLE engine: no run on any session, none may start.
+     *
+     * gh#217 (v2.14.6), for model release. claim() covers only this guard's
+     * session, and with per-session concurrency a decode in another session
+     * kept running while release unloaded the model under it.
+     *
+     * @return true when this guard now owns the engine exclusively.
+     * @req REQ-API-009
+     * @version 2.14.6
+     */
+    bool claim_exclusive() {
+        if (!claimed_ && engine_ != nullptr) {
+            claimed_ = engine_->try_begin_turn(key_, /*exclusive=*/true);
+        }
+        return claimed_;
+    }
+
+    /**
      * @brief The session this guard claims for.
      * @return Session key; `""` for the default session.
      * @utility

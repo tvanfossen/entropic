@@ -21,7 +21,7 @@ namespace entropic {
  * @brief Construct with SSE endpoint URL.
  * @param url SSE endpoint URL.
  * @param default_timeout_ms Default request timeout.
- * @dg_internal
+ * @utility
  * @version 1.8.7
  */
 SSETransport::SSETransport(
@@ -32,7 +32,7 @@ SSETransport::SSETransport(
 
 /**
  * @brief Destructor — ensures reader thread is stopped.
- * @dg_internal
+ * @utility
  * @version 1.8.7
  */
 SSETransport::~SSETransport() {
@@ -84,7 +84,7 @@ void SSETransport::warn_if_cleartext() const {
 /**
  * @brief Connect to SSE endpoint and start reader thread.
  * @return true on success.
- * @dg_internal
+ * @utility
  * @version 1.8.8
  */
 bool SSETransport::open() {
@@ -121,7 +121,7 @@ bool SSETransport::open() {
 
 /**
  * @brief Stop SSE reader and close HTTP client.
- * @dg_internal
+ * @utility
  * @version 1.8.7
  */
 void SSETransport::close() {
@@ -255,7 +255,7 @@ std::string SSETransport::send_request(
 /**
  * @brief Check if SSE stream is connected.
  * @return true if connected.
- * @dg_internal
+ * @utility
  * @version 1.8.7
  */
 bool SSETransport::is_connected() const {

@@ -18,7 +18,7 @@
  * unrelated turn, so it must come from the seeded system prompt carried in
  * the accumulated conversation, not from the last message.
  *
- * Requires: GPU, gemma-4-E2B QAT GGUF on disk (smallest bundled model that
+ * Requires: GPU, gemma-4-E4B QAT GGUF on disk (smallest bundled model that
  * follows instructions; the property is about context, not capability).
  * Run: inv test --model --filter gh179
  *
@@ -93,9 +93,9 @@ SCENARIO("gh#179: each workspace's sessions answer from its own app_context, "
          "concurrently", "[model][gh179][workspace]") {
     GIVEN("one resident model, a handle-wide context, and two repositories") {
         auto gguf = entropic::test::facade::model_gguf(
-            "gemma-4-E2B-it-qat-UD-Q4_K_XL.gguf");
+            "gemma-4-E4B-it-qat-UD-Q4_K_XL.gguf");
         if (gguf.empty() || !fs::is_regular_file(gguf)) {
-            SKIP("gemma-4-E2B QAT GGUF not present at " + gguf.string());
+            SKIP("gemma-4-E4B QAT GGUF not present at " + gguf.string());
         }
         auto repo_a = make_repo("a");
         auto repo_b = make_repo("b");
@@ -110,7 +110,7 @@ SCENARIO("gh#179: each workspace's sessions answer from its own app_context, "
             "Tundra.\"\n";
         entropic::test::facade::TierSpec lead;
         lead.name = "lead";
-        lead.gguf_key = "gemma4_e2b_qat";
+        lead.gguf_key = "gemma4_e4b_qat";
         lead.adapter = "gemma4";
         lead.identity_body = "You are a terse assistant. Answer in one word "
                              "or one short sentence.";

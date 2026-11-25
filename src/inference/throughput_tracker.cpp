@@ -21,7 +21,7 @@ auto logger = entropic::log::get("inference.throughput");
  * @brief Record a completed generation sample.
  * @param tokens_generated Number of tokens produced.
  * @param elapsed_ms Wall-clock generation time in milliseconds.
- * @dg_internal
+ * @utility
  * @version 2.0.0
  */
 void ThroughputTracker::record(int tokens_generated, int64_t elapsed_ms) {
@@ -52,7 +52,7 @@ void ThroughputTracker::record(int tokens_generated, int64_t elapsed_ms) {
 /**
  * @brief Current smoothed throughput estimate.
  * @return Tokens per second (EWMA). 0.0 if no samples recorded.
- * @dg_internal
+ * @utility
  * @version 1.9.7
  */
 double ThroughputTracker::tok_per_sec() const {
@@ -63,7 +63,7 @@ double ThroughputTracker::tok_per_sec() const {
  * @brief Predict wall-clock time for generating N tokens.
  * @param token_count Desired token count.
  * @return Predicted milliseconds. 0 if no throughput data.
- * @dg_internal
+ * @utility
  * @version 1.9.7
  */
 int64_t ThroughputTracker::predict_ms(int token_count) const {
@@ -81,7 +81,7 @@ int64_t ThroughputTracker::predict_ms(int token_count) const {
  * @param headroom Fraction of budget to target.
  * @param floor Minimum token count to return.
  * @return Recommended max_tokens.
- * @dg_internal
+ * @utility
  * @version 1.9.7
  */
 int ThroughputTracker::recommend_tokens(
@@ -100,7 +100,7 @@ int ThroughputTracker::recommend_tokens(
 /**
  * @brief Number of recorded samples.
  * @return Sample count.
- * @dg_internal
+ * @utility
  * @version 1.9.7
  */
 int ThroughputTracker::sample_count() const {
@@ -109,7 +109,7 @@ int ThroughputTracker::sample_count() const {
 
 /**
  * @brief Reset all throughput data.
- * @dg_internal
+ * @utility
  * @version 1.9.7
  */
 void ThroughputTracker::reset() {

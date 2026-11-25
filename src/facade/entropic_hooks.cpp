@@ -24,7 +24,7 @@ static auto logger = entropic::log::get("facade.hooks");
  *
  * @param handle Engine handle (must not be NULL).
  * @return Pointer to the handle's HookRegistry.
- * @dg_internal
+ * @utility
  * @version 2.0.0
  */
 static entropic::HookRegistry* get_registry(entropic_handle_t handle) {

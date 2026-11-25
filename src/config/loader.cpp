@@ -29,7 +29,7 @@ namespace entropic::config {
  * Extracted (gh#23 v2.3.19) to keep `parse_model_config` under the
  * knots ABC gate as new MVP-10 model-load knobs land.
  * @utility
- * @dg_internal
+ * @utility
  * @version 2.13.0
  */
 static void parse_model_runtime_knobs(
@@ -167,7 +167,7 @@ static std::string resolve_model_path(
  *
  * @param node YAML node for the model/tier.
  * @param[out] config Output model config.
- * @dg_internal
+ * @utility
  * @req REQ-CFG-005
  * @req REQ-TYPE-005
  * @version 2.13.0
@@ -348,7 +348,7 @@ static std::string parse_models_config(
  * @param node YAML node for "routing" section.
  * @param[out] config Output routing config.
  * @return Empty string on success, error message on failure.
- * @dg_internal
+ * @utility
  * @version 1.8.2
  */
 static std::string parse_routing_config(
@@ -374,7 +374,7 @@ static std::string parse_routing_config(
  * @param node YAML node for "compaction" section.
  * @param[out] config Output compaction config.
  * @return Empty string on success, error message on failure.
- * @dg_internal
+ * @utility
  * @version 1.8.2
  */
 static std::string parse_compaction_config(
@@ -404,7 +404,7 @@ static std::string parse_compaction_config(
  * @param[out] config Output delegation config.
  * @return Empty string on success, error message on an unknown mode.
  * @req REQ-DELEG-005
- * @dg_internal
+ * @utility
  * @version 2.13.0
  */
 static std::string parse_delegation_config(
@@ -429,7 +429,7 @@ static std::string parse_delegation_config(
  * @param node YAML node for "permissions" section.
  * @param[out] config Output permissions config.
  * @return Empty string on success, error message on failure.
- * @dg_internal
+ * @utility
  * @version 1.8.2
  */
 static std::string parse_permissions_config(
@@ -530,7 +530,7 @@ static std::string parse_absolute_path_list(
  * @return Empty string on success, error message on failure — v2.13.0
  *         the outside-root keys can now fail, and a bad value there must
  *         reach the operator rather than fall back.
- * @dg_internal
+ * @utility
  * @version 2.14.4
  */
 static std::string parse_filesystem_config(
@@ -571,7 +571,7 @@ static std::string parse_filesystem_config(
  *
  * @param node YAML node for the "tool_descriptions" map.
  * @param[out] config Output external MCP config.
- * @dg_internal
+ * @utility
  * @version 2.12.0
  */
 static void parse_tool_descriptions(
@@ -595,8 +595,8 @@ static void parse_tool_descriptions(
  * @param node YAML node for "external" section.
  * @param[out] config Output external MCP config.
  * @return Empty string on success, error message on failure.
- * @dg_internal
- * @version 2.14.0
+ * @utility
+ * @version 2.14.6
  */
 static std::string parse_external_mcp_config(
     ryml::ConstNodeRef node,
@@ -608,6 +608,7 @@ static std::string parse_external_mcp_config(
     // gh#204 (v2.14.0): range-checked where it is used — the listener fails
     // configure loudly on a bad port rather than this parse dropping it.
     extract(node, "http_port", config.http_port);
+    extract(node, "allow_shutdown", config.allow_shutdown);  // v2.14.6
     // gh#145: consumer-owned identity. Both default to "entropic", so an
     // unset config advertises exactly the pre-2.12.0 names.
     extract(node, "tool_prefix", config.tool_prefix);
@@ -661,7 +662,7 @@ static std::string parse_bash_config(
  * @brief Parse one declared external server (v2.14.0).
  * @param node YAML node for one `mcp.external_servers.<name>` entry.
  * @return The entry; an empty command AND url means "not usable".
- * @dg_internal
+ * @utility
  * @version 2.14.0
  */
 static ExternalServerEntry parse_external_server_entry(ryml::ConstNodeRef node) {
@@ -689,7 +690,7 @@ static ExternalServerEntry parse_external_server_entry(ryml::ConstNodeRef node) 
  * @param node YAML node for the "mcp" section.
  * @param[in,out] config MCP config to populate.
  * @return Empty on success, else the first bad entry's error.
- * @dg_internal
+ * @utility
  * @version 2.14.0
  */
 static std::string parse_external_servers(ryml::ConstNodeRef node,
@@ -716,7 +717,7 @@ static std::string parse_external_servers(ryml::ConstNodeRef node,
  * @brief Parse the `.mcp.json` enablement keys (v2.14.0, gh#199).
  * @param node YAML node for the "mcp" section.
  * @param[in,out] config MCP config to populate.
- * @dg_internal
+ * @utility
  * @version 2.14.0
  */
 static void parse_mcpjson_enablement(ryml::ConstNodeRef node,
@@ -737,7 +738,7 @@ static void parse_mcpjson_enablement(ryml::ConstNodeRef node,
  *
  * @param config Parsed MCP config.
  * @return Empty when valid, else the error.
- * @dg_internal
+ * @utility
  * @version 2.14.0
  */
 static std::string validate_server_timeout(const MCPConfig& config) {
@@ -759,7 +760,7 @@ static std::string validate_server_timeout(const MCPConfig& config) {
  * @param node YAML node for "mcp" section.
  * @param[out] config Output MCP config.
  * @return Empty string on success, else the first section's error.
- * @dg_internal
+ * @utility
  * @version 2.14.0
  */
 static std::string parse_mcp_sections(
@@ -788,7 +789,7 @@ static std::string parse_mcp_sections(
  * @return Empty string on success, error message on failure — v2.13.0
  *         propagates the filesystem section's error, which used to be
  *         dropped here, and the bash section's.
- * @dg_internal
+ * @utility
  * @version 2.14.4
  */
 static std::string parse_mcp_config(
@@ -827,7 +828,7 @@ static std::string parse_mcp_config(
  * @param node YAML node for "generation" section.
  * @param[out] config Output generation config.
  * @return Empty string on success, error message on failure.
- * @dg_internal
+ * @utility
  * @version 2.9.6
  */
 static std::string parse_generation_config(
@@ -850,7 +851,7 @@ static std::string parse_generation_config(
  * @param node YAML node for "lsp" section.
  * @param[out] config Output LSP config.
  * @return Empty string on success, error message on failure.
- * @dg_internal
+ * @utility
  * @version 1.8.2
  */
 static std::string parse_lsp_config(
@@ -868,7 +869,7 @@ static std::string parse_lsp_config(
  * @param node YAML node for "inference.prompt_cache" section.
  * @param[out] config Output prompt cache config.
  * @return Empty string on success, error message on failure.
- * @dg_internal
+ * @utility
  * @version 1.8.3
  */
 static std::string parse_prompt_cache_config(
@@ -890,7 +891,7 @@ static std::string parse_prompt_cache_config(
  * @brief Parse constitutional_validation section.
  * @param node YAML node for "constitutional_validation" section.
  * @param[out] config Output constitutional validation config.
- * @dg_internal
+ * @utility
  * @version 2.0.7
  */
 static void parse_constitutional_validation_config(
@@ -951,7 +952,7 @@ static void parse_speculative_config(
  * @param root YAML root node.
  * @param registry Bundled models for path resolution.
  * @param config Config to populate.
- * @dg_internal
+ * @utility
  * @version 2.3.7
  */
 /**
@@ -959,7 +960,7 @@ static void parse_speculative_config(
  * @param root YAML root node.
  * @param registry Bundled models for path resolution.
  * @param config Config to populate.
- * @dg_internal
+ * @utility
  * @version 2.3.7
  */
 static void parse_inference_subsections(
@@ -983,7 +984,7 @@ static void parse_inference_subsections(
  * @param config Config to populate.
  * @return Empty string on success, else the `mcp` section's error
  *         (v2.13.0: its outside-root keys are refused, not defaulted).
- * @dg_internal
+ * @utility
  * @version 2.13.0
  */
 static std::string parse_optional_subsections(
@@ -1014,7 +1015,7 @@ static std::string parse_optional_subsections(
  * @brief Extract the top-level scalar/path config fields.
  * @param root YAML root node.
  * @param config Config to populate.
- * @dg_internal
+ * @utility
  * @version 2.14.0
  */
 static void extract_scalar_fields(ryml::ConstNodeRef root,
@@ -1082,7 +1083,7 @@ static std::string validate_workspace_app_context(const ParsedConfig& config) {
  * @param registry Bundled models for path resolution.
  * @param config Config to populate.
  * @return Empty string on success, error message on failure.
- * @dg_internal
+ * @utility
  * @version 2.14.0
  */
 static std::string parse_optional_sections(
@@ -1106,7 +1107,7 @@ static std::string parse_optional_sections(
  * @param registry Bundled models for path resolution.
  * @param[in,out] config Config to overlay onto.
  * @return Empty string on success, error message on failure.
- * @dg_internal
+ * @utility
  * @version 2.13.0
  */
 static std::string parse_top_sections(

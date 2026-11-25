@@ -32,7 +32,7 @@ constexpr const char* TOOL_RESULT_SUFFIX =
 /**
  * @brief Generate a simple counter-based ID.
  * @return ID string.
- * @dg_internal
+ * @utility
  * @version 1.8.2
  */
 std::string generate_uuid() {
@@ -51,7 +51,7 @@ std::string generate_uuid() {
  *
  * @param content Raw model output.
  * @return ParseResult.
- * @dg_internal
+ * @utility
  * @version 1.8.2
  */
 ParseResult Qwen35Adapter::parse_tool_calls(const std::string& content) const {
@@ -77,7 +77,7 @@ ParseResult Qwen35Adapter::parse_tool_calls(const std::string& content) const {
  *
  * @param content Model output.
  * @return Vector of parsed tool calls.
- * @dg_internal
+ * @utility
  * @version 1.8.2
  */
 std::vector<ToolCall> Qwen35Adapter::parse_xml_function_calls(
@@ -121,7 +121,7 @@ std::vector<ToolCall> Qwen35Adapter::parse_xml_function_calls(
  *
  * @param func_body Function body text.
  * @return Map of parameter key → value.
- * @dg_internal
+ * @utility
  * @version 2.4.1
  */
 std::unordered_map<std::string, std::string> Qwen35Adapter::extract_xml_parameters(
@@ -138,7 +138,7 @@ std::unordered_map<std::string, std::string> Qwen35Adapter::extract_xml_paramete
  * @param tool_call Executed tool call.
  * @param result Execution result.
  * @return Formatted user message.
- * @dg_internal
+ * @utility
  * @version 1.8.2
  */
 Message Qwen35Adapter::format_tool_result(
@@ -158,7 +158,7 @@ Message Qwen35Adapter::format_tool_result(
  * @brief Format tools in <tools> tags with OpenAI function JSON.
  * @param tool_jsons Tool definition JSON strings.
  * @return Formatted tools section.
- * @dg_internal
+ * @utility
  * @version 1.8.2
  */
 std::string Qwen35Adapter::format_tools(
@@ -206,7 +206,7 @@ std::string Qwen35Adapter::format_tools(
  * @brief Remove tool calls and think blocks from content.
  * @param content Raw model output.
  * @return Cleaned content.
- * @dg_internal
+ * @utility
  * @version 1.8.2
  */
 std::string Qwen35Adapter::clean_content(const std::string& content) const {
@@ -236,7 +236,7 @@ static constexpr const char* VISION_INSTRUCTION =
  * @param base_system Base system prompt text.
  * @param has_vision Whether the model has vision capability.
  * @return System prompt, with vision instructions appended if active.
- * @dg_internal
+ * @utility
  * @version 1.9.11
  */
 std::string Qwen35Adapter::format_system_with_vision(
@@ -252,7 +252,7 @@ std::string Qwen35Adapter::format_system_with_vision(
  * @brief Qwen3.5 content part formatting (OpenAI-native).
  * @param parts Content parts from a message.
  * @return JSON string in OpenAI content array format.
- * @dg_internal
+ * @utility
  * @version 1.9.11
  */
 std::string Qwen35Adapter::format_content_parts(

@@ -21,7 +21,7 @@ namespace {
  * @brief Parse a single content-part JSON object → ContentPart.
  * @param part JSON object with "type" and content fields.
  * @return Parsed ContentPart (TEXT if type is anything other than "image").
- * @dg_internal
+ * @utility
  * @version 2.13.0
  */
 ContentPart parse_content_part(const nlohmann::json& part) {
@@ -54,7 +54,7 @@ ContentPart parse_content_part(const nlohmann::json& part) {
  *
  * @param m JSON message object.
  * @param[out] out Metadata map to fill.
- * @dg_internal
+ * @utility
  * @version 2.13.0
  */
 void parse_metadata(const nlohmann::json& m,
@@ -69,7 +69,7 @@ void parse_metadata(const nlohmann::json& m,
  * @brief Populate a Message from a JSON object.
  * @param m JSON message object.
  * @return Filled Message struct.
- * @dg_internal
+ * @req REQ-TYPE-006
  * @version 2.13.0
  */
 Message parse_one_message(const nlohmann::json& m) {

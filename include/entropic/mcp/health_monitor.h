@@ -172,7 +172,7 @@ private:
      *
      * @param name Server name.
      * @param entry Watch entry (mutated to connected).
-     * @dg_internal
+     * @utility
      * @version 2.3.7
      */
     void on_reconnect_success(const std::string& name,

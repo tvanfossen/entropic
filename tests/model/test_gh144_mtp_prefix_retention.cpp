@@ -37,7 +37,7 @@
  * precisely how the session-pool bug in this same release stayed invisible to
  * 1739 CPU tests.
  *
- * Requires: GPU + gemma4_e2b QAT trunk + mtp_e2b head.
+ * Requires: GPU + gemma4_e4b_qat trunk + mtp_e4b head.
  * Run: ctest -L model -R gh144-mtp
  *
  * @version 2.12.0
@@ -84,8 +84,8 @@ SCENARIO("gh#144: MTP prefill must not re-decode an unchanged prefix",
     GIVEN("an MTP-configured backend driven with a growing conversation") {
         auto dir = models_dir();
         REQUIRE_FALSE(dir.empty());
-        fs::path trunk = dir / "gemma-4-E2B-it-qat-UD-Q4_K_XL.gguf";
-        fs::path head = dir / "mtp-gemma-4-E2B-it.gguf";
+        fs::path trunk = dir / "gemma-4-E4B-it-qat-UD-Q4_K_XL.gguf";
+        fs::path head = dir / "mtp-gemma-4-E4B-it.gguf";
         REQUIRE(fs::is_regular_file(trunk));
         REQUIRE(fs::is_regular_file(head));
 

@@ -29,7 +29,8 @@ inline std::string trim_ws(const std::string& s) {
 
 /**
  * @brief Compiled-once regex matching `<parameter=NAME>` opening tags.
- * @utility
+ * @return Static regex whose group 1 is the parameter name.
+ * @req REQ-INFER-012
  * @version 2.4.1
  */
 const std::regex& open_tag_pattern() {
@@ -43,7 +44,8 @@ const std::regex& open_tag_pattern() {
  * Malformed multi-call output handling preserved from the
  * per-adapter implementations. Emits a warn on truncation.
  *
- * @utility
+ * @return The body up to the first nested `<function=` tag, or unchanged when none.
+ * @req REQ-INFER-012
  * @version 2.4.1
  */
 inline std::string truncate_at_nested_function(
@@ -65,7 +67,7 @@ inline std::string truncate_at_nested_function(
  * present.
  *
  * @return Pair of (end_pos, close_tag_length).
- * @utility
+ * @req REQ-INFER-012
  * @version 2.4.1
  */
 inline std::pair<size_t, size_t> find_close_tag(
@@ -83,7 +85,7 @@ inline std::pair<size_t, size_t> find_close_tag(
 
 /**
  * @brief Insert a trimmed value into the arguments map (skipping empty).
- * @utility
+ * @req REQ-INFER-012
  * @version 2.4.1
  */
 inline void emit_arg(

@@ -12,9 +12,11 @@
  * never on a hybrid architecture.
  *
  * So both families run here:
- *   - gemma4 E2B, plain llama_kv_cache.
- *   - Qwen3.6-35B-A3B (arch qwen35moe), attention + recurrent/SSM hybrid,
- *     at gpu_layers=15 — the partial-offload split the 11 GB dev card needs.
+ *   - gemma4 E4B QAT, plain llama_kv_cache.
+ *   - Nemotron-3-Nano-4B (arch nemotron_h), attention + Mamba2 hybrid, at
+ *     full offload — it is 3.1 GB and fits the 11 GB dev card whole.
+ * v2.14.6: were gemma4 E2B Q8 and Qwen3.6-35B-A3B (qwen35moe, gpu_layers=15),
+ * which left the pared model set.
  *
  * Each case asserts the same deterministic desync gate test_gh97_hybrid_cache
  * uses: a correct prefill leaves `kv_pos_max` ≈ input + generated - 1, so it
@@ -166,37 +168,38 @@ void release_reload_cycle(const fs::path& path, const std::string& adapter,
 
 TEST_CASE("gh#164: release then reload decodes correctly on gemma4 (plain KV)",
           "[model][gh164]") {
-    auto path = gguf("gemma-4-E2B-it-Q8_0.gguf");
+    auto path = gguf("gemma-4-E4B-it-qat-UD-Q4_K_XL.gguf");
     if (!fs::is_regular_file(path)) {
-        SKIP("gemma-4-E2B-it-Q8_0.gguf not present at " + path.string());
+        SKIP("gemma-4-E4B-it-qat-UD-Q4_K_XL.gguf not present at " + path.string());
     }
     release_reload_cycle(path, "gemma4", 99);
 }
 
 TEST_CASE("gh#164: release then reload decodes correctly on a hybrid arch",
           "[model][gh164]") {
-    // qwen35moe: attention + recurrent/SSM. Every KV-touching change is
-    // exercised here as well as on plain KV — gh#97 shipped a desync
-    // precisely because a cache path was only ever tested on gemma4.
-    auto path = gguf("Qwen3.6-35B-A3B-UD-IQ3_XXS.gguf");
+    // nemotron_h: attention + recurrent/SSM (Mamba2). Every KV-touching
+    // change is exercised here as well as on plain KV — gh#97 shipped a
+    // desync precisely because a cache path was only ever tested on gemma4.
+    auto path = gguf("NVIDIA-Nemotron-3-Nano-4B-UD-Q4_K_XL.gguf");
     if (!fs::is_regular_file(path)) {
-        SKIP("Qwen3.6-35B-A3B GGUF not present at " + path.string());
+        SKIP("Nemotron-3-Nano-4B GGUF not present at " + path.string());
     }
-    release_reload_cycle(path, "qwen36", 15);  // 11 GB card: partial offload
+    release_reload_cycle(path, "nemotron3", 99);  // 3.1 GB: full offload
 }
 
 TEST_CASE("gh#164: entropic_release_model frees VRAM through the C ABI",
           "[model][gh164]") {
     // Production path: configure_dir, not a hand-built orchestrator.
     namespace facade = entropic::test::facade;
-    if (!fs::is_regular_file(facade::model_gguf("gemma-4-E2B-it-Q8_0.gguf"))) {
-        SKIP("gemma-4-E2B-it-Q8_0.gguf not present");
+    if (!fs::is_regular_file(
+            facade::model_gguf("gemma-4-E4B-it-qat-UD-Q4_K_XL.gguf"))) {
+        SKIP("gemma-4-E4B-it-qat-UD-Q4_K_XL.gguf not present");
     }
 
     facade::FacadeProject project("gh164_release");
     facade::TierSpec lead;
     lead.name = "lead";
-    lead.gguf_key = "gemma4_e2b";
+    lead.gguf_key = "gemma4_e4b_qat";
     lead.adapter = "gemma4";
     lead.context_length = 4096;
     // Guard and tier already name one model; the MENU did not fit. The

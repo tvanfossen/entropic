@@ -217,7 +217,7 @@ private:
     /**
      * @brief Mark a session as most recently used.
      * @param key Session key.
-     * @utility
+     * @req REQ-INFER-019
      * @version 2.12.0
      */
     void touch(const std::string& key) { use_order_[key] = ++tick_; }
@@ -225,7 +225,7 @@ private:
     /**
      * @brief Drop a session's slot assignment and LRU entry.
      * @param key Session key.
-     * @utility
+     * @req REQ-INFER-019
      * @version 2.12.0
      */
     void forget(const std::string& key) {
@@ -236,7 +236,7 @@ private:
     /**
      * @brief First slot no session currently holds.
      * @return Slot index, or kNoSessionSlot when the pool is full.
-     * @utility
+     * @req REQ-INFER-019
      * @version 2.12.0
      */
     int free_slot() const {
@@ -256,7 +256,7 @@ private:
     /**
      * @brief Session key with the oldest use tick.
      * @return The eviction victim.
-     * @utility
+     * @req REQ-INFER-019
      * @version 2.12.0
      */
     std::string lru_key() const {

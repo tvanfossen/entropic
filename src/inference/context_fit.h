@@ -108,7 +108,7 @@ inline std::string context_fit_largest_contributor(const ContextFit& f) {
  * @brief Per-contributor token breakdown, as one clause.
  * @param f Measured prompt sizing.
  * @return "staged tools N tok (M tools, B bytes), system prompt ... ".
- * @utility
+ * @req REQ-INFER-026
  * @version 2.13.0
  */
 inline std::string context_fit_breakdown(const ContextFit& f) {

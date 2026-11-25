@@ -36,7 +36,8 @@ RELEASE_URL_TEMPLATE = (
 
 
 ## @brief Return "cuda" if nvidia-smi succeeds, else "cpu".
-## @utility
+## @return "cuda" when nvidia-smi runs successfully, otherwise "cpu".
+## @req REQ-PROD-003
 ## @version 2.1.0
 def _detect_backend() -> str:
     """Return ``"cuda"`` if nvidia-smi succeeds, else ``"cpu"``."""
@@ -62,7 +63,8 @@ def _install_root() -> Path:
 
 
 ## @brief Return the lowercase hex SHA256 of path.
-## @utility
+## @return Lowercase hex SHA256 digest of the file's bytes.
+## @req REQ-PROD-003
 ## @version 2.1.0
 def _sha256_of(path: Path) -> str:
     """Return the lowercase hex SHA256 of ``path``."""
@@ -84,7 +86,8 @@ def _download(url: str, dest: Path) -> None:
 
 
 ## @brief Fetch the .sha256 sidecar and return the bare hash.
-## @utility
+## @return The bare hash: the first token of the published .sha256 companion.
+## @req REQ-PROD-003
 ## @version 2.1.0
 def _expected_sha256(version: str, backend: str, scratch: Path) -> str:
     """Fetch the .sha256 sidecar and return the bare hash."""
@@ -96,7 +99,8 @@ def _expected_sha256(version: str, backend: str, scratch: Path) -> str:
 
 
 ## @brief If a stamp file matches expected_hash, install is current.
-## @utility
+## @return True when the install's stamp file records expected_hash.
+## @req REQ-PROD-003
 ## @version 2.1.0
 def _verify_existing(root: Path, expected_hash: str) -> bool:
     """If a stamp file matches expected_hash, install is current."""

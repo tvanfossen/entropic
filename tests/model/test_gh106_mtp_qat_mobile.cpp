@@ -91,14 +91,11 @@ void run_mtp_qat_mobile(const char* trunk_file, const char* head_file,
 
 }  // namespace
 
-TEST_CASE("gh#106 MTP functions on the E2B mobile QAT (TQ2_0) trunk",
-          "[model][gh106][mtp][qat][mobile]") {
-    run_mtp_qat_mobile("gemma-4-E2B-it-qat-UD-Q2_K_XL.gguf",
-                       "mtp-gemma-4-E2B-it.gguf", "E2B");
-}
-
-TEST_CASE("gh#106 MTP functions on the E4B mobile QAT (TQ2_0) trunk",
-          "[model][gh106][mtp][qat][mobile]") {
-    run_mtp_qat_mobile("gemma-4-E4B-it-qat-UD-Q2_K_XL.gguf",
+// v2.14.6: the pared model set (user, 2026-10-17) keeps one QAT trunk —
+// E4B QAT Q4, the test workhorse. The Q2 "mobile" quants are gone; the
+// property under test (an MTP head drafts against a QAT trunk) is kept.
+TEST_CASE("gh#106 MTP functions on the E4B QAT trunk",
+          "[model][gh106][mtp][qat]") {
+    run_mtp_qat_mobile("gemma-4-E4B-it-qat-UD-Q4_K_XL.gguf",
                        "mtp-gemma-4-E4B-it.gguf", "E4B");
 }

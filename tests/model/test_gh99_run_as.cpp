@@ -18,7 +18,7 @@
  * companion call emits a verb, NOT "ANSWER" — the genuine RED. The grammar is
  * deterministic, so the assertion holds regardless of model quality.
  *
- * Requires: GPU + gemma4_e2b GGUF. Run: ctest -L model -R gh99
+ * Requires: GPU + gemma4_e4b_qat GGUF. Run: ctest -L model -R gh99
  *
  * @version 2.8.0
  */
@@ -75,9 +75,9 @@ SCENARIO("gh#99: run_as emits each tier's grammar on a shared model",
          "[model][gh99]")
 {
     GIVEN("one handle with npc (verbs) + companion (answer) tiers") {
-        fs::path gguf = model_gguf("gemma-4-E2B-it-Q8_0.gguf");
+        fs::path gguf = model_gguf("gemma-4-E4B-it-qat-UD-Q4_K_XL.gguf");
         if (!fs::is_regular_file(gguf)) {
-            SKIP("gemma4_e2b GGUF not present at " + gguf.string());
+            SKIP("gemma4_e4b_qat GGUF not present at " + gguf.string());
         }
 
         FacadeProject proj("gh99_run_as");
@@ -85,11 +85,11 @@ SCENARIO("gh#99: run_as emits each tier's grammar on a shared model",
         // a too-small ctx overflows and garbles output regardless of the
         // grammar (see the gh#95 grammar-threading lesson).
         std::vector<TierSpec> tiers = {
-            {"npc", "gemma4_e2b", "gemma4",
+            {"npc", "gemma4_e4b_qat", "gemma4",
              "You are an NPC. Choose exactly one action.",
              "npcverb", "root ::= \"STRIDE\" | \"FORAGE\" | \"REST\"\n",
              16384, 99, 1},
-            {"companion", "gemma4_e2b", "gemma4",
+            {"companion", "gemma4_e4b_qat", "gemma4",
              "You are a companion. Answer the traveler.",
              "companionans", "root ::= \"ANSWER\"\n",
              16384, 99, 1},

@@ -5,6 +5,8 @@
  *        variants (E4B/E2B x {Q8, UD-Q4, QAT-Q4}) x {MTP off/on} x
  *        {flash+q4KV off/on} = 24 configs, at true 128k context, over the
  *        same scripted 6-turn tool-calling conversation for every config.
+ *        v2.14.6: the pared model set leaves 2 variants (E4B QAT Q4 and
+ *        26B-A4B UD-IQ2_M) = 8 configs; the axes below are historical.
  *
  * Adds a deterministic, keyword-recall QUALITY score per config (0-9) on
  * top of the performance numbers — the single-turn/first agentic passes
@@ -485,13 +487,13 @@ TEST_CASE("gh#108 agentic benchmark: full 24-config permutation matrix "
           "(6 weight variants x MTP x flash+q4KV) at true 128k context",
           "[.][model][gh108][benchmark][agentic][matrix]") {
     auto md = models_dir();
+    // v2.14.6: the pared model set (user, 2026-10-17) — one row per gemma4
+    // trunk still on disk, each with ITS OWN head. The E2B-Q8 row left with
+    // its GGUF; mapping it to E4B would only duplicate the first row, so the
+    // second row is the set's other MTP-capable trunk, the 26B-A4B UD-IQ2_M.
     std::vector<ModelVariant> variants = {
-        {"E4B-Q8", md / "gemma-4-E4B-it-Q8_0.gguf", md / "mtp-gemma-4-E4B-it.gguf"},
-        {"E4B-UD-Q4", md / "gemma-4-E4B-it-UD-Q4_K_XL.gguf", md / "mtp-gemma-4-E4B-it.gguf"},
         {"E4B-QAT-Q4", md / "gemma-4-E4B-it-qat-UD-Q4_K_XL.gguf", md / "mtp-gemma-4-E4B-it.gguf"},
-        {"E2B-Q8", md / "gemma-4-E2B-it-Q8_0.gguf", md / "mtp-gemma-4-E2B-it.gguf"},
-        {"E2B-UD-Q4", md / "gemma-4-E2B-it-UD-Q4_K_XL.gguf", md / "mtp-gemma-4-E2B-it.gguf"},
-        {"E2B-QAT-Q4", md / "gemma-4-E2B-it-qat-UD-Q4_K_XL.gguf", md / "mtp-gemma-4-E2B-it.gguf"},
+        {"A4B-IQ2_M", md / "gemma-4-26B-A4B-it-UD-IQ2_M.gguf", md / "mtp-gemma-4-26B-A4B-it.gguf"},
     };
     for (const auto& v : variants) {
         if (!std::filesystem::is_regular_file(v.path) ||

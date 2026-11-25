@@ -18,7 +18,7 @@
  *
  * RED on the current rev (prefill grows); GREEN once warm-keep reuse lands.
  *
- * Requires: GPU + gemma4_e2b GGUF. Run: ctest -L model -R gh96
+ * Requires: GPU + gemma4_e4b_qat GGUF. Run: ctest -L model -R gh96
  *
  * @version 2.7.5
  */
@@ -55,9 +55,9 @@ SCENARIO("gh#96: agent-loop prefill must not grow with history (warm-keep)",
         const char* home = std::getenv("HOME");
         REQUIRE(home != nullptr);
         fs::path gguf = fs::path(home) / ".entropic" / "models"
-                        / "gemma-4-E2B-it-Q8_0.gguf";
+                        / "gemma-4-E4B-it-qat-UD-Q4_K_XL.gguf";
         if (!fs::is_regular_file(gguf)) {
-            SKIP("gemma4_e2b GGUF not present at " + gguf.string());
+            SKIP("gemma4_e4b_qat GGUF not present at " + gguf.string());
         }
 
         entropic::LlamaCppBackend backend;

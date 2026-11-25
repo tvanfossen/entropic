@@ -411,7 +411,7 @@ HttpListener::~HttpListener() { stop(); }
  * @param impl Server state.
  * @param bridge Bridge to dispatch to.
  * @param port Bound port (for the Host check).
- * @utility
+ * @req REQ-BRIDGE-001
  * @version 2.14.0
  */
 static void configure_server(HttpListener::Impl& impl, ExternalBridge* bridge,
@@ -440,13 +440,24 @@ static void configure_server(HttpListener::Impl& impl, ExternalBridge* bridge,
 
 /**
  * @brief Bind 127.0.0.1 on `port`, or on any free port when it is 0.
+ *
+ * gh#220 (v2.14.6): the socket is EXCLUSIVE. cpp-httplib's default options
+ * set SO_REUSEPORT, so a second `entropic serve` on a held port bound
+ * successfully, rewrote the token file, and the kernel split connections —
+ * bearer header included — between the two processes. SO_REUSEADDR alone
+ * keeps a fast restart through TIME_WAIT without sharing a live port.
+ *
  * @param server The server.
  * @param port Requested port.
  * @return The bound port, or <= 0 on failure.
- * @utility
- * @version 2.14.0
+ * @req REQ-BRIDGE-001
+ * @version 2.14.6
  */
 static int bind_loopback(httplib::Server& server, int port) {
+    server.set_socket_options([](socket_t sock) {
+        int one = 1;
+        ::setsockopt(sock, SOL_SOCKET, SO_REUSEADDR, &one, sizeof(one));
+    });
     return port == 0 ? server.bind_to_any_port("127.0.0.1")
                      : (server.bind_to_port("127.0.0.1", port) ? port : -1);
 }

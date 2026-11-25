@@ -187,3 +187,104 @@ SCENARIO("An empty grammar leaves the chain UNCONSTRAINED — the control "
         }
     }
 }
+
+// ── v2.14.6: the tool-call grammar reaches PLAIN decode ──────────────
+//
+// gh#134 applied the render's tool-call grammar only on the common_sampler
+// path (speculative / MTP). Plain decode built its chain from params.grammar
+// alone, so require_tool_call and the forced retry after a nudge decoded
+// unconstrained (measured: E4B wrote {"action":"complete",...} as text on
+// every forced retry). These drive the real factory's tool-grammar overload.
+
+namespace {
+
+/// Single token id for @p text, or -1 when it is not exactly one token.
+llama_token one_token(const llama_vocab* vocab, const std::string& text) {
+    llama_token t[4];
+    int n = llama_tokenize(vocab, text.c_str(), static_cast<int32_t>(text.size()),
+                           t, 4, false, true);
+    return n == 1 ? t[0] : -1;
+}
+
+/// Does token @p id survive the chain's grammar stage?
+bool survives(llama_sampler* chain, const llama_vocab* vocab, llama_token id) {
+    llama_sampler* g = nullptr;
+    for (int i = 0; i < llama_sampler_chain_n(chain); ++i) {
+        auto* s = llama_sampler_chain_get(chain, i);
+        if (std::string(llama_sampler_name(s)) == "grammar") { g = s; }
+    }
+    std::vector<llama_token_data> cand;
+    for (int i = 0; i < llama_vocab_n_tokens(vocab); ++i) {
+        cand.push_back({static_cast<llama_token>(i), 0.0f, 0.0f});
+    }
+    llama_token_data_array arr{cand.data(), cand.size(), -1, false};
+    if (g != nullptr) { llama_sampler_apply(g, &arr); }
+    return !std::isinf(cand[static_cast<size_t>(id)].logit);
+}
+
+/// Chain of a Sampler built by the production factory.
+llama_sampler* chain_of(const std::unique_ptr<entropic::Sampler>& s) {
+    auto* c = dynamic_cast<entropic::LlamaCppSampler*>(s.get());
+    return c != nullptr ? c->native_chain() : nullptr;
+}
+
+const char* kToolGbnf = "root ::= \"(\" \"x\"";
+
+} // namespace
+
+SCENARIO("v2.14.6: a non-lazy tool-call grammar is applied on plain decode, "
+         "prefilled with the generation prompt",
+         "[2.14.6][grammar][inference][cpu][engagement]")
+{
+    auto path = find_vocab_gguf("ggml-vocab-llama-bpe.gguf");
+    REQUIRE(std::filesystem::exists(path));
+    VocabOnlyModel om(path);
+    REQUIRE(om.valid());
+    entropic::LlamaCppSamplerFactory factory(nullptr, om.vocab);
+    const llama_token open = one_token(om.vocab, "(");
+    const llama_token x = one_token(om.vocab, "x");
+    REQUIRE(open >= 0);
+    REQUIRE(x >= 0);
+    entropic::GenerationParams p;
+
+    WHEN("the render prefilled the grammar's opening ( into the prompt") {
+        auto s = factory.create(p, {kToolGbnf, false, "("});
+        REQUIRE(s != nullptr);
+        llama_sampler* chain = chain_of(s);
+        THEN("the grammar stage is present and continues after the prefill") {
+            REQUIRE(chain_has_grammar_stage(chain));
+            CHECK(survives(chain, om.vocab, x));
+            CHECK_FALSE(survives(chain, om.vocab, open));
+        }
+    }
+    WHEN("there is no prefill") {
+        auto s = factory.create(p, {kToolGbnf, false, ""});
+        REQUIRE(s != nullptr);
+        THEN("the grammar starts at its root") {
+            CHECK(survives(chain_of(s), om.vocab, open));
+            CHECK_FALSE(survives(chain_of(s), om.vocab, x));
+        }
+    }
+    WHEN("the grammar rejects its own prefill") {
+        auto s = factory.create(p, {kToolGbnf, false, "zz"});
+        THEN("no sampler is built: never decode unconstrained") {
+            CHECK(s == nullptr);
+        }
+    }
+    WHEN("the tool grammar is lazy (no trigger patterns are captured)") {
+        auto s = factory.create(p, {kToolGbnf, true, "("});
+        REQUIRE(s != nullptr);
+        THEN("it is not applied") {
+            CHECK_FALSE(chain_has_grammar_stage(chain_of(s)));
+        }
+    }
+    WHEN("a request grammar is also set") {
+        p.grammar = "root ::= \"x\"";
+        auto s = factory.create(p, {kToolGbnf, false, ""});
+        REQUIRE(s != nullptr);
+        THEN("the request grammar wins") {
+            CHECK(survives(chain_of(s), om.vocab, x));
+            CHECK_FALSE(survives(chain_of(s), om.vocab, open));
+        }
+    }
+}

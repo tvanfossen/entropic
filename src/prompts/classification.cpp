@@ -21,7 +21,7 @@ auto logger = entropic::log::get("prompts.classification");
  * @param s Input string.
  * @return Uppercase version.
  * @version 1.8.1
- * @dg_internal
+ * @utility
  */
 static std::string to_upper(const std::string& s)
 {
@@ -36,7 +36,7 @@ static std::string to_upper(const std::string& s)
  * @param tiers Ordered tiers (index+1 = classification digit).
  * @return Lines formatted as: "example text" -> digit
  * @version 1.8.1
- * @dg_internal
+ * @utility
  */
 std::vector<std::string> interleave_examples(
     const std::vector<TierDescriptor>& tiers)
@@ -80,7 +80,7 @@ std::vector<std::string> interleave_examples(
  * @param sep Separator between items.
  * @return Joined string.
  * @version 1.8.2
- * @dg_internal
+ * @utility
  */
 static std::string join(
     const std::vector<std::string>& items, const std::string& sep)
@@ -98,7 +98,7 @@ static std::string join(
  * @param tiers Ordered tiers.
  * @return Formatted tier definitions.
  * @version 1.8.2
- * @dg_internal
+ * @utility
  */
 static std::string format_tier_definitions(
     const std::vector<TierDescriptor>& tiers)
@@ -120,7 +120,7 @@ static std::string format_tier_definitions(
  * @param recent_tiers Recent tier activations for continuity.
  * @return Classification prompt string.
  * @version 2.0.0
- * @dg_internal
+ * @utility
  */
 std::string build_classification_prompt(
     const std::vector<TierDescriptor>& tiers,

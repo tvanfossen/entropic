@@ -327,6 +327,28 @@ public:
     }
 
     /**
+     * @brief Highest occupied KV position in one SESSION's sequence (gh#144).
+     *
+     * kv_pos_max() reads seq 0, which is only the session's own sequence when
+     * there is one session. With several (`max_sessions` > 1) each session
+     * holds its own slot, and seq 0 belongs to whichever took it first: the
+     * v2.14.6 gate's hybrid test read session a's sequence after every
+     * session-b turn and reported a desync that was a measurement error.
+     * @param session_key Session whose sequence to read.
+     * @return That sequence's pos_max, or -1 if not active or the session
+     *         holds no slot.
+     * @utility
+     * @version 2.14.6
+     */
+    int kv_pos_max_for(const std::string& session_key) const {
+        const int slot = residency_.slot_for(session_key);
+        return (ctx_ != nullptr && slot >= 0)
+            ? static_cast<int>(llama_memory_seq_pos_max(
+                  llama_get_memory(ctx_), static_cast<llama_seq_id>(slot)))
+            : -1;
+    }
+
+    /**
      * @brief Whole-file loads of a tier model in this process (gh#148).
      *
      * Deterministic instrumentation, in the same spirit as gh#161's
@@ -433,7 +455,7 @@ public:
      * @param messages Conversation history.
      * @param params Generation parameters (enable_thinking honored).
      * @return Formatted prompt string.
-     * @dg_internal
+     * @utility
      * @version 2.7.0
      */
     std::string render_with_tools(
@@ -453,7 +475,7 @@ public:
      *
      * @param raw Raw model output (assistant turn only, no generation prompt).
      * @return Parsed tool calls + cleaned content + reasoning.
-     * @dg_internal
+     * @utility
      * @version 2.7.0
      */
     CommonChatResult parse_response(const std::string& raw) const;
@@ -560,6 +582,7 @@ protected:
 
     /**
      * @brief Batch generate with per-token cancel poll. (gh#81, v2.4.2)
+     * @return Generation result; cancelled when the flag is raised mid-decode.
      * @version 2.4.2
      */
     GenerationResult do_generate(
@@ -602,6 +625,7 @@ protected:
      * Otherwise falls back to the serial base implementation. Each request is
      * sampled under its own grammar (option A).
      *
+     * @return One result per request, in input order.
      * @version 2.8.0
      */
     std::vector<GenerationResult> do_generate_batch(
@@ -612,11 +636,18 @@ protected:
 public:
     /**
      * @brief The tool-call GBNF captured by the last render (gh#154).
-     * @return `tool_grammar_`, or "" when no tools were staged.
+     *
+     * v2.14.6: honours its contract. It returned `tool_grammar_` whether or
+     * not tools were staged, and that capture is sticky (gh#105), so a
+     * tool-less generation after a tooled one was handed a stale grammar.
+     *
+     * @return `tool_grammar_`, or "" when no tools are staged for this call.
      * @req REQ-INFER-008
-     * @version 2.13.0
+     * @version 2.14.6
      */
-    std::string active_tool_grammar() const override { return tool_grammar_; }
+    std::string active_tool_grammar() const override {
+        return active_tools_json_.empty() ? std::string{} : tool_grammar_;
+    }
 
     /**
      * @brief Speculative-decoding kernel with explicit draft backend.
@@ -728,7 +759,7 @@ protected:
      * @param seq_id Sequence id (default 0 from the C API path).
      * @param buffer Output buffer; resized to exact state size.
      * @return true on success; false when not active or copy short-reads.
-     * @dg_internal
+     * @utility
      * @version 2.4.0
      */
     bool do_save_state(int seq_id,
@@ -743,7 +774,7 @@ protected:
      * @param seq_id Sequence id.
      * @param buffer Source buffer (output of a prior save_state).
      * @return true when llama_state_seq_set_data accepts the buffer.
-     * @dg_internal
+     * @utility
      * @version 2.4.0
      */
     bool do_restore_state(int seq_id,
@@ -921,7 +952,7 @@ protected:
      * @param messages Conversation history.
      * @param params Generation parameters.
      * @return Formatted prompt string.
-     * @dg_internal
+     * @utility
      * @version 2.7.0
      */
     std::string render_prompt(
@@ -970,7 +1001,7 @@ protected:
      * @param on_token Streaming callback (empty for batch).
      * @param cancel Cancel flag (nullptr for batch).
      * @return GenerationResult with content/finish_reason/token_count.
-     * @dg_internal
+     * @utility
      * @version 2.8.0
      */
     GenerationResult generate_after_prefill(
@@ -1008,6 +1039,7 @@ protected:
      * one `llama_decode` per step over N tokens, each sampled under its own
      * grammar chain. Caller guarantees batch_is_viable (plain KV, n<=n_parallel,
      * shared>0, suffixes fit n_batch). Returns one result per request.
+     * @return One result per request, in input order.
      * @version 2.8.0
      */
     std::vector<GenerationResult> run_batched_decode(
@@ -1075,9 +1107,13 @@ protected:
      * `do_generate_text_only`, `do_generate_streaming_text_only`)
      * stay a one-liner — minimum diff to ship the seam.
      *
+     * v2.14.6: plain decode applies the staged tool-call grammar too
+     * (gh#134 only reached the common_sampler path).
+     *
      * @param params Generation parameters.
-     * @return Owned Sampler, or nullptr if no factory wired.
-     * @version 2.3.10
+     * @return Owned Sampler, or nullptr if no factory wired or the tool
+     *         grammar cannot be applied.
+     * @version 2.14.6
      */
     std::unique_ptr<Sampler> create_sampler(
         const GenerationParams& params) const;
@@ -1185,7 +1221,7 @@ protected:
      * speculative) that mutates seq 0 out-of-band, so the next text turn
      * cannot reuse a stale record.
      * @utility
-     * @dg_internal
+     * @utility
      * @version 2.7.5
      */
     void invalidate_resident_kv();
@@ -1388,7 +1424,7 @@ protected:
      * vocab_ on success; sets last_error_ and returns false otherwise.
      *
      * @return true on success.
-     * @dg_internal
+     * @utility
      * @version 2.3.7
      */
     bool load_gpu_model();
@@ -1401,7 +1437,7 @@ protected:
      * `load_gpu_model` refreshed the vocab and tokenizer but left
      * `is_recurrent_` / `is_hybrid_` to whatever `do_load` had set.
      *
-     * @dg_internal
+     * @utility
      * @version 2.13.0
      */
     void bind_model_handles();
@@ -1417,7 +1453,7 @@ protected:
      *
      * @param config Tier config carrying `cpu_moe_layers`.
      * @return true to proceed; false with `last_error_` set.
-     * @dg_internal
+     * @utility
      * @version 2.13.0
      */
     bool expert_offload_admits(const ModelConfig& config);
@@ -1429,7 +1465,7 @@ protected:
      * one-read path and the WARM promotion cannot drift apart.
      *
      * @return true on success; sets last_error_ on failure.
-     * @dg_internal
+     * @utility
      * @version 2.13.0
      */
     bool finish_activation();
@@ -1441,7 +1477,7 @@ protected:
      * configured context params, then lazily creates the prompt cache.
      *
      * @return true on success; sets last_error_ on failure.
-     * @dg_internal
+     * @utility
      * @version 2.3.7
      */
     bool create_inference_context();
@@ -1457,7 +1493,7 @@ protected:
      * @param head_path Path to the MTP head GGUF.
      * @param n_max Draft window (stored for the decode loop).
      * @return true when mtp_draft_ctx_ is live; false (with last_error_) on failure.
-     * @dg_internal
+     * @utility
      * @version 2.9.0
      */
     bool setup_mtp_draft(const std::string& head_path, int n_max);
@@ -1468,7 +1504,7 @@ protected:
      * Helper extracted from setup_mtp_draft to keep both under the knots
      * returns gate. On success sets mtp_draft_model_/ctx_ + mtp_head_path_;
      * on failure sets last_error_ and tears down any partial state.
-     * @dg_internal
+     * @utility
      * @version 2.9.0
      */
     bool build_mtp_head(const std::string& head_path);
@@ -1478,7 +1514,7 @@ protected:
      *
      * Must run BEFORE ctx_ is freed (mtp_draft_ctx_ borrows it via
      * ctx_other). Called from do_deactivate / do_unload and idempotent.
-     * @dg_internal
+     * @utility
      * @version 2.9.0
      */
     void teardown_mtp_draft();
@@ -1487,7 +1523,7 @@ protected:
      * @brief Reload the model CPU-only for the WARM state (do_deactivate tail).
      *
      * Extracted from do_deactivate to keep it under the knots ABC gate.
-     * @dg_internal
+     * @utility
      * @version 2.9.0
      */
     void reload_model_cpu_only();
@@ -1498,7 +1534,7 @@ protected:
      * ACTIVE → envelope (temp/grammar/streaming via mtp_unsupported_reason)
      * → head setup → draft-window bound. Returns an ENTROPIC_OK result to
      * proceed, or a typed loud error (caller propagates it — no fallback).
-     * @dg_internal
+     * @utility
      * @version 2.9.3
      */
     GenerationResult mtp_guard(
@@ -1512,7 +1548,7 @@ protected:
      * @param bitmaps Loaded image bitmaps in marker order (borrowed).
      * @param[out] err_msg Filled on failure.
      * @return ENTROPIC_OK on success, error code on failure.
-     * @utility
+     * @req REQ-INFER-025
      * @version 2.1.8
      */
     entropic_error_t mtmd_prefill(

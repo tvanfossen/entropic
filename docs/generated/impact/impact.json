@@ -1,234 +1,191 @@
-[
-  {
-    "req_id": "REQ-ABI-001",
-    "req_name": "Pure C at every .so boundary \u2014 opaque handles and explicit ownership",
-    "functions": [
-      {
-        "name": "entropic_seconds_since_last_activity",
-        "file": "src/facade/entropic.cpp",
-        "version": "2.3.0"
-      },
-      {
-        "name": "entropic_alloc",
-        "file": "src/facade/entropic.cpp",
-        "version": "1.8.0"
-      },
-      {
-        "name": "entropic_free",
-        "file": "src/facade/entropic.cpp",
-        "version": "1.8.0"
-      }
-    ]
-  },
-  {
-    "req_id": "REQ-ABI-002",
-    "req_name": "C++ exceptions never cross any .so boundary",
-    "functions": [
-      {
-        "name": "entropic_run",
-        "file": "src/facade/entropic.cpp",
-        "version": "2.14.5"
-      },
-      {
-        "name": "entropic_run_batch",
-        "file": "src/facade/entropic.cpp",
-        "version": "2.13.0"
-      },
-      {
-        "name": "entropic_run_streaming",
-        "file": "src/facade/entropic.cpp",
-        "version": "2.14.5"
-      },
-      {
-        "name": "entropic_run_messages",
-        "file": "src/facade/entropic.cpp",
-        "version": "2.12.0"
-      }
-    ]
-  },
-  {
-    "req_id": "REQ-API-002",
-    "req_name": "Handle lifecycle \u2014 create, configure, destroy, NULL-safe teardown",
-    "functions": [
-      {
-        "name": "entropic_run",
-        "file": "src/facade/entropic.cpp",
-        "version": "2.14.5"
-      }
-    ]
-  },
-  {
-    "req_id": "REQ-API-005",
-    "req_name": "Uniform precondition guard on every exported entry point",
-    "functions": [
-      {
-        "name": "entropic_seconds_since_last_activity",
-        "file": "src/facade/entropic.cpp",
-        "version": "2.3.0"
-      },
-      {
-        "name": "entropic_run",
-        "file": "src/facade/entropic.cpp",
-        "version": "2.14.5"
-      },
-      {
-        "name": "entropic_run_batch",
-        "file": "src/facade/entropic.cpp",
-        "version": "2.13.0"
-      },
-      {
-        "name": "entropic_run_streaming",
-        "file": "src/facade/entropic.cpp",
-        "version": "2.14.5"
-      },
-      {
-        "name": "entropic_run_messages",
-        "file": "src/facade/entropic.cpp",
-        "version": "2.12.0"
-      },
-      {
-        "name": "entropic_context_get",
-        "file": "src/facade/entropic.cpp",
-        "version": "2.12.0"
-      }
-    ]
-  },
-  {
-    "req_id": "REQ-API-008",
-    "req_name": "Single cross-boundary allocator pair and explicit ownership transfer",
-    "functions": [
-      {
-        "name": "entropic_alloc",
-        "file": "src/facade/entropic.cpp",
-        "version": "1.8.0"
-      },
-      {
-        "name": "entropic_free",
-        "file": "src/facade/entropic.cpp",
-        "version": "1.8.0"
-      },
-      {
-        "name": "entropic_run",
-        "file": "src/facade/entropic.cpp",
-        "version": "2.14.5"
-      },
-      {
-        "name": "entropic_run_batch",
-        "file": "src/facade/entropic.cpp",
-        "version": "2.13.0"
-      },
-      {
-        "name": "entropic_run_messages",
-        "file": "src/facade/entropic.cpp",
-        "version": "2.12.0"
-      },
-      {
-        "name": "entropic_context_get",
-        "file": "src/facade/entropic.cpp",
-        "version": "2.12.0"
-      }
-    ]
-  },
-  {
-    "req_id": "REQ-API-009",
-    "req_name": "Run entry-point family, result contract, and cross-thread interruptibility",
-    "functions": [
-      {
-        "name": "entropic_run",
-        "file": "src/facade/entropic.cpp",
-        "version": "2.14.5"
-      },
-      {
-        "name": "entropic_run_batch",
-        "file": "src/facade/entropic.cpp",
-        "version": "2.13.0"
-      },
-      {
-        "name": "entropic_run_streaming",
-        "file": "src/facade/entropic.cpp",
-        "version": "2.14.5"
-      },
-      {
-        "name": "entropic_run_messages",
-        "file": "src/facade/entropic.cpp",
-        "version": "2.12.0"
-      },
-      {
-        "name": "entropic_run_session",
-        "file": "src/facade/entropic.cpp",
-        "version": "2.14.5"
-      }
-    ]
-  },
-  {
-    "req_id": "REQ-API-010",
-    "req_name": "Observer and callback slots survive configure and fire uniformly",
-    "functions": [
-      {
-        "name": "entropic_run",
-        "file": "src/facade/entropic.cpp",
-        "version": "2.14.5"
-      },
-      {
-        "name": "entropic_run_streaming",
-        "file": "src/facade/entropic.cpp",
-        "version": "2.14.5"
-      }
-    ]
-  },
-  {
-    "req_id": "REQ-IDEN-001",
-    "req_name": "Tier resolution contract and per-tier loop overrides",
-    "functions": [
-      {
-        "name": "derive_explicit_completion",
-        "file": "src/prompts/manager.cpp",
-        "version": "2.14.5"
-      }
-    ]
-  },
-  {
-    "req_id": "REQ-INFER-018",
-    "req_name": "Same-prefix batch generation is gated, per-request-constrained and seq-safe",
-    "functions": [
-      {
-        "name": "entropic_run_batch",
-        "file": "src/facade/entropic.cpp",
-        "version": "2.13.0"
-      }
-    ]
-  },
-  {
-    "req_id": "REQ-INFER-025",
-    "req_name": "Multimodal input is bounded, tier-gated and degrades gracefully",
-    "functions": [
-      {
-        "name": "entropic_run_messages",
-        "file": "src/facade/entropic.cpp",
-        "version": "2.12.0"
-      }
-    ]
-  },
-  {
-    "req_id": "REQ-LOOP-001",
-    "req_name": "Agent state machine with observable, dual-channel transitions",
-    "functions": [
-      {
-        "name": "entropic_run_session",
-        "file": "src/facade/entropic.cpp",
-        "version": "2.14.5"
-      }
-    ]
-  },
-  {
-    "req_id": "REQ-SAFE-001",
-    "req_name": "Untrusted bytes are sanitized at ingress, never at egress",
-    "functions": [
-      {
-        "name": "entropic_context_get",
-        "file": "src/facade/entropic.cpp",
-        "version": "2.12.0"
-      }
-    ]
-  }
-]
+{
+  "schema_version": 1,
+  "entries": [
+    {
+      "req_id": "REQ-INFER-002",
+      "req_name": "Teardown releases every model, context and adapter handle",
+      "functions": [
+        {
+          "name": "teardown_mtp_draft",
+          "file": "src/inference/llama_cpp_backend.cpp",
+          "version": "2.9.1"
+        }
+      ]
+    },
+    {
+      "req_id": "REQ-INFER-005",
+      "req_name": "Every decode path honours cooperative cancellation within one token",
+      "functions": [
+        {
+          "name": "generate_after_prefill",
+          "file": "src/inference/llama_cpp_backend.cpp",
+          "version": "2.14.6"
+        },
+        {
+          "name": "run_sampling_loop",
+          "file": "src/inference/llama_cpp_backend.cpp",
+          "version": "2.13.2"
+        },
+        {
+          "name": "do_generate_text_only",
+          "file": "src/inference/llama_cpp_backend.cpp",
+          "version": "2.13.2"
+        },
+        {
+          "name": "do_generate_streaming_text_only",
+          "file": "src/inference/llama_cpp_backend.cpp",
+          "version": "2.13.2"
+        },
+        {
+          "name": "generate_mtp",
+          "file": "src/inference/llama_cpp_backend.cpp",
+          "version": "2.14.6"
+        }
+      ]
+    },
+    {
+      "req_id": "REQ-INFER-006",
+      "req_name": "Sampler chain construction has a fixed order and default-preserving gating",
+      "functions": [
+        {
+          "name": "to_common_sampling",
+          "file": "src/inference/llama_cpp_backend.cpp",
+          "version": "2.10.4"
+        }
+      ]
+    },
+    {
+      "req_id": "REQ-INFER-008",
+      "req_name": "Every declared grammar source reaches the sampler and exactly one wins",
+      "functions": [
+        {
+          "name": "tool_grammar_for",
+          "file": "src/inference/llama_cpp_backend.cpp",
+          "version": "2.14.6"
+        },
+        {
+          "name": "to_common_sampling",
+          "file": "src/inference/llama_cpp_backend.cpp",
+          "version": "2.10.4"
+        }
+      ]
+    },
+    {
+      "req_id": "REQ-INFER-009",
+      "req_name": "Tool staging drives a native render whose parse context is captured",
+      "functions": [
+        {
+          "name": "to_common_chat",
+          "file": "src/inference/llama_cpp_backend.cpp",
+          "version": "2.14.6"
+        },
+        {
+          "name": "mcp_tools_to_common_chat",
+          "file": "src/inference/llama_cpp_backend.cpp",
+          "version": "2.7.0"
+        },
+        {
+          "name": "render_with_tools",
+          "file": "src/inference/llama_cpp_backend.cpp",
+          "version": "2.14.6"
+        },
+        {
+          "name": "parse_response",
+          "file": "src/inference/llama_cpp_backend.cpp",
+          "version": "2.14.6"
+        }
+      ]
+    },
+    {
+      "req_id": "REQ-INFER-015",
+      "req_name": "MTP speculative decode fails loud and never silently falls back",
+      "functions": [
+        {
+          "name": "effective_n_draft",
+          "file": "src/inference/llama_cpp_backend.cpp",
+          "version": "2.11.0"
+        },
+        {
+          "name": "mtp_guard",
+          "file": "src/inference/llama_cpp_backend.cpp",
+          "version": "2.11.0"
+        },
+        {
+          "name": "generate_mtp",
+          "file": "src/inference/llama_cpp_backend.cpp",
+          "version": "2.14.6"
+        }
+      ]
+    },
+    {
+      "req_id": "REQ-INFER-025",
+      "req_name": "Multimodal input is bounded, tier-gated and degrades gracefully",
+      "functions": [
+        {
+          "name": "generate_multimodal",
+          "file": "src/inference/llama_cpp_backend.cpp",
+          "version": "2.14.6"
+        }
+      ]
+    },
+    {
+      "req_id": "REQ-INFER-026",
+      "req_name": "A prompt that cannot fit the tier context is refused, never decoded",
+      "functions": [
+        {
+          "name": "prefill_error",
+          "file": "src/inference/llama_cpp_backend.cpp",
+          "version": "2.13.0"
+        }
+      ]
+    },
+    {
+      "req_id": "REQ-INFER-027",
+      "req_name": "Expert-tensor offload places routed experts on the host while attention and KV stay resident (EXPERIMENTAL)",
+      "functions": [
+        {
+          "name": "build_load_mparams",
+          "file": "src/inference/llama_cpp_backend.cpp",
+          "version": "2.13.0"
+        },
+        {
+          "name": "model_expert_count",
+          "file": "src/inference/llama_cpp_backend.cpp",
+          "version": "2.13.0"
+        },
+        {
+          "name": "expert_offload_admits",
+          "file": "src/inference/llama_cpp_backend.cpp",
+          "version": "2.13.0"
+        },
+        {
+          "name": "load_gpu_model",
+          "file": "src/inference/llama_cpp_backend.cpp",
+          "version": "2.13.0 [reviewed]"
+        }
+      ]
+    },
+    {
+      "req_id": "REQ-LOOP-010",
+      "req_name": "Session conversations are readable, writable, and losslessly round-trippable",
+      "functions": [
+        {
+          "name": "forget_session_kv",
+          "file": "src/inference/llama_cpp_backend.cpp",
+          "version": "2.13.0"
+        }
+      ]
+    },
+    {
+      "req_id": "REQ-TYPE-004",
+      "req_name": "Sentinel count members bound enum validity and force exhaustive wiring",
+      "functions": [
+        {
+          "name": "do_supports",
+          "file": "src/inference/llama_cpp_backend.cpp",
+          "version": "1.9.13"
+        }
+      ]
+    }
+  ]
+}

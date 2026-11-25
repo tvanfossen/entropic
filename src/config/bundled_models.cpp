@@ -123,7 +123,7 @@ std::string BundledModels::load(const std::filesystem::path& path)
  * @brief Check if a key exists in the registry.
  * @param key Registry key.
  * @return true if key exists.
- * @dg_internal
+ * @utility
  * @version 1.8.2
  */
 bool BundledModels::contains(const std::string& key) const
@@ -135,7 +135,7 @@ bool BundledModels::contains(const std::string& key) const
  * @brief Get entry by key.
  * @param key Registry key.
  * @return Pointer to entry, or nullptr if not found.
- * @dg_internal
+ * @utility
  * @version 1.8.2
  */
 const BundledModelEntry* BundledModels::get(const std::string& key) const

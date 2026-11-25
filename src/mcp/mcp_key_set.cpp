@@ -18,7 +18,7 @@ namespace entropic {
  * @brief Grant a tool key with an access level.
  * @param pattern Tool pattern string.
  * @param level Access level to grant.
- * @dg_internal
+ * @utility
  * @version 1.9.4
  */
 void MCPKeySet::grant(const std::string& pattern,
@@ -33,7 +33,7 @@ void MCPKeySet::grant(const std::string& pattern,
  * @brief Revoke a tool key entirely.
  * @param pattern Tool pattern string to revoke.
  * @return true if pattern was found and removed.
- * @dg_internal
+ * @utility
  * @version 1.9.4
  */
 bool MCPKeySet::revoke(const std::string& pattern) {
@@ -74,7 +74,7 @@ bool MCPKeySet::has_access(const std::string& tool_name,
 /**
  * @brief List all granted keys.
  * @return Vector of MCPKey entries.
- * @dg_internal
+ * @utility
  * @version 1.9.4
  */
 std::vector<MCPKey> MCPKeySet::list() const {
@@ -90,7 +90,7 @@ std::vector<MCPKey> MCPKeySet::list() const {
 /**
  * @brief Number of granted keys.
  * @return Key count.
- * @dg_internal
+ * @utility
  * @version 1.9.4
  */
 size_t MCPKeySet::size() const {
@@ -100,7 +100,7 @@ size_t MCPKeySet::size() const {
 
 /**
  * @brief Remove all granted keys.
- * @dg_internal
+ * @utility
  * @version 1.9.4
  */
 void MCPKeySet::clear() {
@@ -111,7 +111,7 @@ void MCPKeySet::clear() {
 /**
  * @brief Serialize key set to JSON string.
  * @return JSON array of {pattern, level} objects.
- * @dg_internal
+ * @utility
  * @version 1.9.4
  */
 std::string MCPKeySet::serialize() const {
@@ -130,7 +130,7 @@ std::string MCPKeySet::serialize() const {
  * @brief Deserialize key set from JSON string.
  * @param json JSON array string.
  * @return true if parsed successfully.
- * @dg_internal
+ * @utility
  * @version 1.9.4
  */
 bool MCPKeySet::deserialize(const std::string& json) {
@@ -170,7 +170,7 @@ bool MCPKeySet::deserialize(const std::string& json) {
  * @brief Extract server prefix wildcard from tool name.
  * @param tool_name E.g., "filesystem.read_file".
  * @return E.g., "filesystem.*", or empty if no dot.
- * @dg_internal
+ * @req REQ-MCP-010
  * @version 1.9.4
  */
 std::string MCPKeySet::server_wildcard(

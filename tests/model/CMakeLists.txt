@@ -178,6 +178,10 @@ set_tests_properties(model/test-v2146-e4b-vision PROPERTIES TIMEOUT 300)
 # v2.14.6: the Gemma 4 tool_choice=REQUIRED grammar forces one call then EOG
 # (root patched to mirror llama.cpp f072b10371). Vocab-only E4B: no weights,
 # no GPU. Links llama + reads chat.h directly for the common_chat render.
+# v2.14.6: with thinking on, each agent-loop turn ends in a REAL tool call
+# (an unreadable call is nudged, and the forced-grammar retry must execute).
+add_model_test(test-v2146-thinking-tool-call test_v2146_thinking_tool_call.cpp)
+set_tests_properties(model/test-v2146-thinking-tool-call PROPERTIES TIMEOUT 480)
 add_model_test(test-v2146-gemma4-required-grammar
                test_v2146_gemma4_required_grammar.cpp)
 target_link_libraries(test-v2146-gemma4-required-grammar PRIVATE llama)

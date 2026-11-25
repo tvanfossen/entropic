@@ -28,6 +28,7 @@
 #include <entropic/types/message.h>
 
 #include "../../src/inference/llama_cpp_backend.h"
+#include "auto_placement_harness.h"
 
 #include <cstdlib>
 #include <filesystem>
@@ -48,10 +49,9 @@ entropic::ModelConfig make_a4b_config(const std::filesystem::path& gguf) {
     cfg.path = gguf;
     cfg.adapter = "gemma4";
     cfg.context_length = 4096;
-    // 26B partial offload (v2.7.4: 20->15, OOM headroom). v2.14.6: the
-    // UD-IQ2_M fits the 11GB card whole, but 15 stays as the VRAM-safe
-    // split — this is a correctness-only test.
-    cfg.gpu_layers = 15;
+    // v2.14.6: placed by gpu_layers auto (resolve_auto_for_backend_test, in
+    // the TEST_CASE): the test machine's VRAM is not knowable in advance, and
+    // the old fixed 15 was a split for the retired 13 GB A4B.
     cfg.keep_warm = false;
     cfg.use_mlock = false;
     cfg.flash_attn = false;
@@ -138,6 +138,7 @@ TEST_CASE("gh#87 Increment-2: backend render_with_tools → parse_response "
 
     entropic::LlamaCppBackend backend;
     auto cfg = make_a4b_config(path);
+    REQUIRE(resolve_auto_for_backend_test(cfg, "gh87_common_chat"));
     REQUIRE(backend.load(cfg));
     REQUIRE(backend.activate());
     backend.set_active_tools(kReadFileToolJson);
@@ -156,6 +157,16 @@ TEST_CASE("gh#87 Increment-2: backend render_with_tools → parse_response "
              << "\nparsed tool_calls=" << o.calls.size()
              << " content=[" << o.content << "] reasoning=["
              << o.reasoning << "]");
+        // v2.14.6 (user decision): with thinking on, a free-form raw decode may
+        // write the call with plain quotes, which neither the pin nor upstream
+        // master parses. At this layer the guarantee is that the call is never
+        // lost: parsed, or its text kept in content (parse_response logs ERROR).
+        // That a thinking-on turn ends in a REAL call is asserted at the
+        // engine level, test-v2146-thinking-tool-call.
+        if (o.label == "thinking on, free-form" && o.calls.empty()) {
+            CHECK(o.content.find("<|tool_call>") != std::string::npos);
+            continue;
+        }
         // CHECK, not REQUIRE: every variant reports, not just the first miss.
         CHECK(o.calls.size() >= 1);
         if (o.calls.empty()) { continue; }

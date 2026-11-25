@@ -178,3 +178,46 @@ inline bool mock_tier_exists(
     const std::string& /*tier_name*/, void* /*user_data*/) {
     return true;
 }
+
+/**
+ * @brief Pick named tools out of a `ServerManager::list_tools()` array.
+ * @param all_json list_tools() output.
+ * @param names Fully-qualified tool names to keep, in the order wanted.
+ * @return A JSON ARRAY string holding exactly the named tools.
+ * @utility
+ * @version 2.14.6
+ *
+ * v2.14.6: moved here from test_e7_delegation.cpp (gh160_model), shared
+ * with the length-loop test.
+ */
+inline std::string tools_named(const std::string& all_json,
+                               const std::vector<std::string>& names) {
+    auto all = nlohmann::json::parse(all_json, nullptr, false);
+    auto picked = nlohmann::json::array();
+    if (!all.is_array()) { return picked.dump(); }
+    for (const auto& want : names) {
+        for (const auto& tool : all) {
+            if (tool.value("name", std::string{}) == want) {
+                picked.push_back(tool);
+                break;
+            }
+        }
+    }
+    return picked.dump();
+}
+
+/**
+ * @brief One fixed tool menu for every tier.
+ * @param tier Tier being generated for (unused: one menu).
+ * @param result Output: heap JSON array. Caller frees via free_fn.
+ * @param ud std::string pointer holding the menu.
+ * @return 0.
+ * @callback
+ * @version 2.14.6
+ *
+ * v2.14.6: moved here from test_e7_delegation.cpp (complete_only_model).
+ */
+inline int lead_tool_prompt(const char* /*tier*/, char** result, void* ud) {
+    *result = alloc_cstr(*static_cast<const std::string*>(ud));
+    return 0;
+}
